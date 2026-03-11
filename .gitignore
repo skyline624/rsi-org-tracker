@@ -1,0 +1,41 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.dll
+*.exe
+*.pdb
+*.log
+
+# Build outputs
+publish/
+*.Publish.xml
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.DotSettings
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+data/*
+
+# vexp index
+.vexp
+*.md
+# User secrets
+secrets.json
+appsettings.*.json.bak
