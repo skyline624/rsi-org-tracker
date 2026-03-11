@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Collector.Data.Repositories;
 
@@ -31,4 +32,7 @@ public abstract class Repository<T> : IRepository<T> where T : class
 
     public virtual async Task<int> SaveChangesAsync(CancellationToken ct = default)
         => await Context.SaveChangesAsync(ct);
+
+    public virtual async Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
+        => await Context.Database.BeginTransactionAsync(ct);
 }

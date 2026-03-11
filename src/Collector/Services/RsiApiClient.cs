@@ -8,6 +8,7 @@ using Collector.Parsers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Polly;
+using Polly.CircuitBreaker;
 using Polly.Retry;
 
 namespace Collector.Services;
@@ -60,7 +61,7 @@ public interface IRsiApiClient
         CancellationToken ct = default);
 }
 
-public class RsiApiClient : IRsiApiClient
+public class RsiApiClient : IRsiApiClient, IDisposable
 {
     private const string BaseUrl = "https://robertsspaceindustries.com";
     private const string ApiPath = "/api";
@@ -70,7 +71,7 @@ public class RsiApiClient : IRsiApiClient
     private readonly CollectorOptions _options;
     private readonly OrganizationHtmlParser _orgParser;
     private readonly MemberHtmlParser _memberParser;
-    private readonly AsyncRetryPolicy<HttpResponseMessage> _retryPolicy;
+    private readonly IAsyncPolicy<HttpResponseMessage> _resiliencePolicy;
     private readonly SemaphoreSlim _rateLimitSemaphore;
     private DateTime _lastRequestTime = DateTime.MinValue;
 
@@ -89,7 +90,7 @@ public class RsiApiClient : IRsiApiClient
         _rateLimitSemaphore = new SemaphoreSlim(1, 1);
 
         // Configure retry policy with exponential backoff
-        _retryPolicy = Policy<HttpResponseMessage>
+        var retryPolicy = Policy<HttpResponseMessage>
             .Handle<HttpRequestException>()
             .Or<TaskCanceledException>()
             .OrResult(r => (int)r.StatusCode >= 500 || r.StatusCode == System.Net.HttpStatusCode.RequestTimeout)
@@ -104,6 +105,31 @@ public class RsiApiClient : IRsiApiClient
                         timeSpan.TotalMilliseconds,
                         outcome.Exception?.Message ?? outcome.Result.StatusCode.ToString());
                 });
+
+        // Configure circuit breaker: break after 50% failures in 30s window with min 5 throughput
+        var circuitBreakerPolicy = Policy<HttpResponseMessage>
+            .Handle<HttpRequestException>()
+            .Or<TaskCanceledException>()
+            .OrResult(r => (int)r.StatusCode >= 500 || r.StatusCode == System.Net.HttpStatusCode.RequestTimeout)
+            .AdvancedCircuitBreakerAsync(
+                failureThreshold: 0.5,
+                samplingDuration: TimeSpan.FromSeconds(30),
+                minimumThroughput: 5,
+                durationOfBreak: TimeSpan.FromSeconds(30),
+                onBreak: (exception, duration) =>
+                {
+                    _logger.LogWarning(
+                        "Circuit breaker opened for {Duration}s due to: {Reason}",
+                        duration.TotalSeconds,
+                        exception.Exception?.Message ?? exception.Result?.StatusCode.ToString());
+                },
+                onReset: () =>
+                {
+                    _logger.LogInformation("Circuit breaker reset");
+                });
+
+        // Combine policies: retry first, then circuit breaker
+        _resiliencePolicy = Policy.WrapAsync(circuitBreakerPolicy, retryPolicy);
     }
 
     private async Task ApplyRateLimitAsync(CancellationToken ct)
@@ -142,7 +168,7 @@ public class RsiApiClient : IRsiApiClient
             var json = JsonSerializer.Serialize(payload);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var response = await _retryPolicy.ExecuteAsync(async token =>
+            var response = await _resiliencePolicy.ExecuteAsync(async token =>
             {
                 return await _httpClient.PostAsync(url, content, token);
             }, ct);
@@ -233,6 +259,7 @@ public class RsiApiClient : IRsiApiClient
                 if (orgs == null || orgs.Count == 0)
                 {
                     emptyPages++;
+                    page++;
                     continue;
                 }
 
@@ -335,7 +362,7 @@ public class RsiApiClient : IRsiApiClient
         await ApplyRateLimitAsync(ct);
 
         var url = $"{BaseUrl}/citizens/{handle}";
-        var response = await _retryPolicy.ExecuteAsync(async token =>
+        var response = await _resiliencePolicy.ExecuteAsync(async token =>
         {
             return await _httpClient.GetAsync(url, token);
         }, ct);
@@ -348,5 +375,10 @@ public class RsiApiClient : IRsiApiClient
 
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync(ct);
+    }
+
+    public void Dispose()
+    {
+        _rateLimitSemaphore.Dispose();
     }
 }

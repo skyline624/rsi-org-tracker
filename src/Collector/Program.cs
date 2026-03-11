@@ -8,22 +8,30 @@ using Serilog;
 
 try
 {
+    // Data directory is always at project root (one level above the bin folder)
+    var dataDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "data"));
+
     Console.WriteLine("Starting SC-Organizations-Tracker Collector...");
 
     // Build host
-    var builder = Host.CreateDefaultBuilder(args);
+    var builder = Host.CreateDefaultBuilder(args)
+        .UseContentRoot(AppContext.BaseDirectory);
 
     // Configure services
     builder.ConfigureServices((context, services) =>
     {
-        services.AddCollectorServices(context.Configuration);
+        services.AddCollectorServices(context.Configuration, dataDir);
     });
 
-    // Configure logging
+    // Configure logging with absolute path for the file sink
+    var logPath = Path.Combine(dataDir, "logs", "collector-.log");
     builder.UseSerilog((context, services, configuration) =>
     {
         configuration
             .ReadFrom.Configuration(context.Configuration)
+            .WriteTo.File(logPath,
+                rollingInterval: Serilog.RollingInterval.Day,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
             .Enrich.FromLogContext();
     });
 
@@ -32,7 +40,7 @@ try
     Console.WriteLine("Host built successfully");
 
     // Ensure database exists
-    await host.Services.EnsureDatabaseAsync();
+    await host.Services.EnsureDatabaseAsync(dataDir);
 
     Console.WriteLine("Database initialized");
 

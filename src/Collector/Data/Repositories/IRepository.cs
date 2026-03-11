@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore.Storage;
+
 namespace Collector.Data.Repositories;
 
 /// <summary>
@@ -11,4 +13,5 @@ public interface IRepository<T> where T : class
     Task AddAsync(T entity, CancellationToken ct = default);
     Task AddRangeAsync(IEnumerable<T> entities, CancellationToken ct = default);
     Task<int> SaveChangesAsync(CancellationToken ct = default);
+    Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
 }

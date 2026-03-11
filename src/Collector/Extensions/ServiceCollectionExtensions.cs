@@ -19,15 +19,17 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddCollectorServices(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        string dataDir)
     {
         // Configure options
         services.Configure<CollectorOptions>(
             configuration.GetSection("Collector"));
 
         // Database
+        var dbPath = Path.Combine(dataDir, "tracker.db");
         services.AddDbContext<TrackerDbContext>(options =>
-            options.UseSqlite(configuration.GetConnectionString("DefaultConnection")));
+            options.UseSqlite($"Data Source={dbPath}"));
 
         // Repositories
         services.AddScoped<IOrganizationRepository, OrganizationRepository>();
@@ -58,8 +60,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IChangeDetector, ChangeDetector>();
         services.AddScoped<IUserChangeDetector, UserChangeDetector>();
 
-        // Orchestrator
-        services.AddSingleton<CollectionOrchestrator>();
+        // Orchestrator (Scoped because it injects Scoped services)
+        services.AddScoped<CollectionOrchestrator>();
 
         return services;
     }
@@ -67,14 +69,10 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Creates and ensures the database exists.
     /// </summary>
-    public static async Task EnsureDatabaseAsync(this IServiceProvider serviceProvider)
+    public static async Task EnsureDatabaseAsync(this IServiceProvider serviceProvider, string dataDir)
     {
-        // Ensure data directory exists
-        var dataDir = Path.Combine(Directory.GetCurrentDirectory(), "data");
-        if (!Directory.Exists(dataDir))
-        {
-            Directory.CreateDirectory(dataDir);
-        }
+        Directory.CreateDirectory(dataDir);
+        Directory.CreateDirectory(Path.Combine(dataDir, "logs"));
 
         using var scope = serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TrackerDbContext>();

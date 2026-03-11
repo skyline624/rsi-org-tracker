@@ -1,3 +1,5 @@
+using System.Net.Http;
+using System.Net.Http;
 using Collector.Data.Repositories;
 using Collector.Dtos;
 using Collector.Models;
@@ -64,13 +66,16 @@ public class OrganizationCollector : IOrganizationCollector
             _options.OrganizationPageSize,
             ct);
 
+        // Load all existing SIDs in a single query (fixes N+1 problem)
+        var existingSids = await _discoveredRepo.GetAllSidsAsync(ct);
+        var existingSidSet = new HashSet<string>(existingSids, StringComparer.OrdinalIgnoreCase);
+
         var newCount = 0;
         var timestamp = DateTime.UtcNow;
 
         foreach (var org in allOrgs)
         {
-            var exists = await _discoveredRepo.ExistsAsync(org.Sid, ct);
-            if (!exists)
+            if (!existingSidSet.Contains(org.Sid))
             {
                 var discovered = new DiscoveredOrganization
                 {
@@ -155,9 +160,19 @@ public class OrganizationCollector : IOrganizationCollector
 
                 processedCount++;
             }
+            catch (OperationCanceledException)
+            {
+                throw; // Propagate cancellation
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogWarning(ex, "HTTP error processing organization {Sid}", discoveredOrg.Sid);
+                // Continue with next organization
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing organization {Sid}", discoveredOrg.Sid);
+                _logger.LogError(ex, "Unexpected error processing organization {Sid}", discoveredOrg.Sid);
+                throw;
             }
         }
 

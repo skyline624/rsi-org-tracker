@@ -12,6 +12,13 @@ public class DiscoveredOrganizationRepository : Repository<DiscoveredOrganizatio
         return await DbSet.AnyAsync(d => d.Sid == sid, ct);
     }
 
+    public async Task<IReadOnlyList<string>> GetAllSidsAsync(CancellationToken ct = default)
+    {
+        return await DbSet
+            .Select(d => d.Sid)
+            .ToListAsync(ct);
+    }
+
     public async Task<IReadOnlyList<DiscoveredOrganization>> GetAllUnprocessedAsync(CancellationToken ct = default)
     {
         // All discovered orgs are considered unprocessed until metadata is collected

@@ -1,8 +1,10 @@
+using System.Net.Http;
 using System.Text.Json;
 using Collector.Data.Repositories;
 using Collector.Dtos;
 using Collector.Models;
 using Collector.Options;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -78,9 +80,19 @@ public class MemberCollector : IMemberCollector
                 var count = await CollectMembersForOrganizationAsync(org.Sid, ct);
                 totalMembers += count;
             }
+            catch (OperationCanceledException)
+            {
+                throw; // Propagate cancellation
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogWarning(ex, "HTTP error collecting members for organization {Sid}", org.Sid);
+                // Continue with next organization
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error collecting members for organization {Sid}", org.Sid);
+                _logger.LogError(ex, "Unexpected error collecting members for organization {Sid}", org.Sid);
+                throw;
             }
         }
 
@@ -122,69 +134,80 @@ public class MemberCollector : IMemberCollector
         // Detect changes
         var changes = _changeDetector.DetectMemberChanges(orgSid, previousSnapshots, currentSnapshots);
 
-        // Save member snapshots
-        var memberEntities = members.Select(m => new OrganizationMember
+        // Use transaction for data consistency
+        await using var transaction = await _memberRepo.BeginTransactionAsync(ct);
+        try
         {
-            OrgSid = orgSid,
-            UserHandle = m.Handle,
-            CitizenId = m.CitizenId,
-            DisplayName = m.DisplayName,
-            Rank = m.Rank,
-            RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null,
-            UrlImage = m.UrlImage,
-            Timestamp = timestamp
-        }).ToList();
-
-        await _memberRepo.AddRangeAsync(memberEntities, ct);
-
-        // Save collection log
-        var logEntries = members.Select(m => new MemberCollectionLog
-        {
-            OrgSid = orgSid,
-            CollectionTime = timestamp,
-            CitizenId = m.CitizenId,
-            UserHandle = m.Handle
-        }).ToList();
-
-        await _logRepo.AddRangeAsync(logEntries, ct);
-
-        // Save change events
-        if (changes.Count > 0)
-        {
-            await _changeEventRepo.AddRangeAsync(changes, ct);
-        }
-
-        // Queue new users for enrichment
-        var knownHandles = await _userRepo.GetAllAsync(ct);
-        var knownHandleSet = new HashSet<string>(knownHandles.Select(u => u.UserHandle), StringComparer.OrdinalIgnoreCase);
-
-        var newMembers = members.Where(m => !knownHandleSet.Contains(m.Handle)).ToList();
-        var queuedHandles = await _enrichmentQueueRepo.GetPendingAsync(_options.BatchSize, ct);
-        var queuedHandleSet = new HashSet<string>(queuedHandles.Select(q => q.UserHandle), StringComparer.OrdinalIgnoreCase);
-
-        var toQueue = newMembers
-            .Where(m => !queuedHandleSet.Contains(m.Handle))
-            .Select(m => new UserEnrichmentQueue
+            // Save member snapshots
+            var memberEntities = members.Select(m => new OrganizationMember
             {
+                OrgSid = orgSid,
                 UserHandle = m.Handle,
-                Priority = 0,
-                Enriched = false,
-                QueuedAt = timestamp
-            })
-            .ToList();
+                CitizenId = m.CitizenId,
+                DisplayName = m.DisplayName,
+                Rank = m.Rank,
+                RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null,
+                UrlImage = m.UrlImage,
+                Timestamp = timestamp
+            }).ToList();
 
-        if (toQueue.Count > 0)
-        {
-            await _enrichmentQueueRepo.AddRangeAsync(toQueue, ct);
+            await _memberRepo.AddRangeAsync(memberEntities, ct);
+
+            // Save collection log
+            var logEntries = members.Select(m => new MemberCollectionLog
+            {
+                OrgSid = orgSid,
+                CollectionTime = timestamp,
+                CitizenId = m.CitizenId,
+                UserHandle = m.Handle
+            }).ToList();
+
+            await _logRepo.AddRangeAsync(logEntries, ct);
+
+            // Save change events
+            if (changes.Count > 0)
+            {
+                await _changeEventRepo.AddRangeAsync(changes, ct);
+            }
+
+            // Queue new users for enrichment
+            var knownHandles = await _userRepo.GetAllAsync(ct);
+            var knownHandleSet = new HashSet<string>(knownHandles.Select(u => u.UserHandle), StringComparer.OrdinalIgnoreCase);
+
+            var newMembers = members.Where(m => !knownHandleSet.Contains(m.Handle)).ToList();
+            var queuedHandles = await _enrichmentQueueRepo.GetPendingAsync(_options.BatchSize, ct);
+            var queuedHandleSet = new HashSet<string>(queuedHandles.Select(q => q.UserHandle), StringComparer.OrdinalIgnoreCase);
+
+            var toQueue = newMembers
+                .Where(m => !queuedHandleSet.Contains(m.Handle))
+                .Select(m => new UserEnrichmentQueue
+                {
+                    UserHandle = m.Handle,
+                    Priority = 0,
+                    Enriched = false,
+                    QueuedAt = timestamp
+                })
+                .ToList();
+
+            if (toQueue.Count > 0)
+            {
+                await _enrichmentQueueRepo.AddRangeAsync(toQueue, ct);
+            }
+
+            await _memberRepo.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            _logger.LogInformation(
+                "Collected {Count} members for {Sid}, detected {Changes} changes, queued {NewUsers} new users",
+                members.Count, orgSid, changes.Count, toQueue.Count);
+
+            return members.Count;
         }
-
-        await _memberRepo.SaveChangesAsync(ct);
-
-        _logger.LogInformation(
-            "Collected {Count} members for {Sid}, detected {Changes} changes, queued {NewUsers} new users",
-            members.Count, orgSid, changes.Count, toQueue.Count);
-
-        return members.Count;
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            throw;
+        }
     }
 
     private async Task<IReadOnlyList<MemberSnapshot>> GetPreviousSnapshotsAsync(
