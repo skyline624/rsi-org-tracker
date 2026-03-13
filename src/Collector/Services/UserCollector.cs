@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Text.Json;
 using Collector.Data.Repositories;
 using Collector.Models;
 using Collector.Options;
@@ -20,9 +21,11 @@ public interface IUserCollector
     Task<int> EnrichAllUsersAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Enriches a single user profile.
+    /// Enriches a single user profile from pre-fetched HTML.
     /// </summary>
-    Task<bool> EnrichUserAsync(string handle, CancellationToken ct = default);
+    /// <param name="isNewHandle">True if this handle was never seen before — Phase 4 will emit member_joined if truly new, or handle_changed if renamed.</param>
+    /// <param name="html">Pre-fetched profile page HTML.</param>
+    Task<bool> EnrichUserAsync(string handle, bool isNewHandle, string html, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -34,6 +37,7 @@ public class UserCollector : IUserCollector
     private readonly IUserRepository _userRepo;
     private readonly IUserHandleHistoryRepository _handleHistoryRepo;
     private readonly IUserEnrichmentQueueRepository _queueRepo;
+    private readonly IOrganizationMemberRepository _memberRepo;
     private readonly IChangeEventRepository _changeEventRepo;
     private readonly IUserChangeDetector _userChangeDetector;
     private readonly UserProfileHtmlParser _profileParser;
@@ -45,6 +49,7 @@ public class UserCollector : IUserCollector
         IUserRepository userRepo,
         IUserHandleHistoryRepository handleHistoryRepo,
         IUserEnrichmentQueueRepository queueRepo,
+        IOrganizationMemberRepository memberRepo,
         IChangeEventRepository changeEventRepo,
         IUserChangeDetector userChangeDetector,
         UserProfileHtmlParser profileParser,
@@ -55,6 +60,7 @@ public class UserCollector : IUserCollector
         _userRepo = userRepo;
         _handleHistoryRepo = handleHistoryRepo;
         _queueRepo = queueRepo;
+        _memberRepo = memberRepo;
         _changeEventRepo = changeEventRepo;
         _userChangeDetector = userChangeDetector;
         _profileParser = profileParser;
@@ -67,75 +73,101 @@ public class UserCollector : IUserCollector
         _logger.LogInformation("Starting user enrichment (Phase 4)");
 
         var processedCount = 0;
-        var batchSize = _options.BatchSize;
+        var skippedCount = 0;
+        var fetchBatchSize = Math.Max(1, _options.MaxConcurrentRequests) * 2;
 
         while (true)
         {
-            var pending = await _queueRepo.GetPendingAsync(batchSize, ct);
+            var pending = await _queueRepo.GetPendingAsync(fetchBatchSize, ct);
             if (pending.Count == 0)
             {
-                _logger.LogInformation("No more users to enrich");
+                _logger.LogInformation("Phase 4: no more users to enrich");
                 break;
             }
 
-            // Use transaction for batch consistency
-            await using var transaction = await _userRepo.BeginTransactionAsync(ct);
-            try
+            ct.ThrowIfCancellationRequested();
+
+            // ── Fetch profiles concurrently ───────────────────────────────
+            // GetUserProfileHtmlAsync handles its own semaphore (MaxConcurrentRequests slots)
+            var fetchTasks = pending
+                .Select(item => FetchProfileSafeAsync(item.UserHandle, ct))
+                .ToList();
+            var htmlResults = await Task.WhenAll(fetchTasks);
+
+            // ── Process results sequentially (EF Core DbContext not thread-safe) ──
+            for (int i = 0; i < pending.Count; i++)
             {
-                foreach (var item in pending)
+                var item = pending[i];
+                var html = htmlResults[i];
+
+                try
                 {
-                    try
+                    if (string.IsNullOrEmpty(html))
                     {
-                        var success = await EnrichUserAsync(item.UserHandle, ct);
-                        if (success)
-                        {
-                            await _queueRepo.MarkEnrichedAsync(item.Id, ct);
-                            processedCount++;
-                        }
-                        else
-                        {
-                            await _queueRepo.IncrementAttemptAsync(item.Id, "Profile not found or parse error", ct);
-                        }
+                        await _queueRepo.IncrementAttemptAsync(item.Id, "Profile not found or fetch error", ct);
+                        skippedCount++;
+                        continue;
                     }
-                    catch (OperationCanceledException)
+
+                    var success = await EnrichUserAsync(item.UserHandle, item.Priority >= 1, html, ct);
+                    if (success)
                     {
-                        throw; // Propagate cancellation
+                        await _queueRepo.MarkEnrichedAsync(item.Id, ct);
+                        processedCount++;
                     }
-                    catch (HttpRequestException ex)
+                    else
                     {
-                        _logger.LogWarning(ex, "HTTP error enriching user {Handle}", item.UserHandle);
-                        await _queueRepo.IncrementAttemptAsync(item.Id, ex.Message, ct);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Unexpected error enriching user {Handle}", item.UserHandle);
-                        await _queueRepo.IncrementAttemptAsync(item.Id, ex.Message, ct);
+                        await _queueRepo.IncrementAttemptAsync(item.Id, "Profile not found or parse error", ct);
+                        skippedCount++;
                     }
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected error enriching user {Handle}", item.UserHandle);
+                    await _queueRepo.IncrementAttemptAsync(item.Id, ex.Message, ct);
+                    skippedCount++;
+                }
+            }
 
-                await _userRepo.SaveChangesAsync(ct);
-                await transaction.CommitAsync(ct);
-            }
-            catch
-            {
-                await transaction.RollbackAsync(ct);
-                throw;
-            }
+            _logger.LogInformation(
+                "Phase 4 progress: {Processed} enriched, {Skipped} skipped so far",
+                processedCount, skippedCount);
         }
 
-        _logger.LogInformation("User enrichment complete: {Count} users processed", processedCount);
+        _logger.LogInformation(
+            "Phase 4 complete: {Count} users enriched, {Skipped} skipped",
+            processedCount, skippedCount);
         return processedCount;
     }
 
-    public async Task<bool> EnrichUserAsync(string handle, CancellationToken ct = default)
+    private async Task<string?> FetchProfileSafeAsync(string handle, CancellationToken ct)
     {
-        var html = await _apiClient.GetUserProfileHtmlAsync(handle, ct);
-        if (string.IsNullOrEmpty(html))
+        try
         {
-            _logger.LogWarning("No profile HTML returned for user {Handle}", handle);
-            return false;
+            return await _apiClient.GetUserProfileHtmlAsync(handle, ct);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "HTTP error fetching profile for {Handle}", handle);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error fetching profile for {Handle}", handle);
+            return null;
+        }
+    }
 
+    public async Task<bool> EnrichUserAsync(string handle, bool isNewHandle, string html, CancellationToken ct = default)
+    {
         var profileData = _profileParser.ParseUserProfile(html);
         if (profileData == null)
         {
@@ -143,20 +175,21 @@ public class UserCollector : IUserCollector
             return false;
         }
 
-        // Get existing user
-        var existingUser = profileData.CitizenId > 0
-            ? await _userRepo.GetByCitizenIdAsync(profileData.CitizenId, ct)
-            : await _userRepo.GetByHandleAsync(handle, ct);
-
         var timestamp = DateTime.UtcNow;
+        var changeEvents = new List<ChangeEvent>();
 
-        // Use transaction for data consistency
+        // Look up by citizen_id first (most reliable), then by handle
+        var existingByCitizenId = profileData.CitizenId > 0
+            ? await _userRepo.GetByCitizenIdAsync(profileData.CitizenId, ct)
+            : null;
+        var existingByHandle = await _userRepo.GetByHandleAsync(handle, ct);
+
         await using var transaction = await _userRepo.BeginTransactionAsync(ct);
         try
         {
-            if (existingUser == null)
+            if (existingByCitizenId == null && existingByHandle == null)
             {
-                // Create new user
+                // Truly new user — create and emit member_joined for all their orgs
                 var newUser = new User
                 {
                     CitizenId = profileData.CitizenId,
@@ -169,30 +202,99 @@ public class UserCollector : IUserCollector
                     CreatedAt = timestamp,
                     UpdatedAt = timestamp
                 };
-
                 await _userRepo.AddAsync(newUser, ct);
 
-                // Add handle history entry
                 if (profileData.CitizenId > 0)
                 {
-                    var handleHistory = new UserHandleHistory
+                    await _handleHistoryRepo.AddAsync(new UserHandleHistory
                     {
                         CitizenId = profileData.CitizenId,
                         UserHandle = profileData.Handle,
                         FirstSeen = timestamp,
                         LastSeen = timestamp
-                    };
+                    }, ct);
 
-                    await _handleHistoryRepo.AddAsync(handleHistory, ct);
+                    await _memberRepo.UpdateCitizenIdByHandleAsync(handle, profileData.CitizenId, ct);
                 }
 
-                _logger.LogDebug("Created new user {Handle} (citizen_id: {CitizenId})",
-                    handle, profileData.CitizenId);
+                if (isNewHandle)
+                {
+                    // Emit member_joined for each org this handle belongs to
+                    var memberships = await _memberRepo.GetByUserHandleAsync(handle, ct);
+                    foreach (var orgSid in memberships.Select(m => m.OrgSid).Distinct())
+                    {
+                        changeEvents.Add(new ChangeEvent
+                        {
+                            Timestamp = timestamp,
+                            EntityType = "member",
+                            EntityId = handle,
+                            ChangeType = "member_joined",
+                            OldValue = null,
+                            NewValue = JsonSerializer.Serialize(new { Handle = handle, CitizenId = profileData.CitizenId }),
+                            OrgSid = orgSid,
+                            UserHandle = handle
+                        });
+                    }
+                }
+
+                _logger.LogDebug("New user {Handle} (citizen_id: {CitizenId})", handle, profileData.CitizenId);
+            }
+            else if (existingByCitizenId != null && existingByCitizenId.UserHandle != handle)
+            {
+                // Same citizen_id but different handle → rename
+                var oldHandle = existingByCitizenId.UserHandle;
+
+                var memberships = await _memberRepo.GetByUserHandleAsync(handle, ct);
+                foreach (var orgSid in memberships.Select(m => m.OrgSid).Distinct())
+                {
+                    changeEvents.Add(new ChangeEvent
+                    {
+                        Timestamp = timestamp,
+                        EntityType = "member",
+                        EntityId = handle,
+                        ChangeType = "handle_changed",
+                        OldValue = oldHandle,
+                        NewValue = handle,
+                        OrgSid = orgSid,
+                        UserHandle = handle
+                    });
+                }
+
+                existingByCitizenId.UserHandle = profileData.Handle;
+                existingByCitizenId.DisplayName = profileData.DisplayName;
+                existingByCitizenId.UrlImage = profileData.UrlImage;
+                existingByCitizenId.Bio = profileData.Bio;
+                existingByCitizenId.Location = profileData.Location;
+                existingByCitizenId.Enlisted = profileData.Enlisted;
+                existingByCitizenId.UpdatedAt = timestamp;
+
+                // Add handle history entry for the new handle
+                var latestHistory = await _handleHistoryRepo.GetLatestAsync(profileData.CitizenId, ct);
+                if (latestHistory == null || latestHistory.UserHandle != profileData.Handle)
+                {
+                    await _handleHistoryRepo.AddAsync(new UserHandleHistory
+                    {
+                        CitizenId = profileData.CitizenId,
+                        UserHandle = profileData.Handle,
+                        FirstSeen = timestamp,
+                        LastSeen = timestamp
+                    }, ct);
+                }
+                else
+                {
+                    latestHistory.LastSeen = timestamp;
+                }
+
+                await _memberRepo.UpdateCitizenIdByHandleAsync(handle, profileData.CitizenId, ct);
+
+                _logger.LogInformation("Handle renamed: {OldHandle} → {NewHandle} (citizen_id: {CitizenId})",
+                    oldHandle, handle, profileData.CitizenId);
             }
             else
             {
-                // Update existing user and detect changes
-                var changes = _userChangeDetector.DetectUserChanges(existingUser, profileData);
+                // Known user, same handle — update info and detect changes
+                var existingUser = existingByCitizenId ?? existingByHandle!;
+                var userChanges = _userChangeDetector.DetectUserChanges(existingUser, profileData);
 
                 existingUser.UserHandle = profileData.Handle;
                 existingUser.DisplayName = profileData.DisplayName;
@@ -202,37 +304,16 @@ public class UserCollector : IUserCollector
                 existingUser.Enlisted = profileData.Enlisted;
                 existingUser.UpdatedAt = timestamp;
 
-                // Update handle history if handle changed
-                if (profileData.CitizenId > 0 && profileData.Handle != existingUser.UserHandle)
-                {
-                    var handleHistory = await _handleHistoryRepo.GetLatestAsync(profileData.CitizenId, ct);
-                    if (handleHistory == null || handleHistory.UserHandle != profileData.Handle)
-                    {
-                        var newHistory = new UserHandleHistory
-                        {
-                            CitizenId = profileData.CitizenId,
-                            UserHandle = profileData.Handle,
-                            FirstSeen = timestamp,
-                            LastSeen = timestamp
-                        };
+                if (profileData.CitizenId > 0)
+                    await _memberRepo.UpdateCitizenIdByHandleAsync(handle, profileData.CitizenId, ct);
 
-                        await _handleHistoryRepo.AddAsync(newHistory, ct);
-                    }
-                    else
-                    {
-                        handleHistory.LastSeen = timestamp;
-                    }
-                }
+                changeEvents.AddRange(userChanges);
 
-                // Save change events
-                if (changes.Count > 0)
-                {
-                    await _changeEventRepo.AddRangeAsync(changes, ct);
-                }
-
-                _logger.LogDebug("Updated user {Handle} (citizen_id: {CitizenId})",
-                    handle, profileData.CitizenId);
+                _logger.LogDebug("Updated user {Handle} (citizen_id: {CitizenId})", handle, profileData.CitizenId);
             }
+
+            if (changeEvents.Count > 0)
+                await _changeEventRepo.AddRangeAsync(changeEvents, ct);
 
             await _userRepo.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);

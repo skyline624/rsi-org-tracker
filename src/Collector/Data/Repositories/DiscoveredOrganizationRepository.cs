@@ -25,6 +25,19 @@ public class DiscoveredOrganizationRepository : Repository<DiscoveredOrganizatio
         return await DbSet.ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<DiscoveredOrganization>> GetStaleAsync(DateTime since, CancellationToken ct = default)
+    {
+        // Orgs whose latest organizations row is older than `since` (or have none with ContentCollected=true)
+        var freshSids = Context.Organizations
+            .Where(o => o.Timestamp >= since && o.ContentCollected)
+            .Select(o => o.Sid)
+            .Distinct();
+
+        return await DbSet
+            .Where(d => !freshSids.Contains(d.Sid))
+            .ToListAsync(ct);
+    }
+
     public async Task MarkProcessedAsync(string sid, CancellationToken ct = default)
     {
         // In the current design, we don't need to mark processed

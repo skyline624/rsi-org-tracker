@@ -29,6 +29,13 @@ public interface IRsiApiClient
         CancellationToken ct = default);
 
     /// <summary>
+    /// Gets metadata for a single organization by SID.
+    /// </summary>
+    Task<OrganizationData?> GetOrganizationAsync(
+        string sid,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Gets all organizations using pagination.
     /// </summary>
     Task<IReadOnlyList<OrganizationData>> GetAllOrganizationsAsync(
@@ -54,6 +61,13 @@ public interface IRsiApiClient
         CancellationToken ct = default);
 
     /// <summary>
+    /// Gets the full HTML of an organization page (for description, history, manifesto, charter).
+    /// </summary>
+    Task<string?> GetOrgPageHtmlAsync(
+        string sid,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Gets a user's profile page HTML.
     /// </summary>
     Task<string?> GetUserProfileHtmlAsync(
@@ -73,6 +87,7 @@ public class RsiApiClient : IRsiApiClient, IDisposable
     private readonly MemberHtmlParser _memberParser;
     private readonly IAsyncPolicy<HttpResponseMessage> _resiliencePolicy;
     private readonly SemaphoreSlim _rateLimitSemaphore;
+    private readonly SemaphoreSlim _concurrentPageSemaphore;
     private DateTime _lastRequestTime = DateTime.MinValue;
 
     public RsiApiClient(
@@ -88,6 +103,9 @@ public class RsiApiClient : IRsiApiClient, IDisposable
         _orgParser = orgParser;
         _memberParser = memberParser;
         _rateLimitSemaphore = new SemaphoreSlim(1, 1);
+        _concurrentPageSemaphore = new SemaphoreSlim(
+            _options.MaxConcurrentRequests,
+            _options.MaxConcurrentRequests);
 
         // Configure retry policy with exponential backoff
         var retryPolicy = Policy<HttpResponseMessage>
@@ -201,6 +219,14 @@ public class RsiApiClient : IRsiApiClient, IDisposable
         throw new RsiThrottledException();
     }
 
+    public async Task<OrganizationData?> GetOrganizationAsync(
+        string sid,
+        CancellationToken ct = default)
+    {
+        var orgs = await GetOrganizationsAsync(page: 1, search: sid, pageSize: 1, ct: ct);
+        return orgs?.FirstOrDefault(o => string.Equals(o.Sid, sid, StringComparison.OrdinalIgnoreCase));
+    }
+
     public async Task<IReadOnlyList<OrganizationData>?> GetOrganizationsAsync(
         int page = 1,
         string search = "",
@@ -267,6 +293,13 @@ public class RsiApiClient : IRsiApiClient, IDisposable
                 foreach (var org in orgs)
                 {
                     allOrganizations[org.Sid] = org;
+                }
+
+                if (page % 10 == 0)
+                {
+                    _logger.LogInformation(
+                        "Discovery progress: page {Page}, {Count} organizations found so far",
+                        page, allOrganizations.Count);
                 }
 
                 page++;
@@ -357,28 +390,98 @@ public class RsiApiClient : IRsiApiClient, IDisposable
         return allMembers;
     }
 
-    public async Task<string?> GetUserProfileHtmlAsync(string handle, CancellationToken ct = default)
+    public async Task<string?> GetOrgPageHtmlAsync(string sid, CancellationToken ct = default)
     {
-        await ApplyRateLimitAsync(ct);
-
-        var url = $"{BaseUrl}/citizens/{handle}";
-        var response = await _resiliencePolicy.ExecuteAsync(async token =>
+        await _concurrentPageSemaphore.WaitAsync(ct);
+        try
         {
-            return await _httpClient.GetAsync(url, token);
-        }, ct);
+            var url = $"{BaseUrl}/en/orgs/{sid}";
+            const int maxRetries = 4;
+            var backoff = TimeSpan.FromSeconds(30);
 
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            _logger.LogWarning("User profile not found: {Handle}", handle);
+            for (int attempt = 0; attempt < maxRetries; attempt++)
+            {
+                var response = await _resiliencePolicy.ExecuteAsync(async token =>
+                    await _httpClient.GetAsync(url, token), ct);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    _logger.LogWarning("Org page not found: {Sid}", sid);
+                    return null;
+                }
+
+                // Rate limited — wait and retry with exponential backoff
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+                    || response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+                {
+                    _logger.LogWarning(
+                        "Rate limited fetching org page {Sid} (HTTP {Code}). Waiting {Delay}s (attempt {Attempt}/{Max})",
+                        sid, (int)response.StatusCode, backoff.TotalSeconds, attempt + 1, maxRetries);
+                    await Task.Delay(backoff, ct);
+                    backoff = TimeSpan.FromSeconds(backoff.TotalSeconds * 2); // 30s → 60s → 120s → 240s
+                    continue;
+                }
+
+                response.EnsureSuccessStatusCode();
+                return await response.Content.ReadAsStringAsync(ct);
+            }
+
+            _logger.LogError("Max retries exceeded for org page {Sid}", sid);
             return null;
         }
+        finally
+        {
+            _concurrentPageSemaphore.Release();
+        }
+    }
 
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync(ct);
+    public async Task<string?> GetUserProfileHtmlAsync(string handle, CancellationToken ct = default)
+    {
+        await _concurrentPageSemaphore.WaitAsync(ct);
+        try
+        {
+            var url = $"{BaseUrl}/citizens/{handle}";
+            const int maxRetries = 4;
+            var backoff = TimeSpan.FromSeconds(30);
+
+            for (int attempt = 0; attempt < maxRetries; attempt++)
+            {
+                var response = await _resiliencePolicy.ExecuteAsync(async token =>
+                    await _httpClient.GetAsync(url, token), ct);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    _logger.LogWarning("User profile not found: {Handle}", handle);
+                    return null;
+                }
+
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+                    || response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+                {
+                    _logger.LogWarning(
+                        "Rate limited fetching profile {Handle} (HTTP {Code}). Waiting {Delay}s (attempt {Attempt}/{Max})",
+                        handle, (int)response.StatusCode, backoff.TotalSeconds, attempt + 1, maxRetries);
+                    await Task.Delay(backoff, ct);
+                    backoff = TimeSpan.FromSeconds(backoff.TotalSeconds * 2);
+                    continue;
+                }
+
+                response.EnsureSuccessStatusCode();
+                return await response.Content.ReadAsStringAsync(ct);
+            }
+
+            _logger.LogError("Max retries exceeded for user profile {Handle}", handle);
+            return null;
+        }
+        finally
+        {
+            _concurrentPageSemaphore.Release();
+        }
     }
 
     public void Dispose()
     {
         _rateLimitSemaphore.Dispose();
+        _concurrentPageSemaphore.Dispose();
     }
 }

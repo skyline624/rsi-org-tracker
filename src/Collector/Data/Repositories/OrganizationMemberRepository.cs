@@ -48,4 +48,11 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
 
         return members.ToDictionary(m => m.UserHandle);
     }
+
+    public async Task UpdateCitizenIdByHandleAsync(string handle, int citizenId, CancellationToken ct = default)
+    {
+        await DbSet
+            .Where(m => m.UserHandle == handle && m.CitizenId == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.CitizenId, citizenId), ct);
+    }
 }

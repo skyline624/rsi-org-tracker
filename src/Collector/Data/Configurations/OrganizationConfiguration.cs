@@ -42,5 +42,16 @@ public class OrganizationConfiguration : IEntityTypeConfiguration<Organization>
 
         builder.Property(o => o.Commitment)
             .HasMaxLength(100);
+
+        // Extended content fields (Phase 2)
+        builder.Property(o => o.Description);
+        builder.Property(o => o.History);
+        builder.Property(o => o.Manifesto);
+        builder.Property(o => o.Charter);
+        builder.Property(o => o.FocusPrimaryName).HasMaxLength(200);
+        builder.Property(o => o.FocusPrimaryImage).HasMaxLength(2000);
+        builder.Property(o => o.FocusSecondaryName).HasMaxLength(200);
+        builder.Property(o => o.FocusSecondaryImage).HasMaxLength(2000);
+        builder.Property(o => o.ContentCollected).HasDefaultValue(false);
     }
 }

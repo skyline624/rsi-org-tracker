@@ -149,18 +149,10 @@ public class OrganizationHtmlParser
     {
         var values = new List<string>();
 
-        // Try info items
-        var infoNodes = cell.SelectNodes(".//*[contains(@class, 'info-item')]//*[contains(@class, 'value')]");
+        var infoNodes = cell.SelectNodes(".//*[contains(@class, 'infoitem')]//*[contains(@class, 'value')]");
         if (infoNodes != null)
         {
             values.AddRange(infoNodes.Select(n => n.InnerText?.Trim() ?? ""));
-        }
-
-        // Try alternative: stat values
-        var statNodes = cell.SelectNodes(".//*[contains(@class, 'stat')]//*[contains(@class, 'value')]");
-        if (statNodes != null)
-        {
-            values.AddRange(statNodes.Select(n => n.InnerText?.Trim() ?? ""));
         }
 
         return values;

@@ -43,6 +43,7 @@ public static class ServiceCollectionExtensions
 
         // Parsers
         services.AddSingleton<OrganizationHtmlParser>();
+        services.AddSingleton<OrgPageHtmlParser>();
         services.AddSingleton<MemberHtmlParser>();
         services.AddSingleton<UserProfileHtmlParser>();
 
@@ -63,6 +64,9 @@ public static class ServiceCollectionExtensions
         // Orchestrator (Scoped because it injects Scoped services)
         services.AddScoped<CollectionOrchestrator>();
 
+        // Integrity check
+        services.AddScoped<IIntegrityCheckService, IntegrityCheckService>();
+
         return services;
     }
 
@@ -72,7 +76,6 @@ public static class ServiceCollectionExtensions
     public static async Task EnsureDatabaseAsync(this IServiceProvider serviceProvider, string dataDir)
     {
         Directory.CreateDirectory(dataDir);
-        Directory.CreateDirectory(Path.Combine(dataDir, "logs"));
 
         using var scope = serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TrackerDbContext>();

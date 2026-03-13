@@ -24,11 +24,11 @@ public class MemberHtmlParser
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
 
-        var rows = doc.DocumentNode.SelectNodes("//tr[contains(@class, 'member-item')]");
+        var rows = doc.DocumentNode.SelectNodes("//li[contains(@class, 'member-item')]");
         if (rows == null || rows.Count == 0)
         {
-            // Try alternative: data rows
-            rows = doc.DocumentNode.SelectNodes("//tr[.//a[contains(@href, '/citizens/')]]");
+            // Try alternative: any list item with a citizen link
+            rows = doc.DocumentNode.SelectNodes("//li[.//a[contains(@href, '/citizens/')]]");
         }
 
         if (rows == null || rows.Count == 0)

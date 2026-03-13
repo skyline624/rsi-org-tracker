@@ -11,6 +11,9 @@ try
     // Data directory is always at project root (one level above the bin folder)
     var dataDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "data"));
 
+    // Create data directories before anything else (Serilog needs logs/ to exist)
+    Directory.CreateDirectory(Path.Combine(dataDir, "logs"));
+
     Console.WriteLine("Starting SC-Organizations-Tracker Collector...");
 
     // Build host
@@ -67,8 +70,22 @@ try
 
     // Check for single run mode
     var singleRun = args.Contains("--single-run") || args.Contains("-s");
+    var integrityCheck = args.Contains("--integrity-check") || args.Contains("-i");
 
-    if (singleRun)
+    // Parse --sample N (default 10)
+    var sampleSize = 10;
+    var sampleIdx = Array.IndexOf(args, "--sample");
+    if (sampleIdx >= 0 && sampleIdx + 1 < args.Length && int.TryParse(args[sampleIdx + 1], out var parsed))
+        sampleSize = parsed;
+
+    if (integrityCheck)
+    {
+        logger.LogInformation("Running integrity check (sample size: {N})", sampleSize);
+        using var scope = host.Services.CreateScope();
+        var checker = scope.ServiceProvider.GetRequiredService<IIntegrityCheckService>();
+        await checker.RunCheckAsync(sampleSize, ct);
+    }
+    else if (singleRun)
     {
         logger.LogInformation("Running in single-run mode");
         await orchestrator.RunSingleCycleAsync(ct);

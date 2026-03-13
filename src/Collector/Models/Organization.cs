@@ -62,4 +62,33 @@ public class Organization
     /// Current member count.
     /// </summary>
     public int MembersCount { get; set; }
+
+    // ── Extended content (Phase 2) ─────────────────────────────────────────
+
+    /// <summary>Short description/about text.</summary>
+    public string? Description { get; set; }
+
+    /// <summary>History section text.</summary>
+    public string? History { get; set; }
+
+    /// <summary>Manifesto section text.</summary>
+    public string? Manifesto { get; set; }
+
+    /// <summary>Charter section text.</summary>
+    public string? Charter { get; set; }
+
+    /// <summary>Primary focus area name.</summary>
+    public string? FocusPrimaryName { get; set; }
+
+    /// <summary>Primary focus area image URL.</summary>
+    public string? FocusPrimaryImage { get; set; }
+
+    /// <summary>Secondary focus area name.</summary>
+    public string? FocusSecondaryName { get; set; }
+
+    /// <summary>Secondary focus area image URL.</summary>
+    public string? FocusSecondaryImage { get; set; }
+
+    /// <summary>Whether extended content has been collected (Phase 2).</summary>
+    public bool ContentCollected { get; set; }
 }

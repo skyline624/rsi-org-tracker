@@ -54,4 +54,15 @@ public class CollectorOptions
     /// Number of empty pages before stopping discovery.
     /// </summary>
     public int EmptyPagesThreshold { get; set; } = 5;
+
+    /// <summary>
+    /// Maximum pages to fetch per sort method during discovery (0 = unlimited).
+    /// </summary>
+    public int DiscoveryMaxPages { get; set; } = 0;
+
+    /// <summary>
+    /// How many hours before an org's extended content (description/history/manifesto/charter) is considered stale
+    /// and eligible for re-collection in Phase 2. Default: 168h (7 days).
+    /// </summary>
+    public int MetadataRefreshIntervalHours { get; set; } = 168;
 }

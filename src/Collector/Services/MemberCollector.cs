@@ -131,8 +131,18 @@ public class MemberCollector : IMemberCollector
             Roles = m.Roles
         }).ToList();
 
-        // Detect changes
-        var changes = _changeDetector.DetectMemberChanges(orgSid, previousSnapshots, currentSnapshots);
+        // Identify new handles (in current but not in previous collection)
+        var previousHandleSet = new HashSet<string>(previousSnapshots.Select(s => s.Handle), StringComparer.OrdinalIgnoreCase);
+        var newHandleSet = new HashSet<string>(
+            members.Where(m => !previousHandleSet.Contains(m.Handle)).Select(m => m.Handle),
+            StringComparer.OrdinalIgnoreCase);
+
+        // Detect changes but suppress member_joined for new handles — Phase 4 will emit them
+        // after verifying citizen_id (new player vs renamed player)
+        var allChanges = _changeDetector.DetectMemberChanges(orgSid, previousSnapshots, currentSnapshots);
+        var changes = allChanges
+            .Where(e => !(e.ChangeType == "member_joined" && e.UserHandle != null && newHandleSet.Contains(e.UserHandle)))
+            .ToList();
 
         // Use transaction for data consistency
         await using var transaction = await _memberRepo.BeginTransactionAsync(ct);
@@ -170,24 +180,43 @@ public class MemberCollector : IMemberCollector
                 await _changeEventRepo.AddRangeAsync(changes, ct);
             }
 
-            // Queue new users for enrichment
-            var knownHandles = await _userRepo.GetAllAsync(ct);
-            var knownHandleSet = new HashSet<string>(knownHandles.Select(u => u.UserHandle), StringComparer.OrdinalIgnoreCase);
-
-            var newMembers = members.Where(m => !knownHandleSet.Contains(m.Handle)).ToList();
+            // Load known users and already-queued handles
+            var knownUsers = await _userRepo.GetAllAsync(ct);
+            var knownByHandle = knownUsers.ToDictionary(u => u.UserHandle, u => u.DisplayName, StringComparer.OrdinalIgnoreCase);
             var queuedHandles = await _enrichmentQueueRepo.GetPendingAsync(_options.BatchSize, ct);
             var queuedHandleSet = new HashSet<string>(queuedHandles.Select(q => q.UserHandle), StringComparer.OrdinalIgnoreCase);
 
-            var toQueue = newMembers
-                .Where(m => !queuedHandleSet.Contains(m.Handle))
-                .Select(m => new UserEnrichmentQueue
+            var toQueue = new List<UserEnrichmentQueue>();
+
+            foreach (var member in members)
+            {
+                if (queuedHandleSet.Contains(member.Handle))
+                    continue;
+
+                if (newHandleSet.Contains(member.Handle))
                 {
-                    UserHandle = m.Handle,
-                    Priority = 0,
-                    Enriched = false,
-                    QueuedAt = timestamp
-                })
-                .ToList();
+                    // Priority 1 = new handle, Phase 4 must verify citizen_id and emit member_joined if truly new
+                    toQueue.Add(new UserEnrichmentQueue
+                    {
+                        UserHandle = member.Handle,
+                        Priority = 1,
+                        Enriched = false,
+                        QueuedAt = timestamp
+                    });
+                }
+                else if (knownByHandle.TryGetValue(member.Handle, out var knownDisplayName)
+                         && knownDisplayName != member.DisplayName)
+                {
+                    // Priority 0 = known handle but display name changed, Phase 4 updates it
+                    toQueue.Add(new UserEnrichmentQueue
+                    {
+                        UserHandle = member.Handle,
+                        Priority = 0,
+                        Enriched = false,
+                        QueuedAt = timestamp
+                    });
+                }
+            }
 
             if (toQueue.Count > 0)
             {

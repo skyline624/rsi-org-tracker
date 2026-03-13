@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Collector": {
+      "commandName": "Project",
+      "commandLineArgs": "--single-run"
+    },
+    "Collector (loop)": {
+      "commandName": "Project"
+    }
+  }
+}
