@@ -21,4 +21,11 @@ public class UserRepository : Repository<User>, IUserRepository
     {
         return await DbSet.AnyAsync(u => u.CitizenId == citizenId, ct);
     }
+
+    public async Task<Dictionary<string, string?>> GetDisplayNamesByHandlesAsync(IReadOnlyList<string> handles, CancellationToken ct = default)
+    {
+        return await DbSet
+            .Where(u => handles.Contains(u.UserHandle))
+            .ToDictionaryAsync(u => u.UserHandle, u => u.DisplayName, StringComparer.OrdinalIgnoreCase, ct);
+    }
 }

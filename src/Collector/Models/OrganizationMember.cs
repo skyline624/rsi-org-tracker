@@ -47,4 +47,10 @@ public class OrganizationMember
     /// URL to member's avatar image.
     /// </summary>
     public string? UrlImage { get; set; }
+
+    /// <summary>
+    /// Whether this member is currently active in the organization.
+    /// Set to false when the member is no longer seen in a collection cycle.
+    /// </summary>
+    public bool IsActive { get; set; } = true;
 }

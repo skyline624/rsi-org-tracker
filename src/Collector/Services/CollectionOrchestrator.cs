@@ -36,7 +36,7 @@ public class CollectionOrchestrator
     /// 3. Collect members
     /// 4. Enrich user profiles
     /// </summary>
-    public async Task RunCollectionLoopAsync(CancellationToken ct)
+    public async Task RunCollectionLoopAsync(CancellationToken ct, bool skipPhase2 = false)
     {
         _logger.LogInformation("Starting collection orchestrator");
 
@@ -52,9 +52,16 @@ public class CollectionOrchestrator
                 _logger.LogInformation("Phase 1 complete: {Count} organizations discovered", discoveredCount);
 
                 // Phase 2: Collect organization metadata
-                _logger.LogInformation("Phase 2: Collecting organization metadata");
-                var orgsProcessed = await _orgCollector.CollectOrganizationMetadataAsync(ct);
-                _logger.LogInformation("Phase 2 complete: {Count} organizations processed", orgsProcessed);
+                if (!skipPhase2)
+                {
+                    _logger.LogInformation("Phase 2: Collecting organization metadata");
+                    var orgsProcessed = await _orgCollector.CollectOrganizationMetadataAsync(ct);
+                    _logger.LogInformation("Phase 2 complete: {Count} organizations processed", orgsProcessed);
+                }
+                else
+                {
+                    _logger.LogInformation("Phase 2: Skipped (--skip-phase2)");
+                }
 
                 // Phase 3: Collect members
                 _logger.LogInformation("Phase 3: Collecting members");
@@ -93,7 +100,7 @@ public class CollectionOrchestrator
     /// <summary>
     /// Runs a single collection cycle (useful for testing).
     /// </summary>
-    public async Task RunSingleCycleAsync(CancellationToken ct = default)
+    public async Task RunSingleCycleAsync(CancellationToken ct = default, bool skipPhase2 = false)
     {
         _logger.LogInformation("Running single collection cycle");
 
@@ -103,9 +110,16 @@ public class CollectionOrchestrator
         _logger.LogInformation("Phase 1 complete: {Count} organizations discovered", discoveredCount);
 
         // Phase 2: Collect organization metadata
-        _logger.LogInformation("Phase 2: Collecting organization metadata");
-        var orgsProcessed = await _orgCollector.CollectOrganizationMetadataAsync(ct);
-        _logger.LogInformation("Phase 2 complete: {Count} organizations processed", orgsProcessed);
+        if (!skipPhase2)
+        {
+            _logger.LogInformation("Phase 2: Collecting organization metadata");
+            var orgsProcessed = await _orgCollector.CollectOrganizationMetadataAsync(ct);
+            _logger.LogInformation("Phase 2 complete: {Count} organizations processed", orgsProcessed);
+        }
+        else
+        {
+            _logger.LogInformation("Phase 2: Skipped (--skip-phase2)");
+        }
 
         // Phase 3: Collect members
         _logger.LogInformation("Phase 3: Collecting members");

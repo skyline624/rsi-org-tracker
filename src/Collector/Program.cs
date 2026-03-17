@@ -9,7 +9,7 @@ using Serilog;
 try
 {
     // Data directory is always at project root (one level above the bin folder)
-    var dataDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "data"));
+    var dataDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../..", "data"));
 
     // Create data directories before anything else (Serilog needs logs/ to exist)
     Directory.CreateDirectory(Path.Combine(dataDir, "logs"));
@@ -71,6 +71,7 @@ try
     // Check for single run mode
     var singleRun = args.Contains("--single-run") || args.Contains("-s");
     var integrityCheck = args.Contains("--integrity-check") || args.Contains("-i");
+    var skipPhase2 = args.Contains("--skip-phase2");
 
     // Parse --sample N (default 10)
     var sampleSize = 10;
@@ -88,11 +89,11 @@ try
     else if (singleRun)
     {
         logger.LogInformation("Running in single-run mode");
-        await orchestrator.RunSingleCycleAsync(ct);
+        await orchestrator.RunSingleCycleAsync(ct, skipPhase2);
     }
     else
     {
-        await orchestrator.RunCollectionLoopAsync(ct);
+        await orchestrator.RunCollectionLoopAsync(ct, skipPhase2);
     }
 
     logger.LogInformation("Application exiting");

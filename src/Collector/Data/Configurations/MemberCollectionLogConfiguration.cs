@@ -24,5 +24,8 @@ public class MemberCollectionLogConfiguration : IEntityTypeConfiguration<MemberC
         builder.Property(m => m.UserHandle)
             .IsRequired()
             .HasMaxLength(100);
+
+        builder.Property(m => m.Rank)
+            .HasMaxLength(100);
     }
 }

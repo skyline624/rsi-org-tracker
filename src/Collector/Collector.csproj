@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);NU1603</NoWarn>
-    <OutputPath>../../bin</OutputPath>
+    <OutputPath>../../bin/collector</OutputPath>
   </PropertyGroup>
 
   <ItemGroup>

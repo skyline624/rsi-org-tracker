@@ -34,5 +34,10 @@ public class OrganizationMemberConfiguration : IEntityTypeConfiguration<Organiza
 
         builder.Property(m => m.UrlImage)
             .HasMaxLength(2000);
+
+        builder.Property(m => m.IsActive)
+            .HasDefaultValue(true);
+
+        builder.HasIndex(m => new { m.OrgSid, m.IsActive });
     }
 }

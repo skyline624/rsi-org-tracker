@@ -274,7 +274,11 @@ public class ChangeDetector : IChangeDetector
             .Select(log => new MemberSnapshot
             {
                 CitizenId = log.CitizenId,
-                Handle = log.UserHandle
+                Handle = log.UserHandle,
+                Rank = log.Rank,
+                Roles = log.RolesJson != null
+                    ? JsonSerializer.Deserialize<string[]>(log.RolesJson)
+                    : null
             })
             .ToList();
     }

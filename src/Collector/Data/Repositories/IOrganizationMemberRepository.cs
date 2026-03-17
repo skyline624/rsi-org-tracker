@@ -9,4 +9,5 @@ public interface IOrganizationMemberRepository : IRepository<OrganizationMember>
     Task<IReadOnlyList<string>> GetKnownHandlesAsync(CancellationToken ct = default);
     Task<Dictionary<string, OrganizationMember>> GetLatestByOrgSidAsync(string orgSid, CancellationToken ct = default);
     Task UpdateCitizenIdByHandleAsync(string handle, int citizenId, CancellationToken ct = default);
+    Task MarkAllPreviousInactiveAsync(string orgSid, DateTime currentTimestamp, CancellationToken ct = default);
 }

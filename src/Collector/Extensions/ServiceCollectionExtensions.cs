@@ -15,6 +15,31 @@ namespace Collector.Extensions;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
+    /// Adds only the data layer (TrackerDbContext + repositories) without HTTP clients or collection services.
+    /// Used by Collector.Api to share the data layer without pulling in collection dependencies.
+    /// </summary>
+    public static IServiceCollection AddCollectorDataServices(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        string dataDir)
+    {
+        var dbPath = Path.Combine(dataDir, "tracker.db");
+        services.AddDbContext<TrackerDbContext>(options =>
+            options.UseSqlite($"Data Source={dbPath}"));
+
+        services.AddScoped<IOrganizationRepository, OrganizationRepository>();
+        services.AddScoped<IDiscoveredOrganizationRepository, DiscoveredOrganizationRepository>();
+        services.AddScoped<IOrganizationMemberRepository, OrganizationMemberRepository>();
+        services.AddScoped<IMemberCollectionLogRepository, MemberCollectionLogRepository>();
+        services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<IUserHandleHistoryRepository, UserHandleHistoryRepository>();
+        services.AddScoped<IUserEnrichmentQueueRepository, UserEnrichmentQueueRepository>();
+        services.AddScoped<IChangeEventRepository, ChangeEventRepository>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Adds all collector services to the DI container.
     /// </summary>
     public static IServiceCollection AddCollectorServices(
@@ -26,20 +51,8 @@ public static class ServiceCollectionExtensions
         services.Configure<CollectorOptions>(
             configuration.GetSection("Collector"));
 
-        // Database
-        var dbPath = Path.Combine(dataDir, "tracker.db");
-        services.AddDbContext<TrackerDbContext>(options =>
-            options.UseSqlite($"Data Source={dbPath}"));
-
-        // Repositories
-        services.AddScoped<IOrganizationRepository, OrganizationRepository>();
-        services.AddScoped<IDiscoveredOrganizationRepository, DiscoveredOrganizationRepository>();
-        services.AddScoped<IOrganizationMemberRepository, OrganizationMemberRepository>();
-        services.AddScoped<IMemberCollectionLogRepository, MemberCollectionLogRepository>();
-        services.AddScoped<IUserRepository, UserRepository>();
-        services.AddScoped<IUserHandleHistoryRepository, UserHandleHistoryRepository>();
-        services.AddScoped<IUserEnrichmentQueueRepository, UserEnrichmentQueueRepository>();
-        services.AddScoped<IChangeEventRepository, ChangeEventRepository>();
+        // Database + repositories
+        services.AddCollectorDataServices(configuration, dataDir);
 
         // Parsers
         services.AddSingleton<OrganizationHtmlParser>();

@@ -144,6 +144,8 @@ public class MemberCollector : IMemberCollector
             .Where(e => !(e.ChangeType == "member_joined" && e.UserHandle != null && newHandleSet.Contains(e.UserHandle)))
             .ToList();
 
+        var toQueue = new List<UserEnrichmentQueue>();
+
         // Use transaction for data consistency
         await using var transaction = await _memberRepo.BeginTransactionAsync(ct);
         try
@@ -163,13 +165,15 @@ public class MemberCollector : IMemberCollector
 
             await _memberRepo.AddRangeAsync(memberEntities, ct);
 
-            // Save collection log
+            // Save collection log (including Rank/RolesJson for accurate change detection next cycle)
             var logEntries = members.Select(m => new MemberCollectionLog
             {
                 OrgSid = orgSid,
                 CollectionTime = timestamp,
                 CitizenId = m.CitizenId,
-                UserHandle = m.Handle
+                UserHandle = m.Handle,
+                Rank = m.Rank,
+                RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null
             }).ToList();
 
             await _logRepo.AddRangeAsync(logEntries, ct);
@@ -180,13 +184,11 @@ public class MemberCollector : IMemberCollector
                 await _changeEventRepo.AddRangeAsync(changes, ct);
             }
 
-            // Load known users and already-queued handles
-            var knownUsers = await _userRepo.GetAllAsync(ct);
-            var knownByHandle = knownUsers.ToDictionary(u => u.UserHandle, u => u.DisplayName, StringComparer.OrdinalIgnoreCase);
+            // Load display names only for the handles in this collection (not all 400K users)
+            var memberHandles = members.Select(m => m.Handle).ToList();
+            var knownByHandle = await _userRepo.GetDisplayNamesByHandlesAsync(memberHandles, ct);
             var queuedHandles = await _enrichmentQueueRepo.GetPendingAsync(_options.BatchSize, ct);
             var queuedHandleSet = new HashSet<string>(queuedHandles.Select(q => q.UserHandle), StringComparer.OrdinalIgnoreCase);
-
-            var toQueue = new List<UserEnrichmentQueue>();
 
             foreach (var member in members)
             {
@@ -225,18 +227,21 @@ public class MemberCollector : IMemberCollector
 
             await _memberRepo.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
-
-            _logger.LogInformation(
-                "Collected {Count} members for {Sid}, detected {Changes} changes, queued {NewUsers} new users",
-                members.Count, orgSid, changes.Count, toQueue.Count);
-
-            return members.Count;
         }
         catch
         {
             await transaction.RollbackAsync(ct);
             throw;
         }
+
+        // Mark previous rows inactive outside the transaction to avoid long table locks
+        await _memberRepo.MarkAllPreviousInactiveAsync(orgSid, timestamp, ct);
+
+        _logger.LogInformation(
+            "Collected {Count} members for {Sid}, detected {Changes} changes, queued {NewUsers} new users",
+            members.Count, orgSid, changes.Count, toQueue.Count);
+
+        return members.Count;
     }
 
     private async Task<IReadOnlyList<MemberSnapshot>> GetPreviousSnapshotsAsync(

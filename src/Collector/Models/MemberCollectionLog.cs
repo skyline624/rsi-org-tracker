@@ -27,4 +27,14 @@ public class MemberCollectionLog
     /// User's RSI handle (fallback if citizen_id not available).
     /// </summary>
     public string UserHandle { get; set; } = null!;
+
+    /// <summary>
+    /// Member's rank at collection time. Used to detect rank changes.
+    /// </summary>
+    public string? Rank { get; set; }
+
+    /// <summary>
+    /// Member's roles as JSON at collection time. Used to detect role changes.
+    /// </summary>
+    public string? RolesJson { get; set; }
 }

@@ -55,4 +55,11 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
             .Where(m => m.UserHandle == handle && m.CitizenId == null)
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.CitizenId, citizenId), ct);
     }
+
+    public async Task MarkAllPreviousInactiveAsync(string orgSid, DateTime currentTimestamp, CancellationToken ct = default)
+    {
+        await DbSet
+            .Where(m => m.OrgSid == orgSid && m.Timestamp < currentTimestamp)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.IsActive, false), ct);
+    }
 }
