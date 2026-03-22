@@ -167,16 +167,29 @@ public class ChangeDetector : IChangeDetector
         var timestamp = DateTime.UtcNow;
 
         // Index by citizen_id (priority) and handle
+        // GroupBy guards against duplicate citizen_ids in RSI data (e.g. corrupted org roster)
         var prevByCitizenId = previous
             .Where(m => m.CitizenId.HasValue)
-            .ToDictionary(m => m.CitizenId!.Value);
+            .GroupBy(m => m.CitizenId!.Value)
+            .ToDictionary(g => g.Key, g =>
+            {
+                if (g.Count() > 1)
+                    _logger.LogWarning("Duplicate citizen_id {Id} in previous snapshot for org {Org} — using first entry", g.Key, orgSid);
+                return g.First();
+            });
 
         var prevByHandle = previous
             .ToDictionary(m => m.Handle, StringComparer.OrdinalIgnoreCase);
 
         var currByCitizenId = current
             .Where(m => m.CitizenId.HasValue)
-            .ToDictionary(m => m.CitizenId!.Value);
+            .GroupBy(m => m.CitizenId!.Value)
+            .ToDictionary(g => g.Key, g =>
+            {
+                if (g.Count() > 1)
+                    _logger.LogWarning("Duplicate citizen_id {Id} in current snapshot for org {Org} — using first entry", g.Key, orgSid);
+                return g.First();
+            });
 
         var currByHandle = current
             .ToDictionary(m => m.Handle, StringComparer.OrdinalIgnoreCase);

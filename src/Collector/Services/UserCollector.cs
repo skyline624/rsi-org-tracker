@@ -78,7 +78,7 @@ public class UserCollector : IUserCollector
 
         while (true)
         {
-            var pending = await _queueRepo.GetPendingAsync(fetchBatchSize, ct);
+            var pending = await _queueRepo.GetPendingAsync(fetchBatchSize, _options.MaxEnrichmentAttempts, ct);
             if (pending.Count == 0)
             {
                 _logger.LogInformation("Phase 4: no more users to enrich");

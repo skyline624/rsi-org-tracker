@@ -2,6 +2,7 @@ using Collector.Api.Data;
 using Collector.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Collector.Api.Controllers;
 
@@ -56,5 +57,33 @@ public class HealthController : ControllerBase
         {
             return StatusCode(503, new { status = "not ready" });
         }
+    }
+
+    [HttpGet("api/health/cycle")]
+    public async Task<IActionResult> CycleStatus(CancellationToken ct)
+    {
+        var queuePending = await _trackerDb.UserEnrichmentQueue
+            .CountAsync(q => !q.Enriched, ct);
+
+        var queueStuck = await _trackerDb.UserEnrichmentQueue
+            .CountAsync(q => !q.Enriched && q.AttemptCount >= 3, ct);
+
+        var lastCollection = await _trackerDb.MemberCollectionLogs
+            .OrderByDescending(l => l.CollectionTime)
+            .Select(l => new { l.OrgSid, l.CollectionTime })
+            .FirstOrDefaultAsync(ct);
+
+        var orgCount = await _trackerDb.DiscoveredOrganizations
+            .CountAsync(ct);
+
+        return Ok(new
+        {
+            queue_pending = queuePending,
+            queue_stuck = queueStuck,
+            last_member_collection = lastCollection != null
+                ? new { org_sid = lastCollection.OrgSid, at = lastCollection.CollectionTime }
+                : null,
+            discovered_orgs = orgCount,
+        });
     }
 }

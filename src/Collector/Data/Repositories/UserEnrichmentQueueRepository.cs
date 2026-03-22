@@ -7,10 +7,10 @@ public class UserEnrichmentQueueRepository : Repository<UserEnrichmentQueue>, IU
 {
     public UserEnrichmentQueueRepository(TrackerDbContext context) : base(context) { }
 
-    public async Task<IReadOnlyList<UserEnrichmentQueue>> GetPendingAsync(int limit = 100, CancellationToken ct = default)
+    public async Task<IReadOnlyList<UserEnrichmentQueue>> GetPendingAsync(int limit = 100, int maxAttempts = int.MaxValue, CancellationToken ct = default)
     {
         return await DbSet
-            .Where(q => !q.Enriched)
+            .Where(q => !q.Enriched && q.AttemptCount < maxAttempts)
             .OrderByDescending(q => q.Priority)
             .ThenBy(q => q.QueuedAt)
             .Take(limit)

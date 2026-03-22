@@ -93,5 +93,23 @@ public static class ServiceCollectionExtensions
         using var scope = serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TrackerDbContext>();
         await dbContext.Database.EnsureCreatedAsync();
+
+        // One-shot deduplication: remove duplicate pending queue entries keeping the oldest per handle
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            DELETE FROM user_enrichment_queue
+            WHERE Id NOT IN (
+                SELECT MIN(Id) FROM user_enrichment_queue
+                WHERE Enriched = 0
+                GROUP BY UserHandle
+            )
+            AND Enriched = 0;
+        ");
+
+        // Ensure partial unique index exists (EnsureCreated won't add it to existing DBs)
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_user_enrichment_queue_UserHandle_Pending
+            ON user_enrichment_queue (UserHandle)
+            WHERE Enriched = 0;
+        ");
     }
 }

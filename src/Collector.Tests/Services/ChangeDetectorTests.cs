@@ -185,6 +185,48 @@ public class ChangeDetectorTests
         changes.Should().BeEmpty(); // Same handle = same member
     }
 
+    [Fact]
+    public void DetectMemberChanges_DuplicateCitizenIdInPrevious_DoesNotThrow()
+    {
+        // Arrange — two members share the same citizen_id (corrupted RSI data)
+        var previous = new List<MemberSnapshot>
+        {
+            new() { CitizenId = 1, Handle = "Alpha", Rank = "Member" },
+            new() { CitizenId = 1, Handle = "Beta",  Rank = "Member" }
+        };
+        var current = new List<MemberSnapshot>
+        {
+            new() { CitizenId = 1, Handle = "Alpha", Rank = "Member" }
+        };
+
+        // Act
+        var act = () => _detector.DetectMemberChanges("TEST", previous, current);
+
+        // Assert — must not throw ArgumentException
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void DetectMemberChanges_DuplicateCitizenIdInCurrent_DoesNotThrow()
+    {
+        // Arrange
+        var previous = new List<MemberSnapshot>
+        {
+            new() { CitizenId = 1, Handle = "Alpha", Rank = "Member" }
+        };
+        var current = new List<MemberSnapshot>
+        {
+            new() { CitizenId = 1, Handle = "Alpha", Rank = "Member" },
+            new() { CitizenId = 1, Handle = "Beta",  Rank = "Member" }
+        };
+
+        // Act
+        var act = () => _detector.DetectMemberChanges("TEST", previous, current);
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
     #endregion
 
     #region Organization Change Detection Tests

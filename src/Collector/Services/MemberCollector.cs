@@ -92,7 +92,7 @@ public class MemberCollector : IMemberCollector
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unexpected error collecting members for organization {Sid}", org.Sid);
-                throw;
+                // Continue with next organization rather than aborting the entire Phase 3
             }
         }
 
@@ -187,36 +187,34 @@ public class MemberCollector : IMemberCollector
             // Load display names only for the handles in this collection (not all 400K users)
             var memberHandles = members.Select(m => m.Handle).ToList();
             var knownByHandle = await _userRepo.GetDisplayNamesByHandlesAsync(memberHandles, ct);
-            var queuedHandles = await _enrichmentQueueRepo.GetPendingAsync(_options.BatchSize, ct);
-            var queuedHandleSet = new HashSet<string>(queuedHandles.Select(q => q.UserHandle), StringComparer.OrdinalIgnoreCase);
 
             foreach (var member in members)
             {
-                if (queuedHandleSet.Contains(member.Handle))
-                    continue;
-
                 if (newHandleSet.Contains(member.Handle))
                 {
                     // Priority 1 = new handle, Phase 4 must verify citizen_id and emit member_joined if truly new
-                    toQueue.Add(new UserEnrichmentQueue
-                    {
-                        UserHandle = member.Handle,
-                        Priority = 1,
-                        Enriched = false,
-                        QueuedAt = timestamp
-                    });
+                    // Use IsQueuedAsync to avoid duplicates across the entire queue (not just a batch window)
+                    if (!await _enrichmentQueueRepo.IsQueuedAsync(member.Handle, ct))
+                        toQueue.Add(new UserEnrichmentQueue
+                        {
+                            UserHandle = member.Handle,
+                            Priority = 1,
+                            Enriched = false,
+                            QueuedAt = timestamp
+                        });
                 }
                 else if (knownByHandle.TryGetValue(member.Handle, out var knownDisplayName)
                          && knownDisplayName != member.DisplayName)
                 {
                     // Priority 0 = known handle but display name changed, Phase 4 updates it
-                    toQueue.Add(new UserEnrichmentQueue
-                    {
-                        UserHandle = member.Handle,
-                        Priority = 0,
-                        Enriched = false,
-                        QueuedAt = timestamp
-                    });
+                    if (!await _enrichmentQueueRepo.IsQueuedAsync(member.Handle, ct))
+                        toQueue.Add(new UserEnrichmentQueue
+                        {
+                            UserHandle = member.Handle,
+                            Priority = 0,
+                            Enriched = false,
+                            QueuedAt = timestamp
+                        });
                 }
             }
 

@@ -65,4 +65,10 @@ public class CollectorOptions
     /// and eligible for re-collection in Phase 2. Default: 168h (7 days).
     /// </summary>
     public int MetadataRefreshIntervalHours { get; set; } = 168;
+
+    /// <summary>
+    /// Maximum number of enrichment attempts per user handle before giving up.
+    /// Handles exceeding this limit are skipped in Phase 4 (deleted/banned accounts).
+    /// </summary>
+    public int MaxEnrichmentAttempts { get; set; } = 3;
 }
