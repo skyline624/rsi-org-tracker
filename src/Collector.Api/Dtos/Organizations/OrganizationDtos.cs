@@ -20,6 +20,7 @@ public class OrganizationDto
 
 public class OrganizationMemberDto
 {
+    public string OrgSid { get; set; } = null!;
     public string UserHandle { get; set; } = null!;
     public int? CitizenId { get; set; }
     public string? DisplayName { get; set; }

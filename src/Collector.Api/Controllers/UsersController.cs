@@ -45,9 +45,16 @@ public class UsersController : ControllerBase
         var query = _db.Users.AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(search))
+        {
+            // Escape LIKE special characters (%, _) for proper matching
+            var escapedSearch = search
+                .Replace("%", "\\%")
+                .Replace("_", "\\_");
+
             query = query.Where(u =>
-                u.UserHandle.Contains(search) ||
-                (u.DisplayName != null && u.DisplayName.Contains(search)));
+                EF.Functions.Like(u.UserHandle, $"%{escapedSearch}%", "\\") ||
+                (u.DisplayName != null && EF.Functions.Like(u.DisplayName, $"%{escapedSearch}%", "\\")));
+        }
 
         var total = await query.CountAsync(ct);
         var users = await query
@@ -130,6 +137,7 @@ public class UsersController : ControllerBase
 
         return Ok(memberships.Select(m => new OrganizationMemberDto
         {
+            OrgSid = m.OrgSid,
             UserHandle = m.UserHandle,
             CitizenId = m.CitizenId,
             DisplayName = m.DisplayName,
