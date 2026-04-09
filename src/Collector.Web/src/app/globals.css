@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────
+   Cockpit HUD — variables de thème
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --hud-bg: #0a0f14;
+  --hud-bg-elevated: #0f1821;
+  --hud-cyan: #00d9ff;
+  --hud-cyan-dim: #1a5e78;
+  --hud-orange: #ff7a00;
+  --hud-red: #ff2d5e;
+  --hud-green: #3eff8b;
+  --hud-grid: rgba(0, 217, 255, 0.08);
+  --hud-text: #c9e6f2;
+  --hud-text-dim: #5d7a8a;
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--hud-bg);
+    color: var(--hud-text);
+    font-family: var(--font-ui), system-ui, sans-serif;
+    font-feature-settings: "tnum", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Fond ambiant : dégradé radial cyan très léger + grille hex. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at top, rgba(0, 217, 255, 0.04), transparent 60%),
+      linear-gradient(var(--hud-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--hud-grid) 1px, transparent 1px);
+    background-size: 100% 100%, 48px 48px, 48px 48px;
+    z-index: 0;
+  }
+
+  /* Contenu toujours au-dessus du fond. */
+  body > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  ::selection {
+    background: var(--hud-cyan);
+    color: var(--hud-bg);
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display), sans-serif;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  a {
+    color: var(--hud-cyan);
+    text-decoration: none;
+    transition: text-shadow 150ms ease;
+  }
+  a:hover {
+    text-shadow: 0 0 8px var(--hud-cyan);
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono), monospace;
+  }
+
+  /* Scrollbar thématisée. */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--hud-bg); }
+  ::-webkit-scrollbar-thumb {
+    background: var(--hud-cyan-dim);
+    border-radius: 0;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--hud-cyan); }
+}
+
+@layer components {
+  /* Coin coupé en biseau type panel HUD. */
+  .hud-clip {
+    clip-path: polygon(
+      12px 0, 100% 0, 100% calc(100% - 12px),
+      calc(100% - 12px) 100%, 0 100%, 0 12px
+    );
+  }
+
+  /* Flèche de navigation à droite, type "transmission vers…" */
+  .hud-arrow::after {
+    content: "›";
+    margin-left: 0.5ch;
+    color: var(--hud-cyan);
+  }
+
+  /* Label type "UEE::TRACKING" en mono dim. */
+  .hud-label {
+    font-family: var(--font-mono), monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--hud-text-dim);
+  }
+
+  /* Valeur gros chiffre. */
+  .hud-value {
+    font-family: var(--font-display), sans-serif;
+    font-size: 2.25rem;
+    line-height: 1;
+    color: var(--hud-cyan);
+    text-shadow: 0 0 12px rgba(0, 217, 255, 0.4);
+  }
+}
+
+/* Respect des préférences d'accessibilité : coupe les effets "boot". */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .scan-lines-overlay { display: none !important; }
+}

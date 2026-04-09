@@ -6,6 +6,7 @@ using Collector.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Collector.Extensions;
 
@@ -47,9 +48,11 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration,
         string dataDir)
     {
-        // Configure options
-        services.Configure<CollectorOptions>(
-            configuration.GetSection("Collector"));
+        // Configure and validate options at startup (fail-fast if any field is wrong).
+        services.AddOptions<CollectorOptions>()
+            .Bind(configuration.GetSection("Collector"))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<CollectorOptions>, CollectorOptionsValidator>();
 
         // Database + repositories
         services.AddCollectorDataServices(configuration, dataDir);
@@ -84,7 +87,7 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Creates and ensures the database exists.
+    /// Creates directories and bootstraps the tracker database via EF Core migrations.
     /// </summary>
     public static async Task EnsureDatabaseAsync(this IServiceProvider serviceProvider, string dataDir)
     {
@@ -92,7 +95,11 @@ public static class ServiceCollectionExtensions
 
         using var scope = serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TrackerDbContext>();
-        await dbContext.Database.EnsureCreatedAsync();
+        var logger = scope.ServiceProvider
+            .GetService<Microsoft.Extensions.Logging.ILoggerFactory>()
+            ?.CreateLogger("DatabaseBootstrap");
+
+        await Collector.Data.DatabaseBootstrap.MigrateOrAdoptAsync(dbContext, "organizations", logger);
 
         // One-shot deduplication: remove duplicate pending queue entries keeping the oldest per handle
         await dbContext.Database.ExecuteSqlRawAsync(@"
@@ -105,7 +112,7 @@ public static class ServiceCollectionExtensions
             AND Enriched = 0;
         ");
 
-        // Ensure partial unique index exists (EnsureCreated won't add it to existing DBs)
+        // Ensure partial unique index exists (legacy databases built before this index was added)
         await dbContext.Database.ExecuteSqlRawAsync(@"
             CREATE UNIQUE INDEX IF NOT EXISTS IX_user_enrichment_queue_UserHandle_Pending
             ON user_enrichment_queue (UserHandle)

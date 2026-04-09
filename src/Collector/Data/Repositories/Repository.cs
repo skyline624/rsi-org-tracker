@@ -35,4 +35,6 @@ public abstract class Repository<T> : IRepository<T> where T : class
 
     public virtual async Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => await Context.Database.BeginTransactionAsync(ct);
+
+    public virtual void ClearTrackedEntities() => Context.ChangeTracker.Clear();
 }

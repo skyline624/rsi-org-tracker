@@ -134,7 +134,7 @@ public class MemberHtmlParser
         }
 
         // Try extracting from text content
-        var text = row.InnerText;
+        var text = row.InnerText ?? string.Empty;
         if (!string.IsNullOrEmpty(text))
         {
             // Look for patterns like "#123456"
@@ -175,7 +175,8 @@ public class MemberHtmlParser
         return rolesNodes
             .Select(n => n.InnerText?.Trim())
             .Where(r => !string.IsNullOrEmpty(r))
-            .ToArray()!;
+            .Select(r => r!)
+            .ToArray();
     }
 
     private string? ExtractAvatarUrl(HtmlNode row)

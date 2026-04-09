@@ -25,8 +25,9 @@ public class OrganizationRepository : Repository<Organization>, IOrganizationRep
 
     public async Task<IReadOnlyList<Organization>> GetAllLatestAsync(CancellationToken ct = default)
     {
-        // Get the latest snapshot for each organization
+        // AsNoTracking — this projection is read-only, we never mutate the results.
         var latestQuery = DbSet
+            .AsNoTracking()
             .GroupBy(o => o.Sid)
             .Select(g => g.OrderByDescending(o => o.Timestamp).First());
 
@@ -35,13 +36,33 @@ public class OrganizationRepository : Repository<Organization>, IOrganizationRep
 
     public async Task<Dictionary<string, Organization>> GetLatestBySidsAsync(IEnumerable<string> sids, CancellationToken ct = default)
     {
-        var sidList = sids.ToList();
+        var sidList = sids.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var orgs = await DbSet
+            .AsNoTracking()
             .Where(o => sidList.Contains(o.Sid))
             .GroupBy(o => o.Sid)
             .Select(g => g.OrderByDescending(o => o.Timestamp).First())
             .ToListAsync(ct);
 
-        return orgs.ToDictionary(o => o.Sid);
+        return orgs.ToDictionary(o => o.Sid, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task<int> UpdateLatestMembersCountAsync(
+        string sid, int membersCount, CancellationToken ct = default)
+    {
+        // ExecuteUpdateAsync on the latest snapshot only — bypasses change tracking
+        // so we don't touch any entity already loaded in the scoped DbContext.
+        var latestTimestamp = await DbSet
+            .AsNoTracking()
+            .Where(o => o.Sid == sid)
+            .OrderByDescending(o => o.Timestamp)
+            .Select(o => (DateTime?)o.Timestamp)
+            .FirstOrDefaultAsync(ct);
+
+        if (latestTimestamp is null) return 0;
+
+        return await DbSet
+            .Where(o => o.Sid == sid && o.Timestamp == latestTimestamp && o.MembersCount != membersCount)
+            .ExecuteUpdateAsync(setter => setter.SetProperty(o => o.MembersCount, membersCount), ct);
     }
 }

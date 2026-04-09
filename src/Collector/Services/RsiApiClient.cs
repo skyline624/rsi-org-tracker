@@ -54,8 +54,11 @@ public interface IRsiApiClient
 
     /// <summary>
     /// Gets all members for an organization using pagination.
+    /// Returns <see cref="MemberCollectionResult.OrgExists"/> = false when RSI
+    /// reports the org as invalid (deleted/renamed), so the caller can flush
+    /// stale active rows instead of leaving ghost members around.
     /// </summary>
-    Task<IReadOnlyList<MemberData>> GetAllOrganizationMembersAsync(
+    Task<MemberCollectionResult> GetAllOrganizationMembersAsync(
         string orgSymbol,
         int pageSize = 32,
         CancellationToken ct = default);
@@ -74,6 +77,20 @@ public interface IRsiApiClient
         string handle,
         CancellationToken ct = default);
 }
+
+/// <summary>
+/// Result of a full member-collection pass for an organization.
+///
+/// - <see cref="OrgExists"/> = false means RSI responded with
+///   <c>ErrInvalidOrganization</c> on the first page. The caller must treat
+///   the current active roster as stale and deactivate it.
+/// - <see cref="Reachable"/> = false means we couldn't tell (network error,
+///   null response). The caller should keep the previous roster as-is.
+/// </summary>
+public record MemberCollectionResult(
+    IReadOnlyList<MemberData> Members,
+    bool OrgExists,
+    bool Reachable);
 
 public class RsiApiClient : IRsiApiClient, IDisposable
 {
@@ -107,11 +124,15 @@ public class RsiApiClient : IRsiApiClient, IDisposable
             _options.MaxConcurrentRequests,
             _options.MaxConcurrentRequests);
 
-        // Configure retry policy with exponential backoff
+        // Retry only on genuine transient failures. Throttling (HTTP 429 / 503 /
+        // ErrApiThrottled) is handled above in PostAsync and in the page-fetch helpers
+        // so it doesn't compound exponentially with this policy.
         var retryPolicy = Policy<HttpResponseMessage>
             .Handle<HttpRequestException>()
             .Or<TaskCanceledException>()
-            .OrResult(r => (int)r.StatusCode >= 500 || r.StatusCode == System.Net.HttpStatusCode.RequestTimeout)
+            .OrResult(r =>
+                (int)r.StatusCode >= 500
+                && r.StatusCode != System.Net.HttpStatusCode.ServiceUnavailable)
             .WaitAndRetryAsync(
                 retryCount: _options.MaxRetries,
                 sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
@@ -124,11 +145,14 @@ public class RsiApiClient : IRsiApiClient, IDisposable
                         outcome.Exception?.Message ?? outcome.Result.StatusCode.ToString());
                 });
 
-        // Configure circuit breaker: break after 50% failures in 30s window with min 5 throughput
+        // Circuit breaker on genuine 5xx + network errors only. Throttles must not open
+        // the breaker (they are normal back-pressure, not an outage).
         var circuitBreakerPolicy = Policy<HttpResponseMessage>
             .Handle<HttpRequestException>()
             .Or<TaskCanceledException>()
-            .OrResult(r => (int)r.StatusCode >= 500 || r.StatusCode == System.Net.HttpStatusCode.RequestTimeout)
+            .OrResult(r =>
+                (int)r.StatusCode >= 500
+                && r.StatusCode != System.Net.HttpStatusCode.ServiceUnavailable)
             .AdvancedCircuitBreakerAsync(
                 failureThreshold: 0.5,
                 samplingDuration: TimeSpan.FromSeconds(30),
@@ -178,37 +202,53 @@ public class RsiApiClient : IRsiApiClient, IDisposable
         const int maxThrottleRetries = 5;
         var throttleDelay = TimeSpan.FromSeconds(5);
 
+        var url = $"{BaseUrl}{ApiPath}/{endpoint}";
+        var json = JsonSerializer.Serialize(payload);
+
         for (int throttleAttempt = 0; throttleAttempt < maxThrottleRetries; throttleAttempt++)
         {
             await ApplyRateLimitAsync(ct);
 
-            var url = $"{BaseUrl}{ApiPath}/{endpoint}";
-            var json = JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            // StringContent is not reusable across retries — rebuild per attempt.
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await _resiliencePolicy.ExecuteAsync(
+                async token => await _httpClient.PostAsync(url, content, token),
+                ct);
 
-            var response = await _resiliencePolicy.ExecuteAsync(async token =>
+            // HTTP-level throttling (429) — honour Retry-After when present, otherwise use
+            // our exponential backoff. This MUST be checked before EnsureSuccessStatusCode
+            // so throttle never masquerades as a generic failure.
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+                || response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
             {
-                return await _httpClient.PostAsync(url, content, token);
-            }, ct);
+                var wait = response.Headers.RetryAfter?.Delta
+                    ?? throttleDelay;
+                _logger.LogWarning(
+                    "RSI API HTTP {Status} for {Endpoint}. Waiting {Delay}s before retry {Attempt}/{Max}",
+                    (int)response.StatusCode, endpoint, wait.TotalSeconds,
+                    throttleAttempt + 1, maxThrottleRetries);
+                await Task.Delay(wait, ct);
+                throttleDelay = TimeSpan.FromSeconds(Math.Min(throttleDelay.TotalSeconds * 2, 300));
+                continue;
+            }
 
+            // Any other non-success status is considered a hard failure (Polly already
+            // retried transient 5xx before we got here).
             response.EnsureSuccessStatusCode();
 
             var responseText = await response.Content.ReadAsStringAsync(ct);
             var data = JsonNode.Parse(responseText);
 
-            // Check for throttling - retry with exponential backoff
+            // Application-level throttling: RSI returns HTTP 200 with
+            // `{ "code": "ErrApiThrottled" }`. Same backoff as HTTP 429.
             if (data?["code"]?.GetValue<string>() == "ErrApiThrottled")
             {
                 _logger.LogWarning(
-                    "RSI API throttled. Waiting {Delay}s before retry {Attempt}/{MaxRetries}",
-                    throttleDelay.TotalSeconds,
-                    throttleAttempt + 1,
-                    maxThrottleRetries);
-
+                    "RSI API application-level throttle for {Endpoint}. Waiting {Delay}s before retry {Attempt}/{Max}",
+                    endpoint, throttleDelay.TotalSeconds,
+                    throttleAttempt + 1, maxThrottleRetries);
                 await Task.Delay(throttleDelay, ct);
-
-                // Exponential backoff: 5s, 10s, 20s, 40s, 80s
-                throttleDelay = TimeSpan.FromSeconds(throttleDelay.TotalSeconds * 2);
+                throttleDelay = TimeSpan.FromSeconds(Math.Min(throttleDelay.TotalSeconds * 2, 300));
                 continue;
             }
 
@@ -348,7 +388,7 @@ public class RsiApiClient : IRsiApiClient, IDisposable
         return (members, totalRows);
     }
 
-    public async Task<IReadOnlyList<MemberData>> GetAllOrganizationMembersAsync(
+    public async Task<MemberCollectionResult> GetAllOrganizationMembersAsync(
         string orgSymbol,
         int pageSize = 32,
         CancellationToken ct = default)
@@ -356,23 +396,48 @@ public class RsiApiClient : IRsiApiClient, IDisposable
         var allMembers = new List<MemberData>();
         var page = 1;
         int totalRows;
+        var firstPage = true;
+        var reachable = false;
 
         do
         {
             var result = await GetOrganizationMembersAsync(orgSymbol, page, pageSize, ct);
             if (result == null)
             {
+                // Null on first page = couldn't reach / parse. We don't know whether
+                // the org still exists, so we signal "unreachable" and let the caller
+                // keep the existing roster untouched.
+                if (firstPage)
+                {
+                    return new MemberCollectionResult(
+                        Array.Empty<MemberData>(),
+                        OrgExists: true, // unknown, assume it exists
+                        Reachable: false);
+                }
                 break;
             }
 
+            reachable = true;
             var (members, total) = result.Value;
             totalRows = total;
 
+            // Empty response on first page is RSI's signal for "this org doesn't
+            // exist anymore" (totalrows = 0, ErrInvalidOrganization already
+            // mapped to empty in GetOrganizationMembersAsync). For the roster
+            // cleanup to be safe we require first-page-confirmed empty.
             if (members.Count == 0)
             {
+                if (firstPage)
+                {
+                    return new MemberCollectionResult(
+                        Array.Empty<MemberData>(),
+                        OrgExists: totalRows > 0, // org exists but genuinely 0 members is rare; usually this means deleted
+                        Reachable: true);
+                }
                 break;
             }
 
+            firstPage = false;
             allMembers.AddRange(members);
 
             // Check for completeness (> 95%)
@@ -387,7 +452,7 @@ public class RsiApiClient : IRsiApiClient, IDisposable
         }
         while (allMembers.Count < totalRows);
 
-        return allMembers;
+        return new MemberCollectionResult(allMembers, OrgExists: true, Reachable: reachable);
     }
 
     public async Task<string?> GetOrgPageHtmlAsync(string sid, CancellationToken ct = default)

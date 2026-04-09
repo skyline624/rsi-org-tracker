@@ -202,9 +202,23 @@ public class OrganizationCollector : IOrganizationCollector
     {
         _logger.LogInformation("Starting extended content collection (Phase 2)");
 
-        // Only process orgs not yet enriched with content this refresh interval
+        // Only process orgs not yet enriched with content this refresh interval.
+        // Deduplicate by SID — the source query may return duplicates when an org
+        // is discovered by multiple sort methods, and we must never call AddAsync
+        // twice for the same SID within a single cycle (that creates two snapshots
+        // with identical Timestamps and poisons the EF change tracker).
         var since = DateTime.UtcNow.AddHours(-_options.MetadataRefreshIntervalHours);
-        var stale = await _discoveredRepo.GetStaleAsync(since, ct);
+        var rawStale = await _discoveredRepo.GetStaleAsync(since, ct);
+        var stale = rawStale
+            .GroupBy(d => d.Sid, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+        if (stale.Count != rawStale.Count)
+        {
+            _logger.LogWarning(
+                "Phase 2 deduped stale orgs: {Raw} → {Deduped}",
+                rawStale.Count, stale.Count);
+        }
         var total = stale.Count;
 
         if (total == 0)
@@ -292,23 +306,38 @@ public class OrganizationCollector : IOrganizationCollector
                 processedCount++;
             }
 
-            // Save after each batch
-            if (changeEvents.Count > 0)
+            // Atomically persist: all member snapshots of the batch AND their change
+            // events in one transaction. On failure we roll back, clear the change
+            // tracker, and skip the batch (the orgs stay "stale" so the next cycle
+            // retries them).
+            await using (var batchTx = await _orgRepo.BeginTransactionAsync(ct))
             {
-                await _changeEventRepo.AddRangeAsync(changeEvents, ct);
-                changeEvents.Clear();
+                try
+                {
+                    if (changeEvents.Count > 0)
+                    {
+                        await _changeEventRepo.AddRangeAsync(changeEvents, ct);
+                    }
+                    await _orgRepo.SaveChangesAsync(ct);
+                    await batchTx.CommitAsync(ct);
+                    changeEvents.Clear();
+                }
+                catch (Exception ex)
+                {
+                    await batchTx.RollbackAsync(ct);
+                    _orgRepo.ClearTrackedEntities();
+                    changeEvents.Clear();
+                    _logger.LogError(ex,
+                        "Phase 2 batch persist failed around batch {BatchStart}; orgs will retry next cycle",
+                        batchStart);
+                    continue;
+                }
             }
-            await _orgRepo.SaveChangesAsync(ct);
 
             _logger.LogInformation(
                 "Phase 2 progress: {Processed}/{Total} enriched, {Skipped} skipped",
                 processedCount, total, skippedCount);
         }
-
-        // Final save (should be empty but defensive)
-        if (changeEvents.Count > 0)
-            await _changeEventRepo.AddRangeAsync(changeEvents, ct);
-        await _orgRepo.SaveChangesAsync(ct);
 
         _logger.LogInformation(
             "Phase 2 complete: {Count}/{Total} organizations enriched, {Skipped} skipped, {Changes} content changes",

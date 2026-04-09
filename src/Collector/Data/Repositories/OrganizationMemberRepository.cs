@@ -9,16 +9,41 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
 
     public async Task<IReadOnlyList<OrganizationMember>> GetByOrgSidAsync(string orgSid, DateTime? asOf = null, CancellationToken ct = default)
     {
-        var query = DbSet.Where(m => m.OrgSid == orgSid);
-
+        // EF Core on SQLite translates `GroupBy().Select(g => g.OrderByDescending().First())`
+        // into a correlated subquery that does ~O(N²) work. For TEST Squadron
+        // (~15k rows after GroupBy, ~27k raw rows) the LINQ version takes ~2 minutes;
+        // the window-function variant below takes ~70 ms — a 1700x speedup.
         if (asOf.HasValue)
         {
-            query = query.Where(m => m.Timestamp <= asOf.Value);
+            var cutoff = asOf.Value;
+            return await DbSet
+                .FromSqlInterpolated($@"
+                    SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
+                           Rank, RolesJson, UrlImage, IsActive
+                    FROM (
+                        SELECT *,
+                               ROW_NUMBER() OVER (PARTITION BY UserHandle ORDER BY Timestamp DESC) AS _rn
+                        FROM organization_members
+                        WHERE OrgSid = {orgSid}
+                          AND Timestamp <= {cutoff}
+                    )
+                    WHERE _rn = 1")
+                .AsNoTracking()
+                .ToListAsync(ct);
         }
 
-        return await query
-            .GroupBy(m => m.UserHandle)
-            .Select(g => g.OrderByDescending(m => m.Timestamp).First())
+        return await DbSet
+            .FromSqlInterpolated($@"
+                SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
+                       Rank, RolesJson, UrlImage, IsActive
+                FROM (
+                    SELECT *,
+                           ROW_NUMBER() OVER (PARTITION BY UserHandle ORDER BY Timestamp DESC) AS _rn
+                    FROM organization_members
+                    WHERE OrgSid = {orgSid}
+                )
+                WHERE _rn = 1")
+            .AsNoTracking()
             .ToListAsync(ct);
     }
 
@@ -40,10 +65,19 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
 
     public async Task<Dictionary<string, OrganizationMember>> GetLatestByOrgSidAsync(string orgSid, CancellationToken ct = default)
     {
+        // Same window-function trick as GetByOrgSidAsync — see its comment.
         var members = await DbSet
-            .Where(m => m.OrgSid == orgSid)
-            .GroupBy(m => m.UserHandle)
-            .Select(g => g.OrderByDescending(m => m.Timestamp).First())
+            .FromSqlInterpolated($@"
+                SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
+                       Rank, RolesJson, UrlImage, IsActive
+                FROM (
+                    SELECT *,
+                           ROW_NUMBER() OVER (PARTITION BY UserHandle ORDER BY Timestamp DESC) AS _rn
+                    FROM organization_members
+                    WHERE OrgSid = {orgSid}
+                )
+                WHERE _rn = 1")
+            .AsNoTracking()
             .ToListAsync(ct);
 
         return members.ToDictionary(m => m.UserHandle);
@@ -56,10 +90,10 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.CitizenId, citizenId), ct);
     }
 
-    public async Task MarkAllPreviousInactiveAsync(string orgSid, DateTime currentTimestamp, CancellationToken ct = default)
+    public async Task<int> MarkAllPreviousInactiveAsync(string orgSid, DateTime currentTimestamp, CancellationToken ct = default)
     {
-        await DbSet
-            .Where(m => m.OrgSid == orgSid && m.Timestamp < currentTimestamp)
+        return await DbSet
+            .Where(m => m.OrgSid == orgSid && m.Timestamp < currentTimestamp && m.IsActive)
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.IsActive, false), ct);
     }
 }

@@ -1,9 +1,9 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Encodings.Web;
-using Collector.Api.Data;
 using Collector.Api.Services;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace Collector.Api.Auth;
@@ -37,9 +37,9 @@ public class ApiKeyAuthHandler : AuthenticationHandler<ApiKeySchemeOptions>
         if (string.IsNullOrWhiteSpace(rawKey))
             return AuthenticateResult.NoResult();
 
-        // Check admin key first
+        // Check admin key first (constant-time comparison to defeat timing attacks)
         var adminKey = _configuration["Api:AdminApiKey"];
-        if (!string.IsNullOrWhiteSpace(adminKey) && rawKey == adminKey)
+        if (!string.IsNullOrWhiteSpace(adminKey) && FixedTimeEquals(rawKey, adminKey))
         {
             var adminClaims = new[]
             {
@@ -71,5 +71,16 @@ public class ApiKeyAuthHandler : AuthenticationHandler<ApiKeySchemeOptions>
         var identity = new ClaimsIdentity(claims, Scheme.Name);
         var principal = new ClaimsPrincipal(identity);
         return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name));
+    }
+
+    /// <summary>
+    /// Constant-time comparison of two strings. Uses SHA-256 to normalise length before
+    /// FixedTimeEquals so that length differences themselves do not leak timing info.
+    /// </summary>
+    private static bool FixedTimeEquals(string a, string b)
+    {
+        var aBytes = SHA256.HashData(Encoding.UTF8.GetBytes(a));
+        var bBytes = SHA256.HashData(Encoding.UTF8.GetBytes(b));
+        return CryptographicOperations.FixedTimeEquals(aBytes, bBytes);
     }
 }

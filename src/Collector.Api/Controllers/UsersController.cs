@@ -2,6 +2,7 @@ using Collector.Api.Dtos.Common;
 using Collector.Api.Dtos.Users;
 using Collector.Api.Dtos.Changes;
 using Collector.Api.Dtos.Organizations;
+using Collector.Api.Extensions;
 using Collector.Data;
 using Collector.Data.Repositories;
 using Microsoft.AspNetCore.Authorization;
@@ -42,34 +43,18 @@ public class UsersController : ControllerBase
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
     {
-        var query = _db.Users.AsQueryable();
+        var query = _db.Users.AsNoTracking().OrderBy(u => u.UserHandle).AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            // Escape LIKE special characters (%, _) for proper matching
-            var escapedSearch = search
-                .Replace("%", "\\%")
-                .Replace("_", "\\_");
-
+            // Escape LIKE special characters (%, _) so user input can't pivot into wildcards.
+            var escapedSearch = search.Replace("%", "\\%").Replace("_", "\\_");
             query = query.Where(u =>
                 EF.Functions.Like(u.UserHandle, $"%{escapedSearch}%", "\\") ||
                 (u.DisplayName != null && EF.Functions.Like(u.DisplayName, $"%{escapedSearch}%", "\\")));
         }
 
-        var total = await query.CountAsync(ct);
-        var users = await query
-            .OrderBy(u => u.UserHandle)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync(ct);
-
-        return Ok(new PaginatedResponse<UserProfileDto>
-        {
-            Items = users.Select(MapUser).ToList(),
-            Total = total,
-            Page = page,
-            PageSize = pageSize,
-        });
+        return Ok(await query.ToPaginatedAsync(page, pageSize, u => u.ToProfileDto(), ct));
     }
 
     [HttpGet("{handle}")]
@@ -77,7 +62,7 @@ public class UsersController : ControllerBase
     {
         var user = await _userRepo.GetByHandleAsync(handle, ct)
             ?? throw new KeyNotFoundException($"User '{handle}' not found");
-        return Ok(MapUser(user));
+        return Ok(user.ToProfileDto());
     }
 
     [HttpGet("by-citizen-id/{id:int}")]
@@ -85,7 +70,7 @@ public class UsersController : ControllerBase
     {
         var user = await _userRepo.GetByCitizenIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"User with citizen ID {id} not found");
-        return Ok(MapUser(user));
+        return Ok(user.ToProfileDto());
     }
 
     [HttpGet("resolve/{handle}")]
@@ -127,6 +112,7 @@ public class UsersController : ControllerBase
         CancellationToken ct = default)
     {
         var memberships = await _db.OrganizationMembers
+            .AsNoTracking()
             .Where(m => m.UserHandle == handle)
             .GroupBy(m => m.OrgSid)
             .Select(g => g.OrderByDescending(m => m.Timestamp).First())
@@ -135,23 +121,12 @@ public class UsersController : ControllerBase
         if (!include_inactive)
             memberships = memberships.Where(m => m.IsActive).ToList();
 
-        return Ok(memberships.Select(m => new OrganizationMemberDto
-        {
-            OrgSid = m.OrgSid,
-            UserHandle = m.UserHandle,
-            CitizenId = m.CitizenId,
-            DisplayName = m.DisplayName,
-            Rank = m.Rank,
-            UrlImage = m.UrlImage,
-            Timestamp = m.Timestamp,
-            IsActive = m.IsActive,
-        }).ToList());
+        return Ok(memberships.Select(m => m.ToDto()).ToList());
     }
 
     [HttpGet("{handle}/history")]
     public async Task<ActionResult<IReadOnlyList<UserHandleHistoryDto>>> GetHistory(string handle, CancellationToken ct)
     {
-        // Resolve citizen ID
         var user = await _userRepo.GetByHandleAsync(handle, ct);
         int? citizenId = user?.CitizenId;
 
@@ -165,12 +140,7 @@ public class UsersController : ControllerBase
             throw new KeyNotFoundException($"User '{handle}' not found");
 
         var history = await _handleHistoryRepo.GetByCitizenIdAsync(citizenId.Value, ct);
-        return Ok(history.Select(h => new UserHandleHistoryDto
-        {
-            UserHandle = h.UserHandle,
-            FirstSeen = h.FirstSeen,
-            LastSeen = h.LastSeen,
-        }).ToList());
+        return Ok(history.Select(h => h.ToDto()).ToList());
     }
 
     [HttpGet("{handle}/changes")]
@@ -180,31 +150,6 @@ public class UsersController : ControllerBase
         CancellationToken ct = default)
     {
         var changes = await _changeRepo.GetByUserHandleAsync(handle, limit, ct);
-        return Ok(changes.Select(MapChange).ToList());
+        return Ok(changes.Select(c => c.ToDto()).ToList());
     }
-
-    private static UserProfileDto MapUser(Collector.Models.User u) => new()
-    {
-        CitizenId = u.CitizenId,
-        UserHandle = u.UserHandle,
-        DisplayName = u.DisplayName,
-        UrlImage = u.UrlImage,
-        Bio = u.Bio,
-        Location = u.Location,
-        Enlisted = u.Enlisted,
-        UpdatedAt = u.UpdatedAt,
-    };
-
-    private static ChangeEventDto MapChange(Collector.Models.ChangeEvent e) => new()
-    {
-        Id = e.Id,
-        Timestamp = e.Timestamp,
-        EntityType = e.EntityType,
-        EntityId = e.EntityId,
-        ChangeType = e.ChangeType,
-        OldValue = e.OldValue,
-        NewValue = e.NewValue,
-        OrgSid = e.OrgSid,
-        UserHandle = e.UserHandle,
-    };
 }

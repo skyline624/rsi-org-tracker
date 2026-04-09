@@ -1,18 +1,34 @@
 using System.Net;
 using System.Text.Json;
-using Collector.Api.Dtos.Common;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Collector.Api.Middleware;
 
+/// <summary>
+/// Global exception middleware converting unhandled exceptions into RFC 7807 Problem Details
+/// responses. Never leaks the raw exception message or stack trace to clients — those are
+/// only emitted via the structured logger. A correlation id (request id) is attached so the
+/// client and the log can be joined after the fact.
+/// </summary>
 public class ExceptionHandlingMiddleware
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
     private readonly RequestDelegate _next;
     private readonly ILogger<ExceptionHandlingMiddleware> _logger;
+    private readonly IHostEnvironment _env;
 
-    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+    public ExceptionHandlingMiddleware(
+        RequestDelegate next,
+        ILogger<ExceptionHandlingMiddleware> logger,
+        IHostEnvironment env)
     {
         _next = next;
         _logger = logger;
+        _env = env;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -21,39 +37,57 @@ public class ExceptionHandlingMiddleware
         {
             await _next(context);
         }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // Client disconnected — do not log as an error.
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unhandled exception for {Method} {Path}", context.Request.Method, context.Request.Path);
-            await WriteErrorAsync(context, ex);
+            var correlationId = context.TraceIdentifier;
+            _logger.LogError(ex,
+                "Unhandled exception for {Method} {Path} CorrelationId={CorrelationId}",
+                context.Request.Method, context.Request.Path, correlationId);
+            await WriteProblemAsync(context, ex, correlationId);
         }
     }
 
-    private static async Task WriteErrorAsync(HttpContext context, Exception ex)
+    private async Task WriteProblemAsync(HttpContext context, Exception ex, string correlationId)
     {
-        context.Response.ContentType = "application/json";
-        context.Response.StatusCode = ex switch
+        if (context.Response.HasStarted)
         {
-            UnauthorizedAccessException => (int)HttpStatusCode.Unauthorized,
-            KeyNotFoundException => (int)HttpStatusCode.NotFound,
-            ArgumentException => (int)HttpStatusCode.BadRequest,
-            InvalidOperationException => (int)HttpStatusCode.Conflict,
-            _ => (int)HttpStatusCode.InternalServerError,
+            return;
+        }
+
+        var (status, title) = ex switch
+        {
+            UnauthorizedAccessException => ((int)HttpStatusCode.Unauthorized, "Unauthorized"),
+            KeyNotFoundException => ((int)HttpStatusCode.NotFound, "Not Found"),
+            ArgumentException => ((int)HttpStatusCode.BadRequest, "Bad Request"),
+            InvalidOperationException => ((int)HttpStatusCode.Conflict, "Conflict"),
+            _ => ((int)HttpStatusCode.InternalServerError, "Internal Server Error"),
         };
 
-        var response = new ErrorResponse
+        var problem = new ProblemDetails
         {
-            Error = ex switch
-            {
-                UnauthorizedAccessException => "Unauthorized",
-                KeyNotFoundException => "Not found",
-                ArgumentException => "Bad request",
-                InvalidOperationException => "Conflict",
-                _ => "Internal server error",
-            },
-            Detail = ex.Message,
+            Type = $"https://httpstatuses.com/{status}",
+            Title = title,
+            Status = status,
+            Instance = context.Request.Path,
         };
 
-        await context.Response.WriteAsync(JsonSerializer.Serialize(response,
-            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+        // Only developer mode surfaces the exception message and type — never in production.
+        if (_env.IsDevelopment())
+        {
+            problem.Detail = ex.Message;
+            problem.Extensions["exceptionType"] = ex.GetType().FullName;
+        }
+
+        problem.Extensions["correlationId"] = correlationId;
+
+        context.Response.StatusCode = status;
+        context.Response.ContentType = "application/problem+json";
+        await context.Response.WriteAsync(
+            JsonSerializer.Serialize(problem, SerializerOptions),
+            context.RequestAborted);
     }
 }

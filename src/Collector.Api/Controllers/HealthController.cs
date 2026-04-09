@@ -13,11 +13,13 @@ public class HealthController : ControllerBase
     private static readonly DateTime _startTime = DateTime.UtcNow;
     private readonly ApiDbContext _apiDb;
     private readonly TrackerDbContext _trackerDb;
+    private readonly ILogger<HealthController> _logger;
 
-    public HealthController(ApiDbContext apiDb, TrackerDbContext trackerDb)
+    public HealthController(ApiDbContext apiDb, TrackerDbContext trackerDb, ILogger<HealthController> logger)
     {
         _apiDb = apiDb;
         _trackerDb = trackerDb;
+        _logger = logger;
     }
 
     [HttpGet("/")]
@@ -29,9 +31,8 @@ public class HealthController : ControllerBase
     [HttpGet("api/health/detailed")]
     public async Task<IActionResult> Detailed(CancellationToken ct)
     {
-        bool apiDbOk, trackerDbOk;
-        try { apiDbOk = await _apiDb.Database.CanConnectAsync(ct); } catch { apiDbOk = false; }
-        try { trackerDbOk = await _trackerDb.Database.CanConnectAsync(ct); } catch { trackerDbOk = false; }
+        var apiDbOk = await TryPingAsync(_apiDb, "api", ct);
+        var trackerDbOk = await TryPingAsync(_trackerDb, "tracker", ct);
 
         return Ok(new
         {
@@ -48,14 +49,26 @@ public class HealthController : ControllerBase
     [HttpGet("api/health/ready")]
     public async Task<IActionResult> Ready(CancellationToken ct)
     {
+        if (await TryPingAsync(_trackerDb, "tracker", ct))
+            return Ok(new { status = "ready" });
+        return StatusCode(503, new { status = "not ready" });
+    }
+
+    /// <summary>
+    /// Pings a database and logs the failure instead of silently swallowing it. Health
+    /// endpoints still return a clean "degraded" status so we don't expose stack traces,
+    /// but the operator sees the reason in the structured log.
+    /// </summary>
+    private async Task<bool> TryPingAsync(Microsoft.EntityFrameworkCore.DbContext db, string name, CancellationToken ct)
+    {
         try
         {
-            await _trackerDb.Database.CanConnectAsync(ct);
-            return Ok(new { status = "ready" });
+            return await db.Database.CanConnectAsync(ct);
         }
-        catch
+        catch (Exception ex)
         {
-            return StatusCode(503, new { status = "not ready" });
+            _logger.LogWarning(ex, "Health check: failed to connect to {Database}", name);
+            return false;
         }
     }
 

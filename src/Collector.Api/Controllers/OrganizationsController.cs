@@ -57,7 +57,17 @@ public class OrganizationsController : ControllerBase
         var query = LatestOrgs();
 
         if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(o => o.Name.Contains(search) || o.Sid.Contains(search));
+        {
+            // `.Contains()` on SQLite translates to `instr()` which is case-sensitive.
+            // `EF.Functions.Like` delegates to SQLite `LIKE` which is case-insensitive
+            // for ASCII (thanks to PRAGMA case_sensitive_like=OFF, the default).
+            // We escape the user's wildcards (%, _) the same way the user search does.
+            var escaped = search.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+            var pattern = $"%{escaped}%";
+            query = query.Where(o =>
+                EF.Functions.Like(o.Name, pattern, "\\") ||
+                EF.Functions.Like(o.Sid, pattern, "\\"));
+        }
         if (!string.IsNullOrWhiteSpace(archetype))
             query = query.Where(o => o.Archetype == archetype);
         if (!string.IsNullOrWhiteSpace(commitment))
@@ -81,12 +91,37 @@ public class OrganizationsController : ControllerBase
     [HttpGet("{sid}")]
     public async Task<ActionResult<OrganizationDto>> GetBySid(string sid, CancellationToken ct)
     {
+        sid = sid.ToUpperInvariant();
         var org = await _db.Organizations
-            .Where(o => o.Sid == sid.ToUpperInvariant())
+            .Where(o => o.Sid == sid)
             .OrderByDescending(o => o.Timestamp)
             .FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException($"Organization '{sid}' not found");
-        return Ok(MapOrg(org));
+
+        // Override the stale Phase 1 MembersCount with the real Phase 3 headcount.
+        // Some orgs have MembersCount=0 from the RSI search API even though they
+        // have an active roster — the truth is in member_collection_log.
+        var latestCollection = await _db.MemberCollectionLogs
+            .Where(l => l.OrgSid == sid)
+            .OrderByDescending(l => l.CollectionTime)
+            .Select(l => l.CollectionTime)
+            .FirstOrDefaultAsync(ct);
+
+        var dto = MapOrg(org);
+        if (latestCollection != default)
+        {
+            var realCount = await _db.MemberCollectionLogs
+                .Where(l => l.OrgSid == sid && l.CollectionTime == latestCollection)
+                .Select(l => l.UserHandle)
+                .Distinct()
+                .CountAsync(ct);
+            if (realCount > 0)
+            {
+                dto.MembersCount = realCount;
+            }
+        }
+
+        return Ok(dto);
     }
 
     [HttpGet("{sid}/members")]
@@ -147,18 +182,32 @@ public class OrganizationsController : ControllerBase
         string sid,
         CancellationToken ct = default)
     {
-        var history = await _db.Organizations
-            .Where(o => o.Sid == sid.ToUpperInvariant())
-            .OrderBy(o => o.Timestamp)
-            .Select(o => new { o.Timestamp, o.MembersCount })
+        // Source of truth for headcount is Phase 3 (member_collection_log), not
+        // Phase 1 discovery (Organization.MembersCount) — the RSI search endpoint
+        // sometimes returns 0 for fully-populated orgs (ex: LIBERASTRA). Each row
+        // in member_collection_log represents one member at one collection time,
+        // so COUNT(DISTINCT UserHandle) per collection gives the real headcount.
+        sid = sid.ToUpperInvariant();
+
+        var perCollection = await _db.MemberCollectionLogs
+            .Where(l => l.OrgSid == sid)
+            .GroupBy(l => l.CollectionTime)
+            .Select(g => new
+            {
+                g.Key,
+                Count = g.Select(x => x.UserHandle).Distinct().Count(),
+            })
             .ToListAsync(ct);
 
-        if (!history.Any()) return Ok(Array.Empty<GrowthDataPoint>());
+        if (perCollection.Count == 0)
+            return Ok(Array.Empty<GrowthDataPoint>());
 
-        var byDay = history
-            .GroupBy(o => o.Timestamp.Date)
+        var byDay = perCollection
+            .GroupBy(x => x.Key.Date)
             .OrderBy(g => g.Key)
-            .Select(g => new { Date = g.Key, Count = (int)g.Average(o => o.MembersCount) })
+            // Use the MAX of the day so a mid-day smaller collection doesn't
+            // artificially deflate the count (e.g. if a collection was partial).
+            .Select(g => new { Date = g.Key, Count = g.Max(x => x.Count) })
             .ToList();
 
         var growth = new List<GrowthDataPoint>();

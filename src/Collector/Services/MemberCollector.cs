@@ -104,25 +104,55 @@ public class MemberCollector : IMemberCollector
     {
         _logger.LogInformation("Collecting members for organization {Sid}", orgSid);
 
-        // Fetch all members from API
-        var members = await _apiClient.GetAllOrganizationMembersAsync(
+        // ── STEP 1 — fetch all inputs (reads only, no transaction) ──
+        var collection = await _apiClient.GetAllOrganizationMembersAsync(
             orgSid, _options.MemberCollectionPageSize, ct);
 
-        if (members.Count == 0)
+        // If the fetch failed entirely (network/5xx/parse), leave the existing
+        // roster alone — we have no authoritative signal to act on.
+        if (!collection.Reachable)
         {
-            _logger.LogWarning("No members found for organization {Sid}", orgSid);
+            _logger.LogWarning("Members unreachable for {Sid}; keeping prior roster", orgSid);
             return 0;
         }
 
-        // Get previous collection log for change detection
+        // RSI signalled the org no longer exists, OR the org genuinely has zero
+        // members now. In either case the previously-active roster is stale —
+        // flush it so the detail page no longer shows ghost members.
+        if (!collection.OrgExists || collection.Members.Count == 0)
+        {
+            var deactivated = await _memberRepo.MarkAllPreviousInactiveAsync(
+                orgSid, DateTime.UtcNow, ct);
+            _logger.LogWarning(
+                "No members for {Sid} (exists={Exists}) — deactivated {Count} prior active rows",
+                orgSid, collection.OrgExists, deactivated);
+            // Also zero the latest Organization snapshot so the list page stops
+            // showing a stale headcount for a dead org.
+            try
+            {
+                await _orgRepo.UpdateLatestMembersCountAsync(orgSid, 0, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not zero MembersCount for {Sid}", orgSid);
+            }
+            return 0;
+        }
+
+        var members = collection.Members;
+
         var previousLog = await _logRepo.GetLatestAsync(orgSid, ct);
         var previousSnapshots = previousLog != null
             ? await GetPreviousSnapshotsAsync(orgSid, previousLog.CollectionTime, ct)
             : new List<MemberSnapshot>();
 
+        // Look up display names BEFORE opening the transaction — this can touch ~400k
+        // rows of the users table on SQLite and we don't want it holding a write lock.
+        var memberHandles = members.Select(m => m.Handle).ToList();
+        var knownByHandle = await _userRepo.GetDisplayNamesByHandlesAsync(memberHandles, ct);
+
         var timestamp = DateTime.UtcNow;
 
-        // Create current snapshots
         var currentSnapshots = members.Select(m => new MemberSnapshot
         {
             CitizenId = m.CitizenId,
@@ -131,113 +161,146 @@ public class MemberCollector : IMemberCollector
             Roles = m.Roles
         }).ToList();
 
-        // Identify new handles (in current but not in previous collection)
-        var previousHandleSet = new HashSet<string>(previousSnapshots.Select(s => s.Handle), StringComparer.OrdinalIgnoreCase);
+        var previousHandleSet = new HashSet<string>(
+            previousSnapshots.Select(s => s.Handle),
+            StringComparer.OrdinalIgnoreCase);
         var newHandleSet = new HashSet<string>(
             members.Where(m => !previousHandleSet.Contains(m.Handle)).Select(m => m.Handle),
             StringComparer.OrdinalIgnoreCase);
 
-        // Detect changes but suppress member_joined for new handles — Phase 4 will emit them
-        // after verifying citizen_id (new player vs renamed player)
+        // Detect changes but suppress member_joined for new handles — Phase 4 will emit
+        // them after verifying citizen_id (new player vs. renamed player).
         var allChanges = _changeDetector.DetectMemberChanges(orgSid, previousSnapshots, currentSnapshots);
         var changes = allChanges
             .Where(e => !(e.ChangeType == "member_joined" && e.UserHandle != null && newHandleSet.Contains(e.UserHandle)))
             .ToList();
 
+        // Build the queue batch up-front; InsertPendingIgnoreDuplicatesAsync will
+        // atomically drop anything that already has a pending row.
         var toQueue = new List<UserEnrichmentQueue>();
+        foreach (var member in members)
+        {
+            if (newHandleSet.Contains(member.Handle))
+            {
+                toQueue.Add(new UserEnrichmentQueue
+                {
+                    UserHandle = member.Handle,
+                    Priority = 1,
+                    Enriched = false,
+                    QueuedAt = timestamp
+                });
+            }
+            else if (knownByHandle.TryGetValue(member.Handle, out var knownDisplayName)
+                     && knownDisplayName != member.DisplayName)
+            {
+                toQueue.Add(new UserEnrichmentQueue
+                {
+                    UserHandle = member.Handle,
+                    Priority = 0,
+                    Enriched = false,
+                    QueuedAt = timestamp
+                });
+            }
+        }
 
-        // Use transaction for data consistency
-        await using var transaction = await _memberRepo.BeginTransactionAsync(ct);
+        // ── STEP 2 — atomic write of member snapshots, logs, change events,
+        //             AND the deactivation of the previous snapshot. All or nothing. ──
+        await using (var transaction = await _memberRepo.BeginTransactionAsync(ct))
+        {
+            try
+            {
+                var memberEntities = members.Select(m => new OrganizationMember
+                {
+                    OrgSid = orgSid,
+                    UserHandle = m.Handle,
+                    CitizenId = m.CitizenId,
+                    DisplayName = m.DisplayName,
+                    Rank = m.Rank,
+                    RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null,
+                    UrlImage = m.UrlImage,
+                    Timestamp = timestamp
+                }).ToList();
+
+                await _memberRepo.AddRangeAsync(memberEntities, ct);
+
+                var logEntries = members.Select(m => new MemberCollectionLog
+                {
+                    OrgSid = orgSid,
+                    CollectionTime = timestamp,
+                    CitizenId = m.CitizenId,
+                    UserHandle = m.Handle,
+                    Rank = m.Rank,
+                    RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null
+                }).ToList();
+
+                await _logRepo.AddRangeAsync(logEntries, ct);
+
+                if (changes.Count > 0)
+                {
+                    await _changeEventRepo.AddRangeAsync(changes, ct);
+                }
+
+                await _memberRepo.SaveChangesAsync(ct);
+
+                // Previously this ran OUTSIDE the transaction — a crash in between the
+                // commit and the mark step would leave rows incorrectly active. Now it
+                // is part of the same atomic unit.
+                await _memberRepo.MarkAllPreviousInactiveAsync(orgSid, timestamp, ct);
+
+                await transaction.CommitAsync(ct);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(ct);
+                _memberRepo.ClearTrackedEntities();
+                throw;
+            }
+        }
+
+        // ── STEP 3 — best-effort queue insert OUTSIDE the transaction. Duplicates
+        //             against the partial unique index are silently ignored by
+        //             INSERT OR IGNORE, so a duplicate never tears down Step 2. ──
+        var queued = 0;
+        if (toQueue.Count > 0)
+        {
+            try
+            {
+                queued = await _enrichmentQueueRepo.InsertPendingIgnoreDuplicatesAsync(toQueue, ct);
+            }
+            catch (Exception ex)
+            {
+                // Logging only — the member snapshot is the source of truth, the
+                // queue can always be rebuilt on the next cycle.
+                _logger.LogWarning(ex,
+                    "Queue insert failed for org {Sid} — {Count} handles skipped", orgSid, toQueue.Count);
+            }
+        }
+
+        // ── STEP 4 — reconcile Organization.MembersCount with the real headcount.
+        //             Phase 1 reads the count from RSI's search API which occasionally
+        //             reports 0 for active orgs. Phase 3 just counted the real roster,
+        //             so we overwrite the latest Organization snapshot if it diverges.
         try
         {
-            // Save member snapshots
-            var memberEntities = members.Select(m => new OrganizationMember
+            var realCount = members.Select(m => m.Handle)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var updated = await _orgRepo.UpdateLatestMembersCountAsync(orgSid, realCount, ct);
+            if (updated > 0)
             {
-                OrgSid = orgSid,
-                UserHandle = m.Handle,
-                CitizenId = m.CitizenId,
-                DisplayName = m.DisplayName,
-                Rank = m.Rank,
-                RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null,
-                UrlImage = m.UrlImage,
-                Timestamp = timestamp
-            }).ToList();
-
-            await _memberRepo.AddRangeAsync(memberEntities, ct);
-
-            // Save collection log (including Rank/RolesJson for accurate change detection next cycle)
-            var logEntries = members.Select(m => new MemberCollectionLog
-            {
-                OrgSid = orgSid,
-                CollectionTime = timestamp,
-                CitizenId = m.CitizenId,
-                UserHandle = m.Handle,
-                Rank = m.Rank,
-                RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null
-            }).ToList();
-
-            await _logRepo.AddRangeAsync(logEntries, ct);
-
-            // Save change events
-            if (changes.Count > 0)
-            {
-                await _changeEventRepo.AddRangeAsync(changes, ct);
+                _logger.LogInformation(
+                    "Reconciled MembersCount for {Sid}: Phase1=stale → Phase3={Count}",
+                    orgSid, realCount);
             }
-
-            // Load display names only for the handles in this collection (not all 400K users)
-            var memberHandles = members.Select(m => m.Handle).ToList();
-            var knownByHandle = await _userRepo.GetDisplayNamesByHandlesAsync(memberHandles, ct);
-
-            foreach (var member in members)
-            {
-                if (newHandleSet.Contains(member.Handle))
-                {
-                    // Priority 1 = new handle, Phase 4 must verify citizen_id and emit member_joined if truly new
-                    // Use IsQueuedAsync to avoid duplicates across the entire queue (not just a batch window)
-                    if (!await _enrichmentQueueRepo.IsQueuedAsync(member.Handle, ct))
-                        toQueue.Add(new UserEnrichmentQueue
-                        {
-                            UserHandle = member.Handle,
-                            Priority = 1,
-                            Enriched = false,
-                            QueuedAt = timestamp
-                        });
-                }
-                else if (knownByHandle.TryGetValue(member.Handle, out var knownDisplayName)
-                         && knownDisplayName != member.DisplayName)
-                {
-                    // Priority 0 = known handle but display name changed, Phase 4 updates it
-                    if (!await _enrichmentQueueRepo.IsQueuedAsync(member.Handle, ct))
-                        toQueue.Add(new UserEnrichmentQueue
-                        {
-                            UserHandle = member.Handle,
-                            Priority = 0,
-                            Enriched = false,
-                            QueuedAt = timestamp
-                        });
-                }
-            }
-
-            if (toQueue.Count > 0)
-            {
-                await _enrichmentQueueRepo.AddRangeAsync(toQueue, ct);
-            }
-
-            await _memberRepo.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
         }
-        catch
+        catch (Exception ex)
         {
-            await transaction.RollbackAsync(ct);
-            throw;
+            _logger.LogWarning(ex,
+                "MembersCount reconciliation failed for {Sid} (non-fatal)", orgSid);
         }
-
-        // Mark previous rows inactive outside the transaction to avoid long table locks
-        await _memberRepo.MarkAllPreviousInactiveAsync(orgSid, timestamp, ct);
 
         _logger.LogInformation(
             "Collected {Count} members for {Sid}, detected {Changes} changes, queued {NewUsers} new users",
-            members.Count, orgSid, changes.Count, toQueue.Count);
+            members.Count, orgSid, changes.Count, queued);
 
         return members.Count;
     }

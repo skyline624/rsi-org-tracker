@@ -7,6 +7,7 @@
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);NU1603</NoWarn>
     <OutputPath>../../bin/api</OutputPath>
+    <UserSecretsId>collector-api-0a1f5f8b-2c3d-4e5f-9f0a-1b2c3d4e5f6a</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +19,13 @@
     <PackageReference Include="BCrypt.Net-Next" Version="4.*" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.*">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Serilog.AspNetCore" Version="8.*" />
+    <PackageReference Include="Serilog.Enrichers.Thread" Version="3.*" />
+    <PackageReference Include="Serilog.Enrichers.Process" Version="2.*" />
   </ItemGroup>
 
 </Project>

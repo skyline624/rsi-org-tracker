@@ -14,4 +14,11 @@ public interface IRepository<T> where T : class
     Task AddRangeAsync(IEnumerable<T> entities, CancellationToken ct = default);
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Drops all tracked entities from the underlying DbContext. Use this after a rollback
+    /// to prevent dirty in-memory state from leaking into subsequent calls that share
+    /// the same scoped DbContext.
+    /// </summary>
+    void ClearTrackedEntities();
 }

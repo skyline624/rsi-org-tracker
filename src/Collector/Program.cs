@@ -98,6 +98,11 @@ try
 
     logger.LogInformation("Application exiting");
 }
+catch (Microsoft.Extensions.Hosting.HostAbortedException)
+{
+    // Rethrow so EF Core design-time tooling can introspect the DbContext.
+    throw;
+}
 catch (Exception ex)
 {
     Console.WriteLine($"FATAL ERROR: {ex.Message}");

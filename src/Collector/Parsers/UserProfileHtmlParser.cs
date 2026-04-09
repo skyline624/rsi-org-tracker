@@ -64,7 +64,7 @@ public class UserProfileHtmlParser
         }
 
         // Try text content like "#123456"
-        var text = doc.DocumentNode.InnerText;
+        var text = doc.DocumentNode.InnerText ?? string.Empty;
         var hashIndex = text.IndexOf('#');
         if (hashIndex >= 0)
         {
@@ -79,7 +79,7 @@ public class UserProfileHtmlParser
         var recordNode = doc.DocumentNode.SelectSingleNode("//*[contains(text(), 'UEE Citizen Record')]");
         if (recordNode != null)
         {
-            var recordText = recordNode.InnerText;
+            var recordText = recordNode.InnerText ?? string.Empty;
             var match = System.Text.RegularExpressions.Regex.Match(recordText, @"#?(\d+)");
             if (match.Success && int.TryParse(match.Groups[1].Value, out citizenId))
             {
@@ -157,7 +157,11 @@ public class UserProfileHtmlParser
             return null;
         }
 
-        var text = enlistedNode.InnerText;
+        var text = enlistedNode.InnerText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
 
         // Try to parse date like "Enlisted: Jan 15, 2020" or similar
         var patterns = new[]

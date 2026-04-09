@@ -43,4 +43,28 @@ public class UserEnrichmentQueueRepository : Repository<UserEnrichmentQueue>, IU
     {
         return await DbSet.AnyAsync(q => q.UserHandle == userHandle && !q.Enriched, ct);
     }
+
+    public async Task<int> InsertPendingIgnoreDuplicatesAsync(
+        IReadOnlyList<UserEnrichmentQueue> items,
+        CancellationToken ct = default)
+    {
+        if (items.Count == 0) return 0;
+
+        // SQLite's "INSERT OR IGNORE" cooperates with the partial unique index
+        // (IX_user_enrichment_queue_UserHandle_Pending) to atomically skip any
+        // handle that already has an Enriched=0 row, avoiding the check/insert
+        // race condition that would otherwise tear down the surrounding transaction.
+        var inserted = 0;
+        foreach (var item in items)
+        {
+            var rows = await Context.Database.ExecuteSqlRawAsync(
+                @"INSERT OR IGNORE INTO user_enrichment_queue
+                    (UserHandle, Priority, Enriched, QueuedAt, AttemptCount, LastError, EnrichedAt)
+                  VALUES ({0}, {1}, 0, {2}, 0, NULL, NULL);",
+                new object[] { item.UserHandle, item.Priority, item.QueuedAt },
+                ct);
+            inserted += rows;
+        }
+        return inserted;
+    }
 }

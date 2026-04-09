@@ -5,7 +5,13 @@ using Microsoft.Extensions.Options;
 namespace Collector.Services;
 
 /// <summary>
-/// Orchestrates the sequential execution of collection phases in a continuous loop.
+/// Orchestrates the sequential execution of the 4 collection phases. A single method
+/// <see cref="RunCycleAsync"/> runs one cycle; <see cref="RunLoopAsync"/> wraps it
+/// in a continuous loop honouring the configured cycle interval.
+///
+/// Phases are declared once as an ordered list of <see cref="Phase"/> delegates so
+/// that each phase keeps its own name + skip predicate without duplicating the
+/// try/catch scaffolding at every call site (DRY).
 /// </summary>
 public class CollectionOrchestrator
 {
@@ -30,11 +36,36 @@ public class CollectionOrchestrator
     }
 
     /// <summary>
-    /// Executes the 4 phases in a continuous loop:
-    /// 1. Discover organizations
-    /// 2. Collect organization metadata
-    /// 3. Collect members
-    /// 4. Enrich user profiles
+    /// Represents a named phase of the collection pipeline. <paramref name="Run"/>
+    /// returns the number of units processed so we can surface a meaningful count
+    /// in the completion log.
+    /// </summary>
+    private record Phase(string Name, Func<CancellationToken, Task<int>> Run, string ResultLabel);
+
+    private Phase[] BuildPipeline(bool skipPhase2) => new[]
+    {
+        new Phase("Phase 1: Discovering organizations", _orgCollector.DiscoverOrganizationsAsync, "organizations discovered"),
+        new Phase("Phase 2: Collecting organization metadata",
+            skipPhase2
+                ? _ => Task.FromResult(-1)
+                : _orgCollector.CollectOrganizationMetadataAsync,
+            "organizations processed"),
+        new Phase("Phase 3: Collecting members", _memberCollector.CollectAllMembersAsync, "members collected"),
+        new Phase("Phase 4: Enriching user profiles", _userCollector.EnrichAllUsersAsync, "users enriched"),
+    };
+
+    /// <summary>
+    /// Runs a single full cycle.
+    /// </summary>
+    public async Task RunSingleCycleAsync(CancellationToken ct = default, bool skipPhase2 = false)
+    {
+        _logger.LogInformation("Running single collection cycle");
+        await RunCycleAsync(ct, skipPhase2);
+        _logger.LogInformation("Single collection cycle complete");
+    }
+
+    /// <summary>
+    /// Runs the collection loop indefinitely until the token is cancelled.
     /// </summary>
     public async Task RunCollectionLoopAsync(CancellationToken ct, bool skipPhase2 = false)
     {
@@ -42,62 +73,28 @@ public class CollectionOrchestrator
 
         while (!ct.IsCancellationRequested)
         {
+            var cycleStart = DateTime.UtcNow;
             try
             {
                 _logger.LogInformation("=== Beginning collection cycle ===");
+                await RunCycleAsync(ct, skipPhase2);
+                _logger.LogInformation("=== Collection cycle complete ===");
 
-                // Phase 1: Discover organizations
-                _logger.LogInformation("Phase 1: Discovering organizations");
-                try
+                // Compensate the wait so the effective period is the full CycleInterval,
+                // not CycleInterval + cycle duration.
+                var elapsed = DateTime.UtcNow - cycleStart;
+                var wait = _options.CycleInterval - elapsed;
+                if (wait > TimeSpan.Zero)
                 {
-                    var discoveredCount = await _orgCollector.DiscoverOrganizationsAsync(ct);
-                    _logger.LogInformation("Phase 1 complete: {Count} organizations discovered", discoveredCount);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { _logger.LogError(ex, "Phase 1 failed — continuing to Phase 2"); }
-
-                // Phase 2: Collect organization metadata
-                if (!skipPhase2)
-                {
-                    _logger.LogInformation("Phase 2: Collecting organization metadata");
-                    try
-                    {
-                        var orgsProcessed = await _orgCollector.CollectOrganizationMetadataAsync(ct);
-                        _logger.LogInformation("Phase 2 complete: {Count} organizations processed", orgsProcessed);
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex) { _logger.LogError(ex, "Phase 2 failed — continuing to Phase 3"); }
+                    _logger.LogInformation("Waiting {Interval} before next cycle", wait);
+                    await Task.Delay(wait, ct);
                 }
                 else
                 {
-                    _logger.LogInformation("Phase 2: Skipped (--skip-phase2)");
+                    _logger.LogWarning(
+                        "Cycle duration ({Elapsed}) exceeded CycleInterval ({Interval}) — starting next cycle immediately",
+                        elapsed, _options.CycleInterval);
                 }
-
-                // Phase 3: Collect members
-                _logger.LogInformation("Phase 3: Collecting members");
-                try
-                {
-                    var membersCollected = await _memberCollector.CollectAllMembersAsync(ct);
-                    _logger.LogInformation("Phase 3 complete: {Count} members collected", membersCollected);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { _logger.LogError(ex, "Phase 3 failed — continuing to Phase 4"); }
-
-                // Phase 4: Enrich user profiles
-                _logger.LogInformation("Phase 4: Enriching user profiles");
-                try
-                {
-                    var usersEnriched = await _userCollector.EnrichAllUsersAsync(ct);
-                    _logger.LogInformation("Phase 4 complete: {Count} users enriched", usersEnriched);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { _logger.LogError(ex, "Phase 4 failed"); }
-
-                _logger.LogInformation("=== Collection cycle complete ===");
-
-                // Wait before next cycle
-                _logger.LogInformation("Waiting {Interval} before next cycle", _options.CycleInterval);
-                await Task.Delay(_options.CycleInterval, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -107,8 +104,6 @@ public class CollectionOrchestrator
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unexpected error during collection cycle");
-
-                // Wait before retry after error
                 _logger.LogInformation("Waiting {Delay} before retry", _options.ErrorDelay);
                 await Task.Delay(_options.ErrorDelay, ct);
             }
@@ -118,59 +113,36 @@ public class CollectionOrchestrator
     }
 
     /// <summary>
-    /// Runs a single collection cycle (useful for testing).
+    /// Executes every phase in order. Each phase runs inside a shared try/catch so
+    /// a failure in one phase doesn't abort the cycle; only cancellation is fatal.
     /// </summary>
-    public async Task RunSingleCycleAsync(CancellationToken ct = default, bool skipPhase2 = false)
+    private async Task RunCycleAsync(CancellationToken ct, bool skipPhase2)
     {
-        _logger.LogInformation("Running single collection cycle");
-
-        // Phase 1: Discover organizations
-        _logger.LogInformation("Phase 1: Discovering organizations");
-        try
+        foreach (var phase in BuildPipeline(skipPhase2))
         {
-            var discoveredCount = await _orgCollector.DiscoverOrganizationsAsync(ct);
-            _logger.LogInformation("Phase 1 complete: {Count} organizations discovered", discoveredCount);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex) { _logger.LogError(ex, "Phase 1 failed — continuing to Phase 2"); }
-
-        // Phase 2: Collect organization metadata
-        if (!skipPhase2)
-        {
-            _logger.LogInformation("Phase 2: Collecting organization metadata");
+            ct.ThrowIfCancellationRequested();
+            _logger.LogInformation(phase.Name);
             try
             {
-                var orgsProcessed = await _orgCollector.CollectOrganizationMetadataAsync(ct);
-                _logger.LogInformation("Phase 2 complete: {Count} organizations processed", orgsProcessed);
+                var count = await phase.Run(ct);
+                if (count < 0)
+                {
+                    _logger.LogInformation("{Phase}: skipped", phase.Name);
+                }
+                else
+                {
+                    _logger.LogInformation("{Phase} complete: {Count} {Label}",
+                        phase.Name, count, phase.ResultLabel);
+                }
             }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { _logger.LogError(ex, "Phase 2 failed — continuing to Phase 3"); }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "{Phase} failed — continuing to the next phase", phase.Name);
+            }
         }
-        else
-        {
-            _logger.LogInformation("Phase 2: Skipped (--skip-phase2)");
-        }
-
-        // Phase 3: Collect members
-        _logger.LogInformation("Phase 3: Collecting members");
-        try
-        {
-            var membersCollected = await _memberCollector.CollectAllMembersAsync(ct);
-            _logger.LogInformation("Phase 3 complete: {Count} members collected", membersCollected);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex) { _logger.LogError(ex, "Phase 3 failed — continuing to Phase 4"); }
-
-        // Phase 4: Enrich user profiles
-        _logger.LogInformation("Phase 4: Enriching user profiles");
-        try
-        {
-            var usersEnriched = await _userCollector.EnrichAllUsersAsync(ct);
-            _logger.LogInformation("Phase 4 complete: {Count} users enriched", usersEnriched);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex) { _logger.LogError(ex, "Phase 4 failed"); }
-
-        _logger.LogInformation("Single collection cycle complete");
     }
 }

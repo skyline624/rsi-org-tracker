@@ -178,15 +178,39 @@ public class UserCollector : IUserCollector
         var timestamp = DateTime.UtcNow;
         var changeEvents = new List<ChangeEvent>();
 
-        // Look up by citizen_id first (most reliable), then by handle
-        var existingByCitizenId = profileData.CitizenId > 0
-            ? await _userRepo.GetByCitizenIdAsync(profileData.CitizenId, ct)
-            : null;
-        var existingByHandle = await _userRepo.GetByHandleAsync(handle, ct);
-
+        // Open the transaction FIRST so lookups and mutations happen on a consistent
+        // snapshot. Any exception below triggers a rollback AND clears the DbContext
+        // change tracker so partially-mutated entities don't leak into future calls
+        // that share the same scoped DbContext.
         await using var transaction = await _userRepo.BeginTransactionAsync(ct);
         try
         {
+            // citizen_id is the permanent key; handle is ambiguous. Look up both so we
+            // can detect (a) renames, (b) handle reuse between two distinct citizens,
+            // (c) brand-new users.
+            var existingByCitizenId = profileData.CitizenId > 0
+                ? await _userRepo.GetByCitizenIdAsync(profileData.CitizenId, ct)
+                : null;
+            var existingByHandle = await _userRepo.GetByHandleAsync(handle, ct);
+
+            var sameEntity = existingByCitizenId != null
+                && existingByHandle != null
+                && existingByCitizenId.Id == existingByHandle.Id;
+
+            // Detect the "handle reuse" collision: we have a user A with citizen_id X
+            // already in the DB, and a DIFFERENT user B currently also holding handle H.
+            // The newly-fetched profile says X now uses H, so B must have been renamed
+            // off-band. We can't know B's new handle yet, so we log and skip B for this
+            // pass — Phase 4 will sweep them into the queue on the next cycle.
+            if (existingByCitizenId != null && existingByHandle != null && !sameEntity)
+            {
+                _logger.LogWarning(
+                    "Handle reuse detected for {Handle}: citizen_id {CitizenIdNew} claims it, " +
+                    "but {StaleUserId} (citizen_id {CitizenIdStale}) still holds it in DB. " +
+                    "Stale user will be refreshed on its next enrichment pass.",
+                    handle, profileData.CitizenId, existingByHandle.Id, existingByHandle.CitizenId);
+            }
+
             if (existingByCitizenId == null && existingByHandle == null)
             {
                 // Truly new user — create and emit member_joined for all their orgs
@@ -219,7 +243,6 @@ public class UserCollector : IUserCollector
 
                 if (isNewHandle)
                 {
-                    // Emit member_joined for each org this handle belongs to
                     var memberships = await _memberRepo.GetByUserHandleAsync(handle, ct);
                     foreach (var orgSid in memberships.Select(m => m.OrgSid).Distinct())
                     {
@@ -241,7 +264,10 @@ public class UserCollector : IUserCollector
             }
             else if (existingByCitizenId != null && existingByCitizenId.UserHandle != handle)
             {
-                // Same citizen_id but different handle → rename
+                // Same citizen_id but different handle → rename. Always prefer
+                // existingByCitizenId as the source of truth; any entity returned by
+                // GetByHandleAsync is ignored here because it may point at a stale
+                // reuse of the handle by another (soon-to-be-updated) user.
                 var oldHandle = existingByCitizenId.UserHandle;
 
                 var memberships = await _memberRepo.GetByUserHandleAsync(handle, ct);
@@ -268,7 +294,6 @@ public class UserCollector : IUserCollector
                 existingByCitizenId.Enlisted = profileData.Enlisted;
                 existingByCitizenId.UpdatedAt = timestamp;
 
-                // Add handle history entry for the new handle
                 var latestHistory = await _handleHistoryRepo.GetLatestAsync(profileData.CitizenId, ct);
                 if (latestHistory == null || latestHistory.UserHandle != profileData.Handle)
                 {
@@ -292,7 +317,9 @@ public class UserCollector : IUserCollector
             }
             else
             {
-                // Known user, same handle — update info and detect changes
+                // Known user, same handle — update info and detect changes. Prefer
+                // existingByCitizenId (permanent key) over existingByHandle whenever
+                // both are set, to defend against handle-reuse edge cases.
                 var existingUser = existingByCitizenId ?? existingByHandle!;
                 var userChanges = _userChangeDetector.DetectUserChanges(existingUser, profileData);
 
@@ -323,6 +350,9 @@ public class UserCollector : IUserCollector
         catch
         {
             await transaction.RollbackAsync(ct);
+            // Drop any in-memory mutations so the shared scoped DbContext does not
+            // leak partial state into the next handle we process.
+            _userRepo.ClearTrackedEntities();
             throw;
         }
     }

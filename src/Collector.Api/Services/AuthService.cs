@@ -104,8 +104,9 @@ public class AuthService
         user.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Password reset token generated for user {Username}: {Token}",
-            user.Username, user.PasswordResetToken);
+        // SECURITY: never log the reset token itself. A separate delivery channel (email)
+        // must carry the token out-of-band. We only log that a reset was requested.
+        _logger.LogInformation("Password reset token generated for user {Username}", user.Username);
     }
 
     public async Task ResetPasswordAsync(string token, string newPassword, CancellationToken ct = default)

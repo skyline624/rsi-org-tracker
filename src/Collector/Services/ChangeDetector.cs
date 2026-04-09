@@ -166,20 +166,28 @@ public class ChangeDetector : IChangeDetector
         var events = new List<ChangeEvent>();
         var timestamp = DateTime.UtcNow;
 
-        // Index by citizen_id (priority) and handle
-        // GroupBy guards against duplicate citizen_ids in RSI data (e.g. corrupted org roster)
+        // Index by citizen_id (priority) and handle. When RSI returns a duplicate
+        // citizen_id in the same snapshot (rare but observed on corrupted rosters),
+        // we keep the LAST occurrence: the RSI API typically appends later records
+        // at the tail, so the last one is the most recent. Using First() would make
+        // us compare against a stale copy and silently miss real joins/leaves.
         var prevByCitizenId = previous
             .Where(m => m.CitizenId.HasValue)
             .GroupBy(m => m.CitizenId!.Value)
             .ToDictionary(g => g.Key, g =>
             {
                 if (g.Count() > 1)
-                    _logger.LogWarning("Duplicate citizen_id {Id} in previous snapshot for org {Org} — using first entry", g.Key, orgSid);
-                return g.First();
+                    _logger.LogWarning(
+                        "Duplicate citizen_id {Id} in previous snapshot for org {Org} — using last entry",
+                        g.Key, orgSid);
+                return g.Last();
             });
 
+        // Same idea for handle-based lookup: the last occurrence wins so we compare
+        // against the freshest data in the snapshot.
         var prevByHandle = previous
-            .ToDictionary(m => m.Handle, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(m => m.Handle, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
 
         var currByCitizenId = current
             .Where(m => m.CitizenId.HasValue)
@@ -187,12 +195,15 @@ public class ChangeDetector : IChangeDetector
             .ToDictionary(g => g.Key, g =>
             {
                 if (g.Count() > 1)
-                    _logger.LogWarning("Duplicate citizen_id {Id} in current snapshot for org {Org} — using first entry", g.Key, orgSid);
-                return g.First();
+                    _logger.LogWarning(
+                        "Duplicate citizen_id {Id} in current snapshot for org {Org} — using last entry",
+                        g.Key, orgSid);
+                return g.Last();
             });
 
         var currByHandle = current
-            .ToDictionary(m => m.Handle, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(m => m.Handle, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
 
         // Detect leaves
         foreach (var prevMember in previous)
