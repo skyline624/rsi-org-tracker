@@ -1,8 +1,8 @@
 import Link from "next/link";
+import { ChangesTable } from "@/components/changes/ChangesTable";
 import { HudPanel } from "@/components/hud/HudPanel";
 import { HudStatTile } from "@/components/hud/HudStatTile";
 import { HudButton } from "@/components/hud/HudButton";
-import { HudBadge } from "@/components/hud/HudBadge";
 import {
   getCycleStatus,
   getStatsOverview,
@@ -20,7 +20,7 @@ async function fetchDashboardData() {
   const [overview, cycle, recentChanges] = await Promise.allSettled([
     getStatsOverview({ serverSide: true }),
     getCycleStatus({ serverSide: true }),
-    listChanges({ limit: 6 }, { serverSide: true }),
+    listChanges({ limit: 100 }, { serverSide: true }),
   ]);
 
   return {
@@ -113,40 +113,7 @@ export default async function HomePage() {
       {/* Recent changelog */}
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <HudPanel label="LAST TRANSMISSIONS" className="lg:col-span-2">
-          {recent.length === 0 ? (
-            <div className="py-4 text-center font-mono text-xs text-hud-text-dim">
-              — awaiting telemetry —
-            </div>
-          ) : (
-            <ul className="flex flex-col divide-y divide-hud-cyan/10 font-mono text-xs">
-              {recent.map((c) => (
-                <li key={c.id} className="flex items-center gap-3 py-2">
-                  <HudBadge
-                    tone={
-                      c.changeType.includes("joined")
-                        ? "green"
-                        : c.changeType.includes("left")
-                          ? "red"
-                          : "orange"
-                    }
-                  >
-                    {c.changeType.replace(/_/g, " ")}
-                  </HudBadge>
-                  <span className="flex-1 truncate text-hud-text">
-                    {c.entityType}
-                    <span className="text-hud-text-dim">://</span>
-                    <span className="text-hud-cyan">{c.entityId}</span>
-                  </span>
-                  {c.orgSid && (
-                    <span className="text-hud-text-dim">@ {c.orgSid}</span>
-                  )}
-                  <time className="text-hud-text-dim">
-                    {formatRelative(c.timestamp)}
-                  </time>
-                </li>
-              ))}
-            </ul>
-          )}
+          <ChangesTable rows={recent} />
         </HudPanel>
 
         <HudPanel label="COLLECTOR_STATUS" accent="green">

@@ -71,4 +71,10 @@ public class CollectorOptions
     /// Handles exceeding this limit are skipped in Phase 4 (deleted/banned accounts).
     /// </summary>
     public int MaxEnrichmentAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// Number of consecutive HTTP 404 responses on the org page before the org
+    /// is tombstoned (DeadAt set, excluded from Phase 2 selection). Default: 3.
+    /// </summary>
+    public int OrgDeadThreshold { get; set; } = 3;
 }

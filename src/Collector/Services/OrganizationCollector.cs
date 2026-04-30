@@ -252,27 +252,44 @@ public class OrganizationCollector : IOrganizationCollector
             // ── Fetch pages concurrently ──────────────────────────────────
             // GetOrgPageHtmlAsync handles its own semaphore (MaxConcurrentRequests slots)
             var fetchTasks = batch.Select(org => FetchPageSafeAsync(org.Sid, ct)).ToList();
-            var htmlResults = await Task.WhenAll(fetchTasks);
+            var fetchResults = await Task.WhenAll(fetchTasks);
 
             // ── Write results sequentially (EF Core DbContext not thread-safe) ──
             for (int i = 0; i < batch.Count; i++)
             {
                 var discoveredOrg = batch[i];
-                var html = htmlResults[i];
+                var fetch = fetchResults[i];
 
-                if (html == null)
+                if (fetch.Outcome == OrgPageFetchOutcome.NotFound)
+                {
+                    var tombstoned = await _discoveredRepo.MarkNotFoundAsync(
+                        discoveredOrg.Sid, _options.OrgDeadThreshold, timestamp, ct);
+                    if (tombstoned)
+                    {
+                        _logger.LogInformation(
+                            "Tombstoned {Sid}: {Threshold} consecutive 404s; excluded from future Phase 2 cycles",
+                            discoveredOrg.Sid, _options.OrgDeadThreshold);
+                    }
+                    skippedCount++;
+                    continue;
+                }
+
+                if (fetch.Outcome == OrgPageFetchOutcome.Failed || fetch.Html == null)
                 {
                     skippedCount++;
                     continue;
                 }
 
-                var pageData = _orgPageParser.Parse(html, discoveredOrg.Sid);
+                var pageData = _orgPageParser.Parse(fetch.Html, discoveredOrg.Sid);
                 if (pageData == null)
                 {
                     _logger.LogWarning("Could not parse org page for {Sid}", discoveredOrg.Sid);
                     skippedCount++;
                     continue;
                 }
+
+                // Page reachable AND parsed — clear any prior tombstone state.
+                await _discoveredRepo.ResetNotFoundAsync(discoveredOrg.Sid, ct);
 
                 if (latestOrgs.TryGetValue(discoveredOrg.Sid, out var existing))
                 {
@@ -346,7 +363,7 @@ public class OrganizationCollector : IOrganizationCollector
         return processedCount;
     }
 
-    private async Task<string?> FetchPageSafeAsync(string sid, CancellationToken ct)
+    private async Task<OrgPageFetchResult> FetchPageSafeAsync(string sid, CancellationToken ct)
     {
         try
         {
@@ -359,12 +376,12 @@ public class OrganizationCollector : IOrganizationCollector
         catch (HttpRequestException ex)
         {
             _logger.LogWarning(ex, "HTTP error fetching org page for {Sid}", sid);
-            return null;
+            return new OrgPageFetchResult(null, OrgPageFetchOutcome.Failed);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error fetching org page for {Sid}", sid);
-            return null;
+            return new OrgPageFetchResult(null, OrgPageFetchOutcome.Failed);
         }
     }
 

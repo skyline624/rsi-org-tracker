@@ -50,6 +50,8 @@ public class OrganizationsController : ControllerBase
         [FromQuery] string? commitment,
         [FromQuery] string? lang,
         [FromQuery] bool? recruiting,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDir = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
@@ -77,9 +79,27 @@ public class OrganizationsController : ControllerBase
         if (recruiting.HasValue)
             query = query.Where(o => o.Recruiting == recruiting.Value);
 
+        // Whitelisted server-side sort. Unknown keys fall back to the default
+        // (Sid ascending), which preserves the legacy behaviour for old clients.
+        // Sid is appended as a tie-breaker to keep pagination deterministic when
+        // many rows share the same sort key (e.g. identical membersCount).
+        var desc = string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase);
+        var key = sortBy?.Trim().ToLowerInvariant();
+        IOrderedQueryable<Organization> ordered = key switch
+        {
+            "name"       => desc ? query.OrderByDescending(o => o.Name)         : query.OrderBy(o => o.Name),
+            "members"    => desc ? query.OrderByDescending(o => o.MembersCount) : query.OrderBy(o => o.MembersCount),
+            "archetype"  => desc ? query.OrderByDescending(o => o.Archetype)    : query.OrderBy(o => o.Archetype),
+            "lang"       => desc ? query.OrderByDescending(o => o.Lang)         : query.OrderBy(o => o.Lang),
+            "recruiting" => desc ? query.OrderByDescending(o => o.Recruiting)   : query.OrderBy(o => o.Recruiting),
+            "sid"        => desc ? query.OrderByDescending(o => o.Sid)          : query.OrderBy(o => o.Sid),
+            _            => query.OrderBy(o => o.Sid),
+        };
+        if (!string.IsNullOrEmpty(key) && key != "sid")
+            ordered = ordered.ThenBy(o => o.Sid);
+
         var total = await query.CountAsync(ct);
-        var items = await query
-            .OrderBy(o => o.Sid)
+        var items = await ordered
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(o => MapOrgExpr(o))

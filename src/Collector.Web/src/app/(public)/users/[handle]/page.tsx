@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { HudPanel } from "@/components/hud/HudPanel";
 import { HudBadge } from "@/components/hud/HudBadge";
 import { HudStatTile } from "@/components/hud/HudStatTile";
+import { PartialUserProfile } from "@/components/user/PartialUserProfile";
 import { UserOrgsTable } from "@/components/user/UserOrgsTable";
 import {
   getUser,
@@ -28,7 +29,18 @@ export default async function UserDetailPage({ params }: PageProps) {
   try {
     user = await getUser(handle, { serverSide: true });
   } catch (err) {
-    if (err instanceof ApiError && err.status === 404) notFound();
+    if (err instanceof ApiError && err.status === 404) {
+      // Profile not enriched (or wrongly stored under a parsed-out handle) —
+      // fall back to partial view if the handle is known anywhere in
+      // organization_members, including inactive (former) memberships.
+      const knownOrgs = await getUserOrgs(handle, true, {
+        serverSide: true,
+      }).catch(() => [] as OrganizationMemberDto[]);
+      if (knownOrgs.length > 0) {
+        return <PartialUserProfile handle={handle} orgs={knownOrgs} />;
+      }
+      notFound();
+    }
     throw err;
   }
 

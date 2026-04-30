@@ -28,5 +28,13 @@ public class DiscoveredOrganizationConfiguration : IEntityTypeConfiguration<Disc
 
         builder.Property(d => d.UrlCorpo)
             .HasMaxLength(2000);
+
+        builder.Property(d => d.ConsecutiveNotFoundCount)
+            .HasDefaultValue(0);
+
+        builder.Property(d => d.DeadAt);
+
+        builder.HasIndex(d => d.DeadAt)
+            .HasDatabaseName("IX_discovered_organizations_DeadAt");
     }
 }

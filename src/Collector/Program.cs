@@ -72,6 +72,7 @@ try
     var singleRun = args.Contains("--single-run") || args.Contains("-s");
     var integrityCheck = args.Contains("--integrity-check") || args.Contains("-i");
     var skipPhase2 = args.Contains("--skip-phase2");
+    var backfillQueue = args.Contains("--backfill-enrichment-queue");
 
     // Parse --sample N (default 10)
     var sampleSize = 10;
@@ -79,7 +80,15 @@ try
     if (sampleIdx >= 0 && sampleIdx + 1 < args.Length && int.TryParse(args[sampleIdx + 1], out var parsed))
         sampleSize = parsed;
 
-    if (integrityCheck)
+    if (backfillQueue)
+    {
+        logger.LogInformation("Running enrichment queue backfill (one-shot)");
+        using var scope = host.Services.CreateScope();
+        var backfill = scope.ServiceProvider.GetRequiredService<IEnrichmentBackfillService>();
+        var inserted = await backfill.BackfillOrphansAsync(ct);
+        Console.WriteLine($"Backfill complete: {inserted} handles queued for enrichment.");
+    }
+    else if (integrityCheck)
     {
         logger.LogInformation("Running integrity check (sample size: {N})", sampleSize);
         using var scope = host.Services.CreateScope();

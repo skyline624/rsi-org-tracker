@@ -83,6 +83,9 @@ public static class ServiceCollectionExtensions
         // Integrity check
         services.AddScoped<IIntegrityCheckService, IntegrityCheckService>();
 
+        // Enrichment queue backfill (one-shot repair)
+        services.AddScoped<IEnrichmentBackfillService, EnrichmentBackfillService>();
+
         return services;
     }
 
@@ -118,5 +121,57 @@ public static class ServiceCollectionExtensions
             ON user_enrichment_queue (UserHandle)
             WHERE Enriched = 0;
         ");
+
+        // Tombstone columns on discovered_organizations (added without an EF
+        // migration; SQLite ALTER TABLE ADD COLUMN throws if they exist already
+        // so we gate on PRAGMA table_info first).
+        await EnsureDiscoveredOrgTombstoneColumnsAsync(dbContext);
+    }
+
+    private static async Task EnsureDiscoveredOrgTombstoneColumnsAsync(Data.TrackerDbContext dbContext)
+    {
+        var conn = (Microsoft.Data.Sqlite.SqliteConnection)dbContext.Database.GetDbConnection();
+        var wasClosed = conn.State != System.Data.ConnectionState.Open;
+        if (wasClosed) await conn.OpenAsync();
+        try
+        {
+            var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "PRAGMA table_info(discovered_organizations);";
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    existing.Add(reader.GetString(1));
+                }
+            }
+
+            if (!existing.Contains("ConsecutiveNotFoundCount"))
+            {
+                await using var alter = conn.CreateCommand();
+                alter.CommandText = @"ALTER TABLE discovered_organizations
+                    ADD COLUMN ConsecutiveNotFoundCount INTEGER NOT NULL DEFAULT 0;";
+                await alter.ExecuteNonQueryAsync();
+            }
+
+            if (!existing.Contains("DeadAt"))
+            {
+                await using var alter = conn.CreateCommand();
+                alter.CommandText = @"ALTER TABLE discovered_organizations
+                    ADD COLUMN DeadAt TEXT NULL;";
+                await alter.ExecuteNonQueryAsync();
+            }
+
+            await using (var idx = conn.CreateCommand())
+            {
+                idx.CommandText = @"CREATE INDEX IF NOT EXISTS IX_discovered_organizations_DeadAt
+                    ON discovered_organizations (DeadAt);";
+                await idx.ExecuteNonQueryAsync();
+            }
+        }
+        finally
+        {
+            if (wasClosed) await conn.CloseAsync();
+        }
     }
 }

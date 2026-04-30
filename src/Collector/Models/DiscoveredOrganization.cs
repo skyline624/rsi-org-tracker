@@ -32,4 +32,16 @@ public class DiscoveredOrganization
     /// When this organization was discovered.
     /// </summary>
     public DateTime DiscoveredAt { get; set; }
+
+    /// <summary>
+    /// Number of consecutive Phase 2 fetches that came back HTTP 404 from RSI.
+    /// Reset to 0 on the next successful fetch.
+    /// </summary>
+    public int ConsecutiveNotFoundCount { get; set; }
+
+    /// <summary>
+    /// When the org crossed the "consecutive 404" threshold and was tombstoned.
+    /// Non-null means Phase 2 will skip it from now on.
+    /// </summary>
+    public DateTime? DeadAt { get; set; }
 }

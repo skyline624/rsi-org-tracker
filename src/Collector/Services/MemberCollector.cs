@@ -177,6 +177,8 @@ public class MemberCollector : IMemberCollector
 
         // Build the queue batch up-front; InsertPendingIgnoreDuplicatesAsync will
         // atomically drop anything that already has a pending row.
+        // knownByHandle is keyed only by handles that actually exist in the users
+        // table — absence from this dict means the member has never been enriched.
         var toQueue = new List<UserEnrichmentQueue>();
         foreach (var member in members)
         {
@@ -190,9 +192,23 @@ public class MemberCollector : IMemberCollector
                     QueuedAt = timestamp
                 });
             }
-            else if (knownByHandle.TryGetValue(member.Handle, out var knownDisplayName)
-                     && knownDisplayName != member.DisplayName)
+            else if (knownByHandle.TryGetValue(member.Handle, out var knownDisplayName))
             {
+                if (knownDisplayName != member.DisplayName)
+                {
+                    toQueue.Add(new UserEnrichmentQueue
+                    {
+                        UserHandle = member.Handle,
+                        Priority = 0,
+                        Enriched = false,
+                        QueuedAt = timestamp
+                    });
+                }
+            }
+            else
+            {
+                // Orphan: seen before as a member but never successfully enriched.
+                // Re-queue at low priority so Phase 4 eventually catches up.
                 toQueue.Add(new UserEnrichmentQueue
                 {
                     UserHandle = member.Handle,

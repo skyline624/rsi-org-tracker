@@ -2,7 +2,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils/cn";
-import { GlobalSearch } from "./GlobalSearch";
 
 const NAV_ITEMS = [
   { href: "/orgs", label: "ORGS" },
@@ -52,13 +51,8 @@ export function TopNav({ authenticated }: { authenticated: boolean }) {
           })}
         </nav>
 
-        {/* Search */}
-        <div className="ml-auto flex-1 max-w-md">
-          <GlobalSearch />
-        </div>
-
         {/* Auth area */}
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           {authenticated ? (
             <>
               <Link

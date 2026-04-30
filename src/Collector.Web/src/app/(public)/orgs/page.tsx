@@ -13,13 +13,31 @@ interface PageProps {
     lang?: string;
     recruiting?: string;
     page?: string;
+    sortBy?: string;
+    sortDir?: string;
   }>;
 }
+
+const SORTABLE_KEYS = new Set([
+  "sid",
+  "name",
+  "archetype",
+  "lang",
+  "members",
+  "recruiting",
+]);
 
 export default async function OrgsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const page = Number(sp.page ?? "1") || 1;
   const pageSize = 30;
+
+  // Sanitize sort params before hitting the API. Unknown keys are ignored so
+  // a malformed URL can never 500 — the controller already has its own
+  // whitelist, this just keeps the UI state consistent.
+  const sortKey = sp.sortBy && SORTABLE_KEYS.has(sp.sortBy) ? sp.sortBy : undefined;
+  const sortDir: "asc" | "desc" | undefined =
+    sp.sortDir === "asc" || sp.sortDir === "desc" ? sp.sortDir : undefined;
 
   const data = await listOrgs(
     {
@@ -34,9 +52,15 @@ export default async function OrgsPage({ searchParams }: PageProps) {
             : undefined,
       page,
       pageSize,
+      sortBy: sortKey,
+      sortDir: sortKey ? (sortDir ?? "asc") : undefined,
     },
     { serverSide: true },
   );
+
+  const currentSort = sortKey
+    ? { key: sortKey, dir: (sortDir ?? "asc") as "asc" | "desc" }
+    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -80,14 +104,14 @@ export default async function OrgsPage({ searchParams }: PageProps) {
       </header>
 
       <HudPanel label={`${formatNumber(data.total)} ORGS INDEXED`}>
-        <OrgsTable rows={data.items} />
+        <OrgsTable rows={data.items} sort={currentSort} />
         <Pagination
           page={data.page}
           totalPages={data.totalPages}
           total={data.total}
         />
         <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-hud-text-dim">
-          — click any column header to sort the current page —
+          — click any column header to sort the full catalog —
         </p>
       </HudPanel>
     </div>

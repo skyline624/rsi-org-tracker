@@ -28,4 +28,13 @@ public class UserRepository : Repository<User>, IUserRepository
             .Where(u => handles.Contains(u.UserHandle))
             .ToDictionaryAsync(u => u.UserHandle, u => u.DisplayName, StringComparer.OrdinalIgnoreCase, ct);
     }
+
+    public async Task<IReadOnlyList<string>> GetExistingHandlesAsync(IReadOnlyList<string> handles, CancellationToken ct = default)
+    {
+        if (handles.Count == 0) return Array.Empty<string>();
+        return await DbSet
+            .Where(u => handles.Contains(u.UserHandle))
+            .Select(u => u.UserHandle)
+            .ToListAsync(ct);
+    }
 }

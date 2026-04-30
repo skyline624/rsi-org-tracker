@@ -40,6 +40,18 @@ interface HudDataGridProps<T> {
    */
   defaultSort?: { key: string; dir: "asc" | "desc" };
   /**
+   * Controlled sort state. When provided together with `onSortChange`, the
+   * grid stops doing client-side sorting and instead bubbles click events up
+   * so the parent can re-query the API (used by server-paginated lists).
+   */
+  sort?: { key: string; dir: "asc" | "desc" } | null;
+  /**
+   * Called on header click when the grid is in controlled mode. Receives the
+   * next state after applying the off → asc → desc → off cycle, or `null`
+   * when the user clears the sort.
+   */
+  onSortChange?: (next: { key: string; dir: "asc" | "desc" } | null) => void;
+  /**
    * Enable client-side pagination footer. Recommended for any full-dataset
    * render (org detail roster, etc.). Leave off for list pages that already
    * paginate server-side via URL params.
@@ -92,17 +104,27 @@ export function HudDataGrid<T>({
   onRowClick,
   empty,
   defaultSort = undefined,
+  sort: controlledSort,
+  onSortChange,
   paginated = false,
   pageSizeOptions = [10, 25, 50, 100],
   defaultPageSize,
 }: HudDataGridProps<T>) {
-  const [sort, setSort] = useState<SortState>(defaultSort ?? null);
+  // When both `controlledSort` and `onSortChange` are supplied the grid runs
+  // in "server sort" mode: it stops sorting locally and just reflects whatever
+  // the parent passes in. That is how /orgs and /users drive their sort state
+  // through URL params so the API can sort the full dataset.
+  const isControlled = controlledSort !== undefined && !!onSortChange;
+  const [localSort, setLocalSort] = useState<SortState>(defaultSort ?? null);
+  const sort: SortState = isControlled ? (controlledSort ?? null) : localSort;
   const initialSize = defaultPageSize ?? pageSizeOptions[0] ?? 25;
   const [pageSize, setPageSize] = useState<number>(initialSize);
   const [page, setPage] = useState(1);
 
   const sortedRows = useMemo(() => {
-    if (!sort) return rows;
+    // In controlled mode the server already returned rows in the correct
+    // order, so we must not re-sort locally (that would scramble pages).
+    if (isControlled || !sort) return rows;
     const col = columns.find((c) => c.key === sort.key);
     if (!col || !col.sortable || !col.sortValue) return rows;
     const dir = sort.dir === "asc" ? 1 : -1;
@@ -110,7 +132,7 @@ export function HudDataGrid<T>({
     return [...rows].sort(
       (a, b) => dir * compareValues(col.sortValue!(a), col.sortValue!(b)),
     );
-  }, [rows, columns, sort]);
+  }, [rows, columns, sort, isControlled]);
 
   // Pagination math (client-side). `pageSize === 0` means "show all".
   const totalPages = paginated && pageSize > 0
@@ -130,11 +152,16 @@ export function HudDataGrid<T>({
 
   function toggleSort(key: string, sortable: boolean | undefined) {
     if (!sortable) return;
-    setSort((prev) => {
+    const compute = (prev: SortState): SortState => {
       if (!prev || prev.key !== key) return { key, dir: "asc" };
       if (prev.dir === "asc") return { key, dir: "desc" };
       return null; // troisième clic : retour à l'ordre natif
-    });
+    };
+    if (isControlled) {
+      onSortChange!(compute(sort));
+    } else {
+      setLocalSort(compute);
+    }
     // Resetting to page 1 keeps the mental model simple: "I sorted → I'm at
     // the top of the new order".
     setPage(1);

@@ -69,6 +69,9 @@ export interface OrgListQuery {
   recruiting?: boolean;
   page?: number;
   pageSize?: number;
+  /** Whitelisted: sid | name | members | archetype | lang | recruiting */
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
   [k: string]: string | number | boolean | undefined | null;
 }
 export const listOrgs = (q: OrgListQuery = {}, ctx: Ctx = {}) =>

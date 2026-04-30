@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { HudBadge } from "@/components/hud/HudBadge";
 import {
   HudDataGrid,
@@ -8,7 +9,35 @@ import {
 import type { OrganizationDto } from "@/lib/api/types";
 import { formatNumber } from "@/lib/utils/format";
 
-export function OrgsTable({ rows }: { rows: OrganizationDto[] }) {
+interface OrgsTableProps {
+  rows: OrganizationDto[];
+  /** Current server-side sort, mirrored from the URL. */
+  sort?: { key: string; dir: "asc" | "desc" } | null;
+}
+
+export function OrgsTable({ rows, sort }: OrgsTableProps) {
+  const router = useRouter();
+  const params = useSearchParams();
+
+  // Server-driven sort: mutate the URL so the RSC page re-fetches with new
+  // `sortBy`/`sortDir` query params. We reset `page` to 1 because the "top"
+  // of a new sort order isn't generally on the page the user was browsing.
+  const handleSortChange = (
+    next: { key: string; dir: "asc" | "desc" } | null,
+  ) => {
+    const q = new URLSearchParams(params.toString());
+    if (next) {
+      q.set("sortBy", next.key);
+      q.set("sortDir", next.dir);
+    } else {
+      q.delete("sortBy");
+      q.delete("sortDir");
+    }
+    q.delete("page");
+    const qs = q.toString();
+    router.push(qs ? `?${qs}` : "?");
+  };
+
   const columns: HudColumn<OrganizationDto>[] = [
     {
       key: "sid",
@@ -83,6 +112,8 @@ export function OrgsTable({ rows }: { rows: OrganizationDto[] }) {
       rows={rows}
       rowKey={(r) => r.sid}
       empty="No orgs matched that query."
+      sort={sort ?? null}
+      onSortChange={handleSortChange}
     />
   );
 }

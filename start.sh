@@ -70,8 +70,9 @@ tmux new-session -d -s "$SESSION" -c "$PROJECT_DIR" \
     "dotnet run --project src/Collector; exec bash"
 
 # Split vertical → crée un pane en dessous, full width : Collector.Web
+# scripts/start.sh attend que l'API soit up avant de lancer Next.js.
 tmux split-window -v -l 40% -t "$SESSION:0.0" -c "$WEB_DIR" \
-    "NODE_TLS_REJECT_UNAUTHORIZED=0 pnpm start; exec bash"
+    "./scripts/start.sh; exec bash"
 
 # Split horizontal du pane collector (index 0) → pane api à droite.
 # Note : tmux renumérote après ce split. L'ordre final devient :

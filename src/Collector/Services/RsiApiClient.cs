@@ -65,8 +65,11 @@ public interface IRsiApiClient
 
     /// <summary>
     /// Gets the full HTML of an organization page (for description, history, manifesto, charter).
+    /// Returns an <see cref="OrgPageFetchResult"/> so the caller can distinguish
+    /// a real 404 (org gone from RSI — eligible for tombstoning) from a transient
+    /// fetch failure (rate limit exhausted, network error — should keep retrying).
     /// </summary>
-    Task<string?> GetOrgPageHtmlAsync(
+    Task<OrgPageFetchResult> GetOrgPageHtmlAsync(
         string sid,
         CancellationToken ct = default);
 
@@ -91,6 +94,21 @@ public record MemberCollectionResult(
     IReadOnlyList<MemberData> Members,
     bool OrgExists,
     bool Reachable);
+
+/// <summary>
+/// Outcome of a single org-page HTML fetch.
+/// </summary>
+public enum OrgPageFetchOutcome
+{
+    /// <summary>HTTP 200, body returned.</summary>
+    Ok,
+    /// <summary>RSI returned 404 — org has been deleted/privatized.</summary>
+    NotFound,
+    /// <summary>Transient failure (network, 5xx, retries exhausted, parse error).</summary>
+    Failed,
+}
+
+public record OrgPageFetchResult(string? Html, OrgPageFetchOutcome Outcome);
 
 public class RsiApiClient : IRsiApiClient, IDisposable
 {
@@ -455,7 +473,7 @@ public class RsiApiClient : IRsiApiClient, IDisposable
         return new MemberCollectionResult(allMembers, OrgExists: true, Reachable: reachable);
     }
 
-    public async Task<string?> GetOrgPageHtmlAsync(string sid, CancellationToken ct = default)
+    public async Task<OrgPageFetchResult> GetOrgPageHtmlAsync(string sid, CancellationToken ct = default)
     {
         await _concurrentPageSemaphore.WaitAsync(ct);
         try
@@ -466,21 +484,28 @@ public class RsiApiClient : IRsiApiClient, IDisposable
 
             for (int attempt = 0; attempt < maxRetries; attempt++)
             {
+                // Same global throttle as the API endpoints — without it we burst
+                // 5 concurrent requests with no inter-request delay, which trips
+                // Cloudflare on robertsspaceindustries.com.
+                await ApplyRateLimitAsync(ct);
+
                 var response = await _resiliencePolicy.ExecuteAsync(async token =>
                     await _httpClient.GetAsync(url, token), ct);
 
                 if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
                     _logger.LogWarning("Org page not found: {Sid}", sid);
-                    return null;
+                    return new OrgPageFetchResult(null, OrgPageFetchOutcome.NotFound);
                 }
 
-                // Rate limited — wait and retry with exponential backoff
+                // Rate limited / Cloudflare push-back — wait and retry with exponential backoff.
+                // 403 is treated like a throttle: retrying after a long enough pause often recovers.
                 if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
-                    || response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+                    || response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable
+                    || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
                 {
                     _logger.LogWarning(
-                        "Rate limited fetching org page {Sid} (HTTP {Code}). Waiting {Delay}s (attempt {Attempt}/{Max})",
+                        "Throttled fetching org page {Sid} (HTTP {Code}). Waiting {Delay}s (attempt {Attempt}/{Max})",
                         sid, (int)response.StatusCode, backoff.TotalSeconds, attempt + 1, maxRetries);
                     await Task.Delay(backoff, ct);
                     backoff = TimeSpan.FromSeconds(backoff.TotalSeconds * 2); // 30s → 60s → 120s → 240s
@@ -488,11 +513,12 @@ public class RsiApiClient : IRsiApiClient, IDisposable
                 }
 
                 response.EnsureSuccessStatusCode();
-                return await response.Content.ReadAsStringAsync(ct);
+                var html = await response.Content.ReadAsStringAsync(ct);
+                return new OrgPageFetchResult(html, OrgPageFetchOutcome.Ok);
             }
 
             _logger.LogError("Max retries exceeded for org page {Sid}", sid);
-            return null;
+            return new OrgPageFetchResult(null, OrgPageFetchOutcome.Failed);
         }
         finally
         {
@@ -505,12 +531,18 @@ public class RsiApiClient : IRsiApiClient, IDisposable
         await _concurrentPageSemaphore.WaitAsync(ct);
         try
         {
-            var url = $"{BaseUrl}/citizens/{handle}";
+            // Hit /en/citizens directly — without the prefix RSI returns 301
+            // and we waste a redirect hop on every fetch.
+            var url = $"{BaseUrl}/en/citizens/{handle}";
             const int maxRetries = 4;
             var backoff = TimeSpan.FromSeconds(30);
 
             for (int attempt = 0; attempt < maxRetries; attempt++)
             {
+                // Same global throttle as API endpoints — required to avoid
+                // Cloudflare 403'ing the IP on burst requests.
+                await ApplyRateLimitAsync(ct);
+
                 var response = await _resiliencePolicy.ExecuteAsync(async token =>
                     await _httpClient.GetAsync(url, token), ct);
 
@@ -520,11 +552,13 @@ public class RsiApiClient : IRsiApiClient, IDisposable
                     return null;
                 }
 
+                // Cloudflare push-back (403) is handled like 429/503: pause and retry.
                 if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
-                    || response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+                    || response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable
+                    || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
                 {
                     _logger.LogWarning(
-                        "Rate limited fetching profile {Handle} (HTTP {Code}). Waiting {Delay}s (attempt {Attempt}/{Max})",
+                        "Throttled fetching profile {Handle} (HTTP {Code}). Waiting {Delay}s (attempt {Attempt}/{Max})",
                         handle, (int)response.StatusCode, backoff.TotalSeconds, attempt + 1, maxRetries);
                     await Task.Delay(backoff, ct);
                     backoff = TimeSpan.FromSeconds(backoff.TotalSeconds * 2);
