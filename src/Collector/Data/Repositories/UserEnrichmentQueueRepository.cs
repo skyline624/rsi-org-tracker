@@ -44,6 +44,24 @@ public class UserEnrichmentQueueRepository : Repository<UserEnrichmentQueue>, IU
         return await DbSet.AnyAsync(q => q.UserHandle == userHandle && !q.Enriched, ct);
     }
 
+    public async Task<int> CountPendingAsync(int maxAttempts = int.MaxValue, CancellationToken ct = default)
+    {
+        return await DbSet
+            .AsNoTracking()
+            .Where(q => !q.Enriched && q.AttemptCount < maxAttempts)
+            .CountAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<string>> GetPendingHandlesInAsync(IReadOnlyList<string> handles, CancellationToken ct = default)
+    {
+        if (handles.Count == 0) return Array.Empty<string>();
+        return await DbSet
+            .AsNoTracking()
+            .Where(q => !q.Enriched && handles.Contains(q.UserHandle))
+            .Select(q => q.UserHandle)
+            .ToListAsync(ct);
+    }
+
     public async Task<int> InsertPendingIgnoreDuplicatesAsync(
         IReadOnlyList<UserEnrichmentQueue> items,
         CancellationToken ct = default)

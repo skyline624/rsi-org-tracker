@@ -10,6 +10,19 @@ public interface IUserEnrichmentQueueRepository : IRepository<UserEnrichmentQueu
     Task<bool> IsQueuedAsync(string userHandle, CancellationToken ct = default);
 
     /// <summary>
+    /// Counts entries with Enriched=0 and AttemptCount &lt; <paramref name="maxAttempts"/>.
+    /// Used by Phase4Worker to decide between idle and drain.
+    /// </summary>
+    Task<int> CountPendingAsync(int maxAttempts = int.MaxValue, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the subset of <paramref name="handles"/> that currently have a row
+    /// with Enriched=0. Used by collectors to skip enqueueing handles that are
+    /// already pending (avoids redundant INSERT OR IGNORE round-trips).
+    /// </summary>
+    Task<IReadOnlyList<string>> GetPendingHandlesInAsync(IReadOnlyList<string> handles, CancellationToken ct = default);
+
+    /// <summary>
     /// Inserts queue entries, silently skipping any handle that already has an active
     /// pending row (thanks to the partial unique index). Returns the number of rows
     /// actually written. Safe against concurrent inserters.

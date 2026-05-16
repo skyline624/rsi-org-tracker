@@ -77,4 +77,17 @@ public class CollectorOptions
     /// is tombstoned (DeadAt set, excluded from Phase 2 selection). Default: 3.
     /// </summary>
     public int OrgDeadThreshold { get; set; } = 3;
+
+    /// <summary>
+    /// Phase 4 worker stays idle while the pending queue size is below this
+    /// threshold. Avoids burning DB/network polling for a near-empty queue.
+    /// Default: 100.
+    /// </summary>
+    public int Phase4MinPendingThreshold { get; set; } = 100;
+
+    /// <summary>
+    /// How long the Phase 4 worker sleeps between checks when the queue is below
+    /// the threshold (or after a poison-batch back-off). Default: 5 minutes.
+    /// </summary>
+    public TimeSpan Phase4IdleInterval { get; set; } = TimeSpan.FromMinutes(5);
 }

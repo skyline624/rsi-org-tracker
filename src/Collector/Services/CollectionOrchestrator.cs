@@ -42,6 +42,9 @@ public class CollectionOrchestrator
     /// </summary>
     private record Phase(string Name, Func<CancellationToken, Task<int>> Run, string ResultLabel);
 
+    // Phase 4 (user enrichment) is no longer part of the cycle pipeline — it
+    // runs continuously in Phase4Worker, decoupled so a deep enrichment queue
+    // can't freeze Phase 1/2/3 fresh-data refresh.
     private Phase[] BuildPipeline(bool skipPhase2) => new[]
     {
         new Phase("Phase 1: Discovering organizations", _orgCollector.DiscoverOrganizationsAsync, "organizations discovered"),
@@ -51,7 +54,6 @@ public class CollectionOrchestrator
                 : _orgCollector.CollectOrganizationMetadataAsync,
             "organizations processed"),
         new Phase("Phase 3: Collecting members", _memberCollector.CollectAllMembersAsync, "members collected"),
-        new Phase("Phase 4: Enriching user profiles", _userCollector.EnrichAllUsersAsync, "users enriched"),
     };
 
     /// <summary>

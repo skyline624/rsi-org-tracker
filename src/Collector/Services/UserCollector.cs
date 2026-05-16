@@ -16,9 +16,19 @@ namespace Collector.Services;
 public interface IUserCollector
 {
     /// <summary>
-    /// Phase 4: Enriches user profiles from RSI citizen pages.
+    /// Phase 4 (legacy): drains the enrichment queue end-to-end. Kept as a thin
+    /// loop around <see cref="EnrichBatchAsync"/> for one-shot/test use; live
+    /// runs are driven by <c>Phase4Worker</c> instead.
     /// </summary>
     Task<int> EnrichAllUsersAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Processes a single batch from the enrichment queue (sized by
+    /// <c>MaxConcurrentRequests * 2</c>). Returns the number of profiles
+    /// successfully enriched in this batch. Returns 0 when there is nothing
+    /// pending or every pending row exceeded MaxEnrichmentAttempts.
+    /// </summary>
+    Task<int> EnrichBatchAsync(CancellationToken ct = default);
 
     /// <summary>
     /// Enriches a single user profile from pre-fetched HTML.
@@ -70,77 +80,77 @@ public class UserCollector : IUserCollector
 
     public async Task<int> EnrichAllUsersAsync(CancellationToken ct = default)
     {
-        _logger.LogInformation("Starting user enrichment (Phase 4)");
-
-        var processedCount = 0;
-        var skippedCount = 0;
-        var fetchBatchSize = Math.Max(1, _options.MaxConcurrentRequests) * 2;
-
+        _logger.LogInformation("Starting user enrichment (drain mode)");
+        var totalProcessed = 0;
         while (true)
         {
-            var pending = await _queueRepo.GetPendingAsync(fetchBatchSize, _options.MaxEnrichmentAttempts, ct);
-            if (pending.Count == 0)
+            var processed = await EnrichBatchAsync(ct);
+            if (processed == 0) break;
+            totalProcessed += processed;
+        }
+        _logger.LogInformation("User enrichment drain complete: {Count} users enriched", totalProcessed);
+        return totalProcessed;
+    }
+
+    public async Task<int> EnrichBatchAsync(CancellationToken ct = default)
+    {
+        var fetchBatchSize = Math.Max(1, _options.MaxConcurrentRequests) * 2;
+        var pending = await _queueRepo.GetPendingAsync(fetchBatchSize, _options.MaxEnrichmentAttempts, ct);
+        if (pending.Count == 0) return 0;
+
+        ct.ThrowIfCancellationRequested();
+
+        // ── Fetch profiles concurrently ───────────────────────────────
+        // GetUserProfileHtmlAsync handles its own semaphore (MaxConcurrentRequests slots)
+        var fetchTasks = pending
+            .Select(item => FetchProfileSafeAsync(item.UserHandle, ct))
+            .ToList();
+        var htmlResults = await Task.WhenAll(fetchTasks);
+
+        // ── Process results sequentially (EF Core DbContext not thread-safe) ──
+        var processedCount = 0;
+        var skippedCount = 0;
+        for (int i = 0; i < pending.Count; i++)
+        {
+            var item = pending[i];
+            var html = htmlResults[i];
+
+            try
             {
-                _logger.LogInformation("Phase 4: no more users to enrich");
-                break;
-            }
-
-            ct.ThrowIfCancellationRequested();
-
-            // ── Fetch profiles concurrently ───────────────────────────────
-            // GetUserProfileHtmlAsync handles its own semaphore (MaxConcurrentRequests slots)
-            var fetchTasks = pending
-                .Select(item => FetchProfileSafeAsync(item.UserHandle, ct))
-                .ToList();
-            var htmlResults = await Task.WhenAll(fetchTasks);
-
-            // ── Process results sequentially (EF Core DbContext not thread-safe) ──
-            for (int i = 0; i < pending.Count; i++)
-            {
-                var item = pending[i];
-                var html = htmlResults[i];
-
-                try
+                if (string.IsNullOrEmpty(html))
                 {
-                    if (string.IsNullOrEmpty(html))
-                    {
-                        await _queueRepo.IncrementAttemptAsync(item.Id, "Profile not found or fetch error", ct);
-                        skippedCount++;
-                        continue;
-                    }
-
-                    var success = await EnrichUserAsync(item.UserHandle, item.Priority >= 1, html, ct);
-                    if (success)
-                    {
-                        await _queueRepo.MarkEnrichedAsync(item.Id, ct);
-                        processedCount++;
-                    }
-                    else
-                    {
-                        await _queueRepo.IncrementAttemptAsync(item.Id, "Profile not found or parse error", ct);
-                        skippedCount++;
-                    }
+                    await _queueRepo.IncrementAttemptAsync(item.Id, "Profile not found or fetch error", ct);
+                    skippedCount++;
+                    continue;
                 }
-                catch (OperationCanceledException)
+
+                var success = await EnrichUserAsync(item.UserHandle, item.Priority >= 1, html, ct);
+                if (success)
                 {
-                    throw;
+                    await _queueRepo.MarkEnrichedAsync(item.Id, ct);
+                    processedCount++;
                 }
-                catch (Exception ex)
+                else
                 {
-                    _logger.LogError(ex, "Unexpected error enriching user {Handle}", item.UserHandle);
-                    await _queueRepo.IncrementAttemptAsync(item.Id, ex.Message, ct);
+                    await _queueRepo.IncrementAttemptAsync(item.Id, "Profile not found or parse error", ct);
                     skippedCount++;
                 }
             }
-
-            _logger.LogInformation(
-                "Phase 4 progress: {Processed} enriched, {Skipped} skipped so far",
-                processedCount, skippedCount);
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error enriching user {Handle}", item.UserHandle);
+                await _queueRepo.IncrementAttemptAsync(item.Id, ex.Message, ct);
+                skippedCount++;
+            }
         }
 
         _logger.LogInformation(
-            "Phase 4 complete: {Count} users enriched, {Skipped} skipped",
-            processedCount, skippedCount);
+            "Phase 4 batch: {Processed} enriched, {Skipped} skipped (batch size {Size})",
+            processedCount, skippedCount, pending.Count);
         return processedCount;
     }
 

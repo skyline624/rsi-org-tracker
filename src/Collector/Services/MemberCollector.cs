@@ -151,6 +151,15 @@ public class MemberCollector : IMemberCollector
         var memberHandles = members.Select(m => m.Handle).ToList();
         var knownByHandle = await _userRepo.GetDisplayNamesByHandlesAsync(memberHandles, ct);
 
+        // Skip handles already pending in the enrichment queue. Without this,
+        // the orphan-rescue branch below would re-INSERT-OR-IGNORE every
+        // already-pending handle on every cycle (~169k SQL no-ops per cycle on
+        // a deep queue). The partial unique index still guarantees correctness;
+        // this is purely a perf win.
+        var pendingSet = new HashSet<string>(
+            await _enrichmentQueueRepo.GetPendingHandlesInAsync(memberHandles, ct),
+            StringComparer.OrdinalIgnoreCase);
+
         var timestamp = DateTime.UtcNow;
 
         var currentSnapshots = members.Select(m => new MemberSnapshot
@@ -182,6 +191,9 @@ public class MemberCollector : IMemberCollector
         var toQueue = new List<UserEnrichmentQueue>();
         foreach (var member in members)
         {
+            // Already pending — Phase4Worker will pick it up; skip the redundant insert.
+            if (pendingSet.Contains(member.Handle)) continue;
+
             if (newHandleSet.Contains(member.Handle))
             {
                 toQueue.Add(new UserEnrichmentQueue

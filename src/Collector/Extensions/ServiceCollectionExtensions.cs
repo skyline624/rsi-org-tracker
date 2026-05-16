@@ -41,12 +41,16 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds all collector services to the DI container.
+    /// Adds all collector services to the DI container. Set
+    /// <paramref name="registerHostedServices"/> to false for one-shot CLI modes
+    /// (--single-run, --backfill-enrichment-queue, --integrity-check) so the
+    /// Phase4Worker doesn't keep the host alive.
     /// </summary>
     public static IServiceCollection AddCollectorServices(
         this IServiceCollection services,
         IConfiguration configuration,
-        string dataDir)
+        string dataDir,
+        bool registerHostedServices = true)
     {
         // Configure and validate options at startup (fail-fast if any field is wrong).
         services.AddOptions<CollectorOptions>()
@@ -85,6 +89,13 @@ public static class ServiceCollectionExtensions
 
         // Enrichment queue backfill (one-shot repair)
         services.AddScoped<IEnrichmentBackfillService, EnrichmentBackfillService>();
+
+        // Phase 4 worker — drains user_enrichment_queue in parallel with the
+        // cycle loop. Skipped for one-shot CLI modes so the host can exit.
+        if (registerHostedServices)
+        {
+            services.AddHostedService<Phase4Worker>();
+        }
 
         return services;
     }

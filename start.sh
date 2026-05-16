@@ -65,9 +65,12 @@ fi
 # ── (Re)création de la session tmux ────────────────────────
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 
-# Pane 0 : Collector main (top-left une fois les splits terminés)
+# Pane 0 : Collector main (top-left une fois les splits terminés).
+# On force le profil "Collector (loop)" pour activer le BackgroundService
+# Phase4Worker (le profil "Collector" par défaut a --single-run, qui désactive
+# les hosted services et ne draine donc pas la queue d'enrichment).
 tmux new-session -d -s "$SESSION" -c "$PROJECT_DIR" \
-    "dotnet run --project src/Collector; exec bash"
+    "dotnet run --project src/Collector --launch-profile 'Collector (loop)'; exec bash"
 
 # Split vertical → crée un pane en dessous, full width : Collector.Web
 # scripts/start.sh attend que l'API soit up avant de lancer Next.js.

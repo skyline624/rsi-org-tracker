@@ -16,6 +16,15 @@ try
 
     Console.WriteLine("Starting SC-Organizations-Tracker Collector...");
 
+    // Parse flags up-front so we can decide whether to register the
+    // Phase4Worker hosted service (one-shot CLI modes don't want a long-running
+    // background drain keeping the host alive).
+    var singleRun = args.Contains("--single-run") || args.Contains("-s");
+    var integrityCheck = args.Contains("--integrity-check") || args.Contains("-i");
+    var skipPhase2 = args.Contains("--skip-phase2");
+    var backfillQueue = args.Contains("--backfill-enrichment-queue");
+    var continuousMode = !singleRun && !integrityCheck && !backfillQueue;
+
     // Build host
     var builder = Host.CreateDefaultBuilder(args)
         .UseContentRoot(AppContext.BaseDirectory);
@@ -23,7 +32,7 @@ try
     // Configure services
     builder.ConfigureServices((context, services) =>
     {
-        services.AddCollectorServices(context.Configuration, dataDir);
+        services.AddCollectorServices(context.Configuration, dataDir, registerHostedServices: continuousMode);
     });
 
     // Configure logging with absolute path for the file sink
@@ -68,12 +77,6 @@ try
     logger.LogInformation("Starting SC-Organizations-Tracker Collector");
     logger.LogInformation("Cycle interval: {Interval}", options.CycleInterval);
 
-    // Check for single run mode
-    var singleRun = args.Contains("--single-run") || args.Contains("-s");
-    var integrityCheck = args.Contains("--integrity-check") || args.Contains("-i");
-    var skipPhase2 = args.Contains("--skip-phase2");
-    var backfillQueue = args.Contains("--backfill-enrichment-queue");
-
     // Parse --sample N (default 10)
     var sampleSize = 10;
     var sampleIdx = Array.IndexOf(args, "--sample");
@@ -97,12 +100,24 @@ try
     }
     else if (singleRun)
     {
+        // Single-run mode: no hosted services registered, just run the cycle and exit.
         logger.LogInformation("Running in single-run mode");
         await orchestrator.RunSingleCycleAsync(ct, skipPhase2);
     }
     else
     {
-        await orchestrator.RunCollectionLoopAsync(ct, skipPhase2);
+        // Continuous mode: start the host so Phase4Worker (IHostedService) runs in
+        // parallel with the cycle loop, then run the loop on the main thread, then
+        // gracefully stop the host so background services drain their work.
+        await host.StartAsync(ct);
+        try
+        {
+            await orchestrator.RunCollectionLoopAsync(ct, skipPhase2);
+        }
+        finally
+        {
+            await host.StopAsync(TimeSpan.FromSeconds(30));
+        }
     }
 
     logger.LogInformation("Application exiting");
