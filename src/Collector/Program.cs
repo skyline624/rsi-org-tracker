@@ -23,7 +23,8 @@ try
     var integrityCheck = args.Contains("--integrity-check") || args.Contains("-i");
     var skipPhase2 = args.Contains("--skip-phase2");
     var backfillQueue = args.Contains("--backfill-enrichment-queue");
-    var continuousMode = !singleRun && !integrityCheck && !backfillQueue;
+    var repairCorrupted = args.Contains("--repair-corrupted-handles");
+    var continuousMode = !singleRun && !integrityCheck && !backfillQueue && !repairCorrupted;
 
     // Build host
     var builder = Host.CreateDefaultBuilder(args)
@@ -90,6 +91,16 @@ try
         var backfill = scope.ServiceProvider.GetRequiredService<IEnrichmentBackfillService>();
         var inserted = await backfill.BackfillOrphansAsync(ct);
         Console.WriteLine($"Backfill complete: {inserted} handles queued for enrichment.");
+    }
+    else if (repairCorrupted)
+    {
+        logger.LogInformation("Running corrupted-handle repair (one-shot)");
+        using var scope = host.Services.CreateScope();
+        var repair = scope.ServiceProvider.GetRequiredService<ICorruptedUserRepairService>();
+        var report = await repair.RepairAsync(ct);
+        Console.WriteLine(
+            $"Repair complete: scanned={report.Scanned} repaired={report.Repaired} " +
+            $"unrecoverable={report.Unrecoverable} requeued={report.Requeued}");
     }
     else if (integrityCheck)
     {

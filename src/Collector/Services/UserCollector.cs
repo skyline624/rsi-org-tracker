@@ -176,12 +176,30 @@ public class UserCollector : IUserCollector
         }
     }
 
+    // RSI handles are URL-safe ASCII (letters, digits, underscore, dash, 3–30
+    // chars). Anything outside that shape almost certainly means the parser
+    // grabbed a UI label by mistake — refuse to persist it.
+    private static readonly System.Text.RegularExpressions.Regex HandleShape =
+        new(@"^[A-Za-z0-9_-]{3,50}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     public async Task<bool> EnrichUserAsync(string handle, bool isNewHandle, string html, CancellationToken ct = default)
     {
         var profileData = _profileParser.ParseUserProfile(html);
         if (profileData == null)
         {
             _logger.LogWarning("Failed to parse profile for user {Handle}", handle);
+            return false;
+        }
+
+        // Defence in depth — the parser's IsHandleShape filter is the first
+        // line, this is the second. Without it a future parser regression
+        // could re-introduce the "CITIZEN DOSSIER" corruption that overwrote
+        // ~78k users rows in the past.
+        if (!HandleShape.IsMatch(profileData.Handle))
+        {
+            _logger.LogWarning(
+                "Rejecting profile for {Handle}: parsed handle '{Parsed}' is not URL-safe (parser regression?)",
+                handle, profileData.Handle);
             return false;
         }
 

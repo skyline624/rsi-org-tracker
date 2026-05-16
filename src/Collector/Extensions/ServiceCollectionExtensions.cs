@@ -90,6 +90,9 @@ public static class ServiceCollectionExtensions
         // Enrichment queue backfill (one-shot repair)
         services.AddScoped<IEnrichmentBackfillService, EnrichmentBackfillService>();
 
+        // Corrupted-handle repair (one-shot) — see CorruptedUserRepairService docs.
+        services.AddScoped<ICorruptedUserRepairService, CorruptedUserRepairService>();
+
         // Phase 4 worker — drains user_enrichment_queue in parallel with the
         // cycle loop. Skipped for one-shot CLI modes so the host can exit.
         if (registerHostedServices)

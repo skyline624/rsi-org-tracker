@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using Collector.Dtos;
 using Microsoft.Extensions.Logging;
@@ -90,32 +91,41 @@ public class UserProfileHtmlParser
         return null;
     }
 
+    // RSI handles are URL-safe: alphanumerics, underscore, dash. Anything else
+    // means we picked up a label ("CITIZEN DOSSIER", "UEE Citizen Record") by
+    // mistake — better to return nothing than poison the users row.
+    private static readonly Regex HandleShape = new(@"^[A-Za-z0-9_-]{3,50}$", RegexOptions.Compiled);
+
     private string? ExtractHandle(HtmlDocument doc)
     {
-        // Try profile handle display
-        var handleNode = doc.DocumentNode.SelectSingleNode("//*[@class='handle']|//*[@class='profile-handle']|//*[contains(@class, 'citizen-handle')]");
+        // 1. URL-based — most reliable. RSI pages always link to themselves via
+        //    /citizens/{handle}; the URL segment IS the handle by definition.
+        foreach (var link in doc.DocumentNode.SelectNodes("//a[contains(@href, '/citizens/')]") ?? Enumerable.Empty<HtmlNode>())
+        {
+            var href = link.GetAttributeValue("href", "");
+            var segment = href.TrimEnd('/').Split('/').LastOrDefault();
+            if (HandleShape.IsMatch(segment ?? string.Empty)) return segment;
+        }
+
+        // 2. Specific RSI class selectors (kept as a defensive fallback).
+        var handleNode = doc.DocumentNode.SelectSingleNode(
+            "//*[@class='handle']|//*[@class='profile-handle']|//*[contains(@class, 'citizen-handle')]");
         var handle = handleNode?.InnerText?.Trim();
+        if (handle is not null && HandleShape.IsMatch(handle)) return handle;
 
-        if (string.IsNullOrEmpty(handle))
+        // 3. <title> usually starts with the handle: "Abrams7K | Abrams7K - Liberastra | ...".
+        var title = doc.DocumentNode.SelectSingleNode("//title")?.InnerText?.Trim();
+        if (!string.IsNullOrEmpty(title))
         {
-            // Try from page title or heading
-            handleNode = doc.DocumentNode.SelectSingleNode("//h1|//h2[contains(@class, 'name')]");
-            handle = handleNode?.InnerText?.Trim();
+            var first = title.Split('|')[0].Trim();
+            if (HandleShape.IsMatch(first)) return first;
         }
 
-        if (string.IsNullOrEmpty(handle))
-        {
-            // Try from URL-based extraction
-            handleNode = doc.DocumentNode.SelectSingleNode("//a[contains(@href, '/citizens/')]");
-            var href = handleNode?.GetAttributeValue("href", "");
-            if (!string.IsNullOrEmpty(href))
-            {
-                var parts = href.Split('/');
-                handle = parts[^1];
-            }
-        }
-
-        return handle;
+        // NOTE: we DO NOT fall back to //h1. RSI uses <h1>CITIZEN DOSSIER</h1>
+        // as a section header on profile pages, and matching it poisoned ~78k
+        // user rows in the past. Returning null here forces UserCollector to
+        // skip the entry rather than write garbage.
+        return null;
     }
 
     private string? ExtractDisplayName(HtmlDocument doc)
