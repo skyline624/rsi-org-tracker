@@ -7,6 +7,22 @@ public interface IUserEnrichmentQueueRepository : IRepository<UserEnrichmentQueu
     Task<IReadOnlyList<UserEnrichmentQueue>> GetPendingAsync(int limit = 100, int maxAttempts = int.MaxValue, CancellationToken ct = default);
     Task MarkEnrichedAsync(long id, CancellationToken ct = default);
     Task IncrementAttemptAsync(long id, string? error, CancellationToken ct = default);
+
+    /// <summary>
+    /// Permanently stops retrying a handle that 404'd (gone/renamed on RSI). The row
+    /// is parked so <see cref="GetPendingAsync"/> never returns it again, without
+    /// counting as "enriched".
+    /// </summary>
+    Task MarkGoneAsync(long id, string? reason, CancellationToken ct = default);
+
+    /// <summary>
+    /// Soft-defers a handle that is live but currently has no citizen_id ("n/a"):
+    /// moves it to the BACK of the queue WITHOUT spending a retry attempt, so it
+    /// stays eligible for a future pass (the person may gain a citizen_id later)
+    /// instead of being abandoned after <c>MaxEnrichmentAttempts</c>.
+    /// </summary>
+    Task DeferAsync(long id, string? reason, CancellationToken ct = default);
+
     Task<bool> IsQueuedAsync(string userHandle, CancellationToken ct = default);
 
     /// <summary>

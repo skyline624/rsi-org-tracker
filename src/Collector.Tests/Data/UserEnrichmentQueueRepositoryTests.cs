@@ -116,6 +116,51 @@ public sealed class UserEnrichmentQueueRepositoryTests : IDisposable
             .Should().Be(2);
     }
 
+    [Fact]
+    public async Task MarkGone_ParksRowForeverAndDoesNotEnrich()
+    {
+        _db.UserEnrichmentQueue.Add(new UserEnrichmentQueue
+        {
+            UserHandle = "gone404", Priority = 0, Enriched = false, QueuedAt = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+        var id = (await _db.UserEnrichmentQueue.SingleAsync()).Id;
+
+        await _sut.MarkGoneAsync(id, "Gone (HTTP 404)");
+
+        // Excluded from the worker's pending set (AttemptCount < maxAttempts is false)…
+        (await _sut.GetPendingAsync(100, maxAttempts: 3)).Should().BeEmpty();
+        (await _sut.CountPendingAsync(3)).Should().Be(0);
+        // …but it is NOT marked enriched.
+        var row = await _db.UserEnrichmentQueue.FindAsync(id);
+        row!.Enriched.Should().BeFalse();
+        row.LastError.Should().Be("Gone (HTTP 404)");
+    }
+
+    [Fact]
+    public async Task Defer_MovesToBackOfQueueWithoutSpendingAnAttempt()
+    {
+        // A (older) then B (newer) — both pending, same priority.
+        _db.UserEnrichmentQueue.AddRange(
+            new UserEnrichmentQueue { UserHandle = "A_na", Priority = 0, QueuedAt = new DateTime(2026, 1, 1) },
+            new UserEnrichmentQueue { UserHandle = "B_real", Priority = 0, QueuedAt = new DateTime(2026, 1, 2) });
+        await _db.SaveChangesAsync();
+        var a = await _db.UserEnrichmentQueue.SingleAsync(q => q.UserHandle == "A_na");
+
+        // Before: A is first (oldest QueuedAt).
+        (await _sut.GetPendingAsync(1, 3)).Single().UserHandle.Should().Be("A_na");
+
+        await _sut.DeferAsync(a.Id, "No citizen record (n/a)");
+
+        // After: A moved to the back → B now surfaces first, A is still eligible (last).
+        var ordered = await _sut.GetPendingAsync(10, 3);
+        ordered.Select(q => q.UserHandle).Should().Equal("B_real", "A_na");
+
+        var reloaded = await _db.UserEnrichmentQueue.FindAsync(a.Id);
+        reloaded!.AttemptCount.Should().Be(0, "deferring n/a must never count towards the abandon cap");
+        reloaded.Enriched.Should().BeFalse();
+    }
+
     public void Dispose()
     {
         _db.Dispose();

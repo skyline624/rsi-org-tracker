@@ -5,6 +5,19 @@ using Microsoft.Extensions.Logging;
 
 namespace Collector.Parsers;
 
+/// <summary>Why a profile parse did not yield usable <see cref="UserProfileData"/>.</summary>
+public enum ProfileParseOutcome
+{
+    /// <summary>Citizen_id and handle extracted.</summary>
+    Success,
+    /// <summary>Live profile, but it carries no UEE Citizen Record ("n/a"). Re-checkable later.</summary>
+    NoCitizenNumber,
+    /// <summary>Page could not be parsed as a profile at all. Genuine failure.</summary>
+    Unparseable,
+}
+
+public record ProfileParseResult(UserProfileData? Data, ProfileParseOutcome Outcome);
+
 /// <summary>
 /// Parses user profile HTML from RSI citizen pages.
 /// </summary>
@@ -18,39 +31,55 @@ public class UserProfileHtmlParser
     }
 
     /// <summary>
-    /// Parses user profile HTML into UserProfileData.
+    /// Parses user profile HTML into UserProfileData, or null when no usable
+    /// citizen_id could be extracted. Kept for callers/tests that only care about
+    /// the data; prefer <see cref="ParseProfile"/> when the failure reason matters.
     /// </summary>
-    public UserProfileData? ParseUserProfile(string html)
+    public UserProfileData? ParseUserProfile(string html) => ParseProfile(html).Data;
+
+    /// <summary>
+    /// Parses user profile HTML and reports WHY it failed when it does. This lets the
+    /// enrichment worker tell a live profile that simply has no UEE Citizen Record
+    /// ("n/a" — may gain one later, so worth re-checking) apart from a page it could
+    /// not parse at all (genuine failure, counts towards the retry cap).
+    /// </summary>
+    public ProfileParseResult ParseProfile(string html)
     {
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
 
-        // Extract citizen_id
         var citizenId = ExtractCitizenId(doc);
-        if (!citizenId.HasValue)
-        {
-            _logger.LogWarning("Could not extract citizen_id from profile HTML");
-            return null;
-        }
-
-        // Extract handle
         var handle = ExtractHandle(doc);
-        if (string.IsNullOrEmpty(handle))
+
+        // A real citizen record number is strictly positive. "#000"/"n/a" profiles
+        // (Star Citizen account holders who never completed enlistment) have none.
+        if (citizenId is > 0 && !string.IsNullOrEmpty(handle))
         {
-            _logger.LogWarning("Could not extract handle from profile HTML");
-            return null;
+            return new ProfileParseResult(new UserProfileData
+            {
+                CitizenId = citizenId.Value,
+                Handle = handle,
+                DisplayName = ExtractDisplayName(doc),
+                UrlImage = ExtractAvatarUrl(doc),
+                Bio = ExtractBio(doc),
+                Location = ExtractLocation(doc),
+                Enlisted = ExtractEnlistedDate(doc)
+            }, ProfileParseOutcome.Success);
         }
 
-        return new UserProfileData
+        // No usable number. Distinguish a real (but number-less) profile from a page
+        // we simply couldn't parse: a genuine RSI profile always renders the
+        // "UEE Citizen Record" label, even when its value is "n/a".
+        var hasRecordLabel = doc.DocumentNode
+            .SelectSingleNode("//*[contains(text(), 'UEE Citizen Record')]") != null;
+        if (hasRecordLabel && !string.IsNullOrEmpty(handle))
         {
-            CitizenId = citizenId.Value,
-            Handle = handle,
-            DisplayName = ExtractDisplayName(doc),
-            UrlImage = ExtractAvatarUrl(doc),
-            Bio = ExtractBio(doc),
-            Location = ExtractLocation(doc),
-            Enlisted = ExtractEnlistedDate(doc)
-        };
+            _logger.LogDebug("Profile for handle has no UEE Citizen Record (n/a)");
+            return new ProfileParseResult(null, ProfileParseOutcome.NoCitizenNumber);
+        }
+
+        _logger.LogWarning("Could not parse citizen_id/handle from profile HTML");
+        return new ProfileParseResult(null, ProfileParseOutcome.Unparseable);
     }
 
     private int? ExtractCitizenId(HtmlDocument doc)

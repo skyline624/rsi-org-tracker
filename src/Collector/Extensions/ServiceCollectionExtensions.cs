@@ -136,6 +136,17 @@ public static class ServiceCollectionExtensions
             WHERE Enriched = 0;
         ");
 
+        // Case-insensitive index on member handles. The API's user search surfaces
+        // roster-only members (no CitizenId, absent from `users`) via a PREFIX match,
+        // and SQLite can only use an index for a LIKE prefix when the indexed column
+        // collates NOCASE and the LIKE has no ESCAPE clause. Without this, a prefix
+        // scan falls back to a full scan of the ~12M-row snapshot table (tens of
+        // seconds). One-time build cost on legacy databases; cheap to maintain after.
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS IX_organization_members_UserHandle_NoCase
+            ON organization_members (UserHandle COLLATE NOCASE);
+        ");
+
         // Tombstone columns on discovered_organizations (added without an EF
         // migration; SQLite ALTER TABLE ADD COLUMN throws if they exist already
         // so we gate on PRAGMA table_info first).

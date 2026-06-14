@@ -10,6 +10,15 @@ public class UserProfileDto
     public string? Location { get; set; }
     public DateTime? Enlisted { get; set; }
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>
+    /// True when this row comes from an enriched profile in <c>users</c> (resolved
+    /// CitizenId + scraped details). False for roster-only members surfaced from
+    /// <c>organization_members</c> that never got a CitizenId — for those, only
+    /// <see cref="UserHandle"/>, <see cref="DisplayName"/>, <see cref="UrlImage"/>
+    /// and <see cref="UpdatedAt"/> are meaningful, and <see cref="CitizenId"/> is 0.
+    /// </summary>
+    public bool IsEnriched { get; set; } = true;
 }
 
 public class UserHandleHistoryDto

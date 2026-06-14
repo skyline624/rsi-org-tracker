@@ -22,17 +22,21 @@ public static class DtoMappingExtensions
         Location = u.Location,
         Enlisted = u.Enlisted,
         UpdatedAt = u.UpdatedAt,
+        IsEnriched = true,
     };
 
-    public static OrganizationMemberDto ToDto(this OrganizationMember m) => new()
+    public static OrganizationMemberDto ToDto(this OrganizationMember m, string? orgName = null, DateTime? memberSince = null) => new()
     {
         OrgSid = m.OrgSid,
+        OrgName = orgName,
         UserHandle = m.UserHandle,
         CitizenId = m.CitizenId,
         DisplayName = m.DisplayName,
         Rank = m.Rank,
+        Roles = RoleParser.Parse(m.RolesJson),
         UrlImage = m.UrlImage,
         Timestamp = m.Timestamp,
+        MemberSince = memberSince,
         IsActive = m.IsActive,
     };
 

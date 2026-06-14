@@ -1,36 +1,74 @@
 "use client";
 import Link from "next/link";
+import { HudBadge } from "@/components/hud/HudBadge";
 import {
   HudDataGrid,
   type HudColumn,
 } from "@/components/hud/HudDataGrid";
 import type { OrganizationMemberDto } from "@/lib/api/types";
-import { formatRelative } from "@/lib/utils/format";
+import { formatDate, formatRelative } from "@/lib/utils/format";
 
 export function UserOrgsTable({ rows }: { rows: OrganizationMemberDto[] }) {
   const columns: HudColumn<OrganizationMemberDto>[] = [
     {
-      key: "sid",
-      header: "SID",
-      width: "w-28",
+      key: "status",
+      header: "STATUS",
+      width: "w-24",
       sortable: true,
-      sortValue: (m) => m.orgSid ?? "",
+      // Active rows sort to the top (true > false numerically once we coerce).
+      sortValue: (m) => (m.isActive ? 0 : 1),
+      render: (m) =>
+        m.isActive ? (
+          <HudBadge tone="green">active</HudBadge>
+        ) : (
+          <HudBadge tone="dim">left</HudBadge>
+        ),
+    },
+    {
+      key: "org",
+      header: "ORG",
+      width: "flex-1",
+      sortable: true,
+      sortValue: (m) => (m.orgName ?? m.orgSid ?? "").toLowerCase(),
       render: (m) => (
         <Link
           href={`/orgs/${m.orgSid}`}
-          className="text-hud-cyan hover:text-hud-orange"
+          className="flex flex-col text-hud-cyan hover:text-hud-orange"
         >
-          {m.orgSid}
+          <span className="font-semibold">{m.orgName ?? m.orgSid}</span>
+          {m.orgName && (
+            <span className="font-mono text-[10px] uppercase tracking-wider text-hud-text-dim">
+              {m.orgSid}
+            </span>
+          )}
         </Link>
       ),
     },
     {
-      key: "rank",
-      header: "RANK",
+      key: "role",
+      header: "ROLE",
       width: "flex-1",
       sortable: true,
-      sortValue: (m) => (m.rank ?? "").toLowerCase(),
-      render: (m) => m.rank ?? "—",
+      sortValue: (m) => (m.roles?.[0] ?? m.rank ?? "").toLowerCase(),
+      // Prefer the cleaned roles array (parsed from RolesJson). Fall back to
+      // the raw Rank only if no role survived parsing — Rank often contains
+      // the scraped column header ("Roles") rather than the real role.
+      render: (m) => {
+        const roles = m.roles?.filter((r) => r && r.toLowerCase() !== "roles") ?? [];
+        if (roles.length > 0) return roles.join(", ");
+        if (m.rank && m.rank.toLowerCase() !== "roles") return m.rank;
+        return "—";
+      },
+    },
+    {
+      key: "since",
+      header: "MEMBER SINCE",
+      width: "w-28",
+      align: "right",
+      sortable: true,
+      // Unknown first-seen sorts last (oldest-known at the bottom otherwise).
+      sortValue: (m) => (m.memberSince ? new Date(m.memberSince).getTime() : Number.MAX_SAFE_INTEGER),
+      render: (m) => (m.memberSince ? formatDate(m.memberSince) : "—"),
     },
     {
       key: "last",
@@ -49,6 +87,8 @@ export function UserOrgsTable({ rows }: { rows: OrganizationMemberDto[] }) {
       rows={rows}
       rowKey={(m) => `${m.orgSid}-${m.timestamp}`}
       empty="Citizen is not tied to any org in our index."
+      // Active rows on top, then most-recent first.
+      defaultSort={{ key: "status", dir: "asc" }}
       paginated
       pageSizeOptions={[10, 25, 50, 100, 0]}
       defaultPageSize={25}

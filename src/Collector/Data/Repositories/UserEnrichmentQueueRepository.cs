@@ -39,6 +39,40 @@ public class UserEnrichmentQueueRepository : Repository<UserEnrichmentQueue>, IU
         }
     }
 
+    /// <summary>
+    /// Sentinel attempt count used to park a "gone" (404) handle. Any real
+    /// MaxEnrichmentAttempts threshold is far below this, so the AttemptCount &lt;
+    /// maxAttempts filter in <see cref="GetPendingAsync"/> excludes it permanently.
+    /// </summary>
+    public const int GoneAttemptSentinel = int.MaxValue;
+
+    public async Task MarkGoneAsync(long id, string? reason, CancellationToken ct = default)
+    {
+        var item = await DbSet.FindAsync(new object[] { id }, ct);
+        if (item != null)
+        {
+            item.AttemptCount = GoneAttemptSentinel;
+            item.LastError = reason;
+            await Context.SaveChangesAsync(ct);
+        }
+    }
+
+    public async Task DeferAsync(long id, string? reason, CancellationToken ct = default)
+    {
+        var item = await DbSet.FindAsync(new object[] { id }, ct);
+        if (item != null)
+        {
+            // Push to the back of the queue (newest QueuedAt sorts last within a
+            // priority) and drop priority so it never jumps ahead of unseen handles.
+            // Crucially: do NOT touch AttemptCount — n/a is not a failure, so it must
+            // never accumulate towards the abandon cap.
+            item.QueuedAt = DateTime.UtcNow;
+            item.Priority = 0;
+            item.LastError = reason;
+            await Context.SaveChangesAsync(ct);
+        }
+    }
+
     public async Task<bool> IsQueuedAsync(string userHandle, CancellationToken ct = default)
     {
         return await DbSet.AnyAsync(q => q.UserHandle == userHandle && !q.Enriched, ct);

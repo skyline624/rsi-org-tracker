@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Text.Json;
 using Collector.Data.Repositories;
+using Collector.Dtos;
 using Collector.Models;
 using Collector.Options;
 using Collector.Parsers;
@@ -101,39 +102,61 @@ public class UserCollector : IUserCollector
         ct.ThrowIfCancellationRequested();
 
         // ── Fetch profiles concurrently ───────────────────────────────
-        // GetUserProfileHtmlAsync handles its own semaphore (MaxConcurrentRequests slots)
+        // GetUserProfileResultAsync handles its own semaphore (MaxConcurrentRequests slots)
         var fetchTasks = pending
-            .Select(item => FetchProfileSafeAsync(item.UserHandle, ct))
+            .Select(item => FetchProfileResultSafeAsync(item.UserHandle, ct))
             .ToList();
-        var htmlResults = await Task.WhenAll(fetchTasks);
+        var fetchResults = await Task.WhenAll(fetchTasks);
 
         // ── Process results sequentially (EF Core DbContext not thread-safe) ──
-        var processedCount = 0;
-        var skippedCount = 0;
+        var enriched = 0;   // genuinely written to the users table
+        var gone = 0;       // 404 — parked, never retried again
+        var deferred = 0;   // live but "n/a" — pushed to the back, no attempt spent
+        var failed = 0;     // transient/unparseable — counts towards the retry cap
         for (int i = 0; i < pending.Count; i++)
         {
             var item = pending[i];
-            var html = htmlResults[i];
+            var fetch = fetchResults[i];
 
             try
             {
-                if (string.IsNullOrEmpty(html))
+                switch (fetch.Outcome)
                 {
-                    await _queueRepo.IncrementAttemptAsync(item.Id, "Profile not found or fetch error", ct);
-                    skippedCount++;
-                    continue;
-                }
+                    case UserProfileFetchOutcome.NotFound:
+                        // 404 → handle is gone or renamed. Stop retrying immediately
+                        // instead of burning MaxEnrichmentAttempts fetches on a dead URL.
+                        await _queueRepo.MarkGoneAsync(item.Id, "Gone (HTTP 404)", ct);
+                        gone++;
+                        break;
 
-                var success = await EnrichUserAsync(item.UserHandle, item.Priority >= 1, html, ct);
-                if (success)
-                {
-                    await _queueRepo.MarkEnrichedAsync(item.Id, ct);
-                    processedCount++;
-                }
-                else
-                {
-                    await _queueRepo.IncrementAttemptAsync(item.Id, "Profile not found or parse error", ct);
-                    skippedCount++;
+                    case UserProfileFetchOutcome.Failed:
+                        // Transient (Cloudflare 403/429, network, retries exhausted) — retry.
+                        await _queueRepo.IncrementAttemptAsync(item.Id, "Fetch failed (throttle/network)", ct);
+                        failed++;
+                        break;
+
+                    default: // Ok — body in hand, decide on parse outcome
+                        var parsed = _profileParser.ParseProfile(fetch.Html!);
+                        if (parsed.Outcome == ProfileParseOutcome.Success
+                            && await EnrichUserCoreAsync(item.UserHandle, item.Priority >= 1, parsed.Data!, ct))
+                        {
+                            await _queueRepo.MarkEnrichedAsync(item.Id, ct);
+                            enriched++;
+                        }
+                        else if (parsed.Outcome == ProfileParseOutcome.NoCitizenNumber)
+                        {
+                            // Live profile that simply has no UEE Citizen Record yet
+                            // ("n/a"). Not a failure: defer for a later pass instead of
+                            // counting an attempt, so we never permanently abandon it.
+                            await _queueRepo.DeferAsync(item.Id, "No citizen record (n/a)", ct);
+                            deferred++;
+                        }
+                        else
+                        {
+                            await _queueRepo.IncrementAttemptAsync(item.Id, "Profile parse error", ct);
+                            failed++;
+                        }
+                        break;
                 }
             }
             catch (OperationCanceledException)
@@ -144,21 +167,21 @@ public class UserCollector : IUserCollector
             {
                 _logger.LogError(ex, "Unexpected error enriching user {Handle}", item.UserHandle);
                 await _queueRepo.IncrementAttemptAsync(item.Id, ex.Message, ct);
-                skippedCount++;
+                failed++;
             }
         }
 
         _logger.LogInformation(
-            "Phase 4 batch: {Processed} enriched, {Skipped} skipped (batch size {Size})",
-            processedCount, skippedCount, pending.Count);
-        return processedCount;
+            "Phase 4 batch: {Enriched} enriched, {Gone} gone(404), {Deferred} deferred(n/a), {Failed} failed (batch size {Size})",
+            enriched, gone, deferred, failed, pending.Count);
+        return enriched;
     }
 
-    private async Task<string?> FetchProfileSafeAsync(string handle, CancellationToken ct)
+    private async Task<UserProfileFetchResult> FetchProfileResultSafeAsync(string handle, CancellationToken ct)
     {
         try
         {
-            return await _apiClient.GetUserProfileHtmlAsync(handle, ct);
+            return await _apiClient.GetUserProfileResultAsync(handle, ct);
         }
         catch (OperationCanceledException)
         {
@@ -167,12 +190,12 @@ public class UserCollector : IUserCollector
         catch (HttpRequestException ex)
         {
             _logger.LogWarning(ex, "HTTP error fetching profile for {Handle}", handle);
-            return null;
+            return new UserProfileFetchResult(null, UserProfileFetchOutcome.Failed);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error fetching profile for {Handle}", handle);
-            return null;
+            return new UserProfileFetchResult(null, UserProfileFetchOutcome.Failed);
         }
     }
 
@@ -184,13 +207,23 @@ public class UserCollector : IUserCollector
 
     public async Task<bool> EnrichUserAsync(string handle, bool isNewHandle, string html, CancellationToken ct = default)
     {
-        var profileData = _profileParser.ParseUserProfile(html);
-        if (profileData == null)
+        var parsed = _profileParser.ParseProfile(html);
+        if (parsed.Outcome != ProfileParseOutcome.Success || parsed.Data is null)
         {
             _logger.LogWarning("Failed to parse profile for user {Handle}", handle);
             return false;
         }
 
+        return await EnrichUserCoreAsync(handle, isNewHandle, parsed.Data, ct);
+    }
+
+    /// <summary>
+    /// Persists an already-parsed profile (create/rename/update + change events).
+    /// Split out from <see cref="EnrichUserAsync(string,bool,string,CancellationToken)"/>
+    /// so the batch loop can branch on the parse outcome without parsing twice.
+    /// </summary>
+    private async Task<bool> EnrichUserCoreAsync(string handle, bool isNewHandle, UserProfileData profileData, CancellationToken ct)
+    {
         // Defence in depth — the parser's IsHandleShape filter is the first
         // line, this is the second. Without it a future parser regression
         // could re-introduce the "CITIZEN DOSSIER" corruption that overwrote

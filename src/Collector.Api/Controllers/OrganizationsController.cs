@@ -1,5 +1,6 @@
 using Collector.Api.Dtos.Organizations;
 using Collector.Api.Dtos.Common;
+using Collector.Api.Extensions;
 using Collector.Data;
 using Collector.Data.Repositories;
 using Collector.Models;
@@ -153,10 +154,18 @@ public class OrganizationsController : ControllerBase
     {
         sid = sid.ToUpperInvariant();
 
+        // All rows share the same org → one name lookup is enough.
+        var orgName = await _db.Organizations
+            .AsNoTracking()
+            .Where(o => o.Sid == sid)
+            .OrderByDescending(o => o.Timestamp)
+            .Select(o => o.Name)
+            .FirstOrDefaultAsync(ct);
+
         if (at_time.HasValue)
         {
             var members = await _memberRepo.GetByOrgSidAsync(sid, at_time.Value.ToUniversalTime(), ct);
-            return Ok(members.Select(MapMember).ToList());
+            return Ok(members.Select(m => m.ToDto(orgName)).ToList());
         }
 
         if (!include_inactive)
@@ -164,12 +173,12 @@ public class OrganizationsController : ControllerBase
             var active = await _db.OrganizationMembers
                 .Where(m => m.OrgSid == sid && m.IsActive)
                 .ToListAsync(ct);
-            return Ok(active.Select(MapMember).ToList());
+            return Ok(active.Select(m => m.ToDto(orgName)).ToList());
         }
 
         // include_inactive=true: latest snapshot per member (active or former)
         var all = await _memberRepo.GetByOrgSidAsync(sid, null, ct);
-        return Ok(all.Select(MapMember).ToList());
+        return Ok(all.Select(m => m.ToDto(orgName)).ToList());
     }
 
     [HttpGet("{sid}/members/changes")]
@@ -264,17 +273,6 @@ public class OrganizationsController : ControllerBase
     };
 
     private static OrganizationDto MapOrg(Organization o) => MapOrgExpr(o);
-
-    private static OrganizationMemberDto MapMember(OrganizationMember m) => new()
-    {
-        UserHandle = m.UserHandle,
-        CitizenId = m.CitizenId,
-        DisplayName = m.DisplayName,
-        Rank = m.Rank,
-        UrlImage = m.UrlImage,
-        Timestamp = m.Timestamp,
-        IsActive = m.IsActive,
-    };
 
     private static Dtos.Changes.ChangeEventDto MapChange(ChangeEvent e) => new()
     {

@@ -50,6 +50,11 @@ export interface UserProfileDto {
   location?: string | null;
   enlisted?: string | null;
   updatedAt: string;
+  /**
+   * False for roster-only members surfaced from organization_members that never
+   * got a CitizenId (citizenId is then 0). True for enriched `users` rows.
+   */
+  isEnriched: boolean;
 }
 
 export interface UserHandleHistoryDto {
@@ -85,12 +90,17 @@ export interface OrganizationDto {
 
 export interface OrganizationMemberDto {
   orgSid?: string;
+  orgName?: string | null;
   userHandle: string;
   citizenId?: number | null;
   displayName?: string | null;
   rank?: string | null;
+  roles?: string[] | null;
   urlImage?: string | null;
+  /** When the member was last seen in this org. */
   timestamp: string;
+  /** First snapshot in which the member appeared in this org ("member since"). */
+  memberSince?: string | null;
   isActive: boolean;
 }
 

@@ -79,6 +79,14 @@ public interface IRsiApiClient
     Task<string?> GetUserProfileHtmlAsync(
         string handle,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Gets a user's profile page, distinguishing a 404 (handle gone) from a
+    /// transient failure so the enrichment worker can react differently.
+    /// </summary>
+    Task<UserProfileFetchResult> GetUserProfileResultAsync(
+        string handle,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -109,6 +117,23 @@ public enum OrgPageFetchOutcome
 }
 
 public record OrgPageFetchResult(string? Html, OrgPageFetchOutcome Outcome);
+
+/// <summary>
+/// Outcome of a single user-profile HTML fetch. Lets the enrichment worker tell a
+/// permanent 404 (handle gone from RSI — stop retrying) apart from a transient
+/// failure (throttle/network — keep retrying).
+/// </summary>
+public enum UserProfileFetchOutcome
+{
+    /// <summary>HTTP 200, body returned.</summary>
+    Ok,
+    /// <summary>RSI returned 404 — handle deleted or renamed.</summary>
+    NotFound,
+    /// <summary>Transient failure (Cloudflare 403/429/503, network, retries exhausted).</summary>
+    Failed,
+}
+
+public record UserProfileFetchResult(string? Html, UserProfileFetchOutcome Outcome);
 
 public class RsiApiClient : IRsiApiClient, IDisposable
 {
@@ -527,6 +552,9 @@ public class RsiApiClient : IRsiApiClient, IDisposable
     }
 
     public async Task<string?> GetUserProfileHtmlAsync(string handle, CancellationToken ct = default)
+        => (await GetUserProfileResultAsync(handle, ct)).Html;
+
+    public async Task<UserProfileFetchResult> GetUserProfileResultAsync(string handle, CancellationToken ct = default)
     {
         await _concurrentPageSemaphore.WaitAsync(ct);
         try
@@ -549,7 +577,7 @@ public class RsiApiClient : IRsiApiClient, IDisposable
                 if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
                     _logger.LogWarning("User profile not found: {Handle}", handle);
-                    return null;
+                    return new UserProfileFetchResult(null, UserProfileFetchOutcome.NotFound);
                 }
 
                 // Cloudflare push-back (403) is handled like 429/503: pause and retry.
@@ -566,11 +594,12 @@ public class RsiApiClient : IRsiApiClient, IDisposable
                 }
 
                 response.EnsureSuccessStatusCode();
-                return await response.Content.ReadAsStringAsync(ct);
+                var html = await response.Content.ReadAsStringAsync(ct);
+                return new UserProfileFetchResult(html, UserProfileFetchOutcome.Ok);
             }
 
             _logger.LogError("Max retries exceeded for user profile {Handle}", handle);
-            return null;
+            return new UserProfileFetchResult(null, UserProfileFetchOutcome.Failed);
         }
         finally
         {

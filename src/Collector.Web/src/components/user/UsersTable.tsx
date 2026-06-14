@@ -38,12 +38,21 @@ export function UsersTable({ rows }: { rows: UserProfileDto[] }) {
       width: "w-28",
       align: "right",
       sortable: true,
-      sortValue: (u) => u.citizenId,
-      render: (u) => (
-        <span className="text-hud-text-dim">
-          #{formatNumber(u.citizenId)}
-        </span>
-      ),
+      // Non-enriched rows have no CitizenId (0); sort them last.
+      sortValue: (u) => (u.isEnriched ? u.citizenId : Number.MAX_SAFE_INTEGER),
+      render: (u) =>
+        u.isEnriched ? (
+          <span className="text-hud-text-dim">
+            #{formatNumber(u.citizenId)}
+          </span>
+        ) : (
+          <span
+            className="font-mono text-[10px] uppercase tracking-wider text-hud-orange/80"
+            title="Roster-only member — no CitizenId resolved, profile not enriched"
+          >
+            UNVERIFIED
+          </span>
+        ),
     },
     {
       key: "location",

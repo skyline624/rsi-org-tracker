@@ -43,18 +43,69 @@ public class UsersController : ControllerBase
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
     {
-        var query = _db.Users.AsNoTracking().OrderBy(u => u.UserHandle).AsQueryable();
-
-        if (!string.IsNullOrWhiteSpace(search))
+        // No search term: list enriched citizens only. A global listing of the ~600k
+        // non-enriched roster handles would be huge and meaningless, so we keep the
+        // default directory to real profiles (fast: single index-free scan of `users`).
+        if (string.IsNullOrWhiteSpace(search))
         {
-            // Escape LIKE special characters (%, _) so user input can't pivot into wildcards.
-            var escapedSearch = search.Replace("%", "\\%").Replace("_", "\\_");
-            query = query.Where(u =>
-                EF.Functions.Like(u.UserHandle, $"%{escapedSearch}%", "\\") ||
-                (u.DisplayName != null && EF.Functions.Like(u.DisplayName, $"%{escapedSearch}%", "\\")));
+            var all = _db.Users.AsNoTracking().OrderBy(u => u.UserHandle);
+            return Ok(await all.ToPaginatedAsync(page, pageSize, u => u.ToProfileDto(), ct));
         }
 
-        return Ok(await query.ToPaginatedAsync(page, pageSize, u => u.ToProfileDto(), ct));
+        return Ok(await SearchUsersAsync(search, page, pageSize, ct));
+    }
+
+    /// <summary>
+    /// Searches enriched citizens AND roster-only members (handles tracked in
+    /// organization_members that never got a CitizenId, so they can't exist in
+    /// `users` — e.g. RSI accounts that hide their citizen number). EF Core cannot
+    /// translate a UNION of these two differently-shaped projections under SQLite, so
+    /// the combined set is expressed as raw SQL, which also lets the DB do the paging.
+    /// </summary>
+    private async Task<PaginatedResponse<UserProfileDto>> SearchUsersAsync(
+        string search, int page, int pageSize, CancellationToken ct)
+    {
+        page = page < 1 ? 1 : page;
+        pageSize = pageSize is < 1 or > 500 ? 50 : pageSize;
+
+        // Enriched side: substring match (full scan of the smaller `users` table is cheap).
+        // Escape %/_ so user input can't pivot into wildcards (requires the ESCAPE clause).
+        var escaped = search.Replace("%", "\\%").Replace("_", "\\_");
+        var substring = $"%{escaped}%";
+
+        // Non-enriched side: PREFIX match only. SQLite can use an index for a LIKE prefix
+        // solely when the column collates NOCASE *and* there's no ESCAPE clause — that's
+        // what IX_organization_members_UserHandle_NoCase exists for. A substring there
+        // would force a full scan of the ~12M-row snapshot table (tens of seconds). '%'
+        // can't appear in a handle, so stripping it (not escaping) keeps the prefix clean;
+        // an empty prefix becomes a guaranteed no-match rather than a match-all scan.
+        var prefixTerm = search.Trim().Replace("%", "");
+        var prefix = prefixTerm.Length == 0 ? "" : prefixTerm + "%";
+
+        // Shared UNION body. {0} = substring pattern (enriched), {1} = prefix pattern (members).
+        const string union = @"
+            SELECT CitizenId, UserHandle, DisplayName, UrlImage, Bio, Location, Enlisted, UpdatedAt, 1 AS IsEnriched
+            FROM users
+            WHERE UserHandle LIKE {0} ESCAPE '\' OR (DisplayName IS NOT NULL AND DisplayName LIKE {0} ESCAPE '\')
+            UNION ALL
+            SELECT 0 AS CitizenId, m.UserHandle, m.DisplayName, m.UrlImage,
+                   NULL AS Bio, NULL AS Location, NULL AS Enlisted, m.Timestamp AS UpdatedAt, 0 AS IsEnriched
+            FROM organization_members m
+            WHERE m.UserHandle LIKE {1}
+              AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle)
+              AND NOT EXISTS (SELECT 1 FROM organization_members o
+                              WHERE o.UserHandle = m.UserHandle AND o.Timestamp > m.Timestamp)";
+
+        var total = await _db.Database
+            .SqlQueryRaw<int>($"SELECT COUNT(*) AS Value FROM ({union})", substring, prefix)
+            .SingleAsync(ct);
+
+        var pageSql = $"SELECT * FROM ({union}) ORDER BY UserHandle COLLATE NOCASE LIMIT {{2}} OFFSET {{3}}";
+        var items = await _db.Database
+            .SqlQueryRaw<UserProfileDto>(pageSql, substring, prefix, pageSize, (page - 1) * pageSize)
+            .ToListAsync(ct);
+
+        return PaginatedResponse<UserProfileDto>.Create(items, page, pageSize, total);
     }
 
     [HttpGet("{handle}")]
@@ -121,7 +172,31 @@ public class UsersController : ControllerBase
         if (!include_inactive)
             memberships = memberships.Where(m => m.IsActive).ToList();
 
-        return Ok(memberships.Select(m => m.ToDto()).ToList());
+        // "Member since" = first snapshot in which this handle appeared in each org.
+        // A plain GroupBy + Min aggregate (unlike the First() projection above) so it
+        // stays a single translatable query.
+        var firstSeen = await _db.OrganizationMembers
+            .AsNoTracking()
+            .Where(m => m.UserHandle == handle)
+            .GroupBy(m => m.OrgSid)
+            .Select(g => new { OrgSid = g.Key, First = g.Min(m => m.Timestamp) })
+            .ToDictionaryAsync(x => x.OrgSid, x => x.First, ct);
+
+        // Resolve the latest known name for each org so the frontend can show
+        // "SID — Name" instead of just the SID.
+        var orgSids = memberships.Select(m => m.OrgSid).Distinct().ToList();
+        var orgNames = await _db.Organizations
+            .AsNoTracking()
+            .Where(o => orgSids.Contains(o.Sid))
+            .GroupBy(o => o.Sid)
+            .Select(g => g.OrderByDescending(o => o.Timestamp).First())
+            .ToDictionaryAsync(o => o.Sid, o => o.Name, ct);
+
+        return Ok(memberships
+            .Select(m => m.ToDto(
+                orgNames.GetValueOrDefault(m.OrgSid),
+                firstSeen.TryGetValue(m.OrgSid, out var since) ? since : null))
+            .ToList());
     }
 
     [HttpGet("{handle}/history")]
