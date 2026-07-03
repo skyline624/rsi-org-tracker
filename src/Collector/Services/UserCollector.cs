@@ -12,6 +12,26 @@ using Microsoft.Extensions.Options;
 namespace Collector.Services;
 
 /// <summary>
+/// Per-outcome tally of a single <see cref="IUserCollector.EnrichBatchAsync"/> pass.
+/// </summary>
+/// <param name="Enriched">Profiles genuinely written to the users table.</param>
+/// <param name="Gone">Handles that 404'd and were parked (never retried again).</param>
+/// <param name="Deferred">Live "n/a" profiles pushed to the back without spending an attempt.</param>
+/// <param name="Failed">Transient/unparseable rows that spent a retry attempt.</param>
+public readonly record struct EnrichBatchResult(int Enriched, int Gone, int Deferred, int Failed)
+{
+    /// <summary>Total rows pulled from the queue and handled in this batch.</summary>
+    public int Processed => Enriched + Gone + Deferred + Failed;
+
+    /// <summary>
+    /// Rows that made durable progress out of the pending set (enriched, parked as
+    /// gone, or spent a retry attempt). Excludes <see cref="Deferred"/>, which stay
+    /// pending by design — used by drain loops to detect "only n/a rows left".
+    /// </summary>
+    public int Advanced => Enriched + Gone + Failed;
+}
+
+/// <summary>
 /// Interface for user enrichment operations.
 /// </summary>
 public interface IUserCollector
@@ -25,11 +45,12 @@ public interface IUserCollector
 
     /// <summary>
     /// Processes a single batch from the enrichment queue (sized by
-    /// <c>MaxConcurrentRequests * 2</c>). Returns the number of profiles
-    /// successfully enriched in this batch. Returns 0 when there is nothing
-    /// pending or every pending row exceeded MaxEnrichmentAttempts.
+    /// <c>MaxConcurrentRequests * 2</c>). Returns a per-outcome breakdown of the
+    /// batch (enriched / gone / deferred / failed). An all-zero result means the
+    /// queue was empty; a batch that only deferred "n/a" rows still counts as
+    /// progress and is <b>not</b> a signal to back off.
     /// </summary>
-    Task<int> EnrichBatchAsync(CancellationToken ct = default);
+    Task<EnrichBatchResult> EnrichBatchAsync(CancellationToken ct = default);
 
     /// <summary>
     /// Enriches a single user profile from pre-fetched HTML.
@@ -82,22 +103,25 @@ public class UserCollector : IUserCollector
     public async Task<int> EnrichAllUsersAsync(CancellationToken ct = default)
     {
         _logger.LogInformation("Starting user enrichment (drain mode)");
-        var totalProcessed = 0;
+        var totalEnriched = 0;
         while (true)
         {
-            var processed = await EnrichBatchAsync(ct);
-            if (processed == 0) break;
-            totalProcessed += processed;
+            var batch = await EnrichBatchAsync(ct);
+            // Stop when a batch makes no durable progress: the queue is empty, or
+            // only deferred "n/a" rows remain — which would otherwise re-fetch
+            // forever since deferral never spends an attempt.
+            if (batch.Advanced == 0) break;
+            totalEnriched += batch.Enriched;
         }
-        _logger.LogInformation("User enrichment drain complete: {Count} users enriched", totalProcessed);
-        return totalProcessed;
+        _logger.LogInformation("User enrichment drain complete: {Count} users enriched", totalEnriched);
+        return totalEnriched;
     }
 
-    public async Task<int> EnrichBatchAsync(CancellationToken ct = default)
+    public async Task<EnrichBatchResult> EnrichBatchAsync(CancellationToken ct = default)
     {
         var fetchBatchSize = Math.Max(1, _options.MaxConcurrentRequests) * 2;
         var pending = await _queueRepo.GetPendingAsync(fetchBatchSize, _options.MaxEnrichmentAttempts, ct);
-        if (pending.Count == 0) return 0;
+        if (pending.Count == 0) return default;
 
         ct.ThrowIfCancellationRequested();
 
@@ -171,10 +195,17 @@ public class UserCollector : IUserCollector
             }
         }
 
-        _logger.LogInformation(
+        // With the queue draining continuously, a routine batch is "all deferred"
+        // (n/a profiles). Log those at Debug to avoid tens of thousands of INFO
+        // lines/day; keep INFO for batches that actually moved rows out of pending.
+        var logLevel = (enriched + gone + failed) > 0
+            ? LogLevel.Information
+            : LogLevel.Debug;
+        _logger.Log(
+            logLevel,
             "Phase 4 batch: {Enriched} enriched, {Gone} gone(404), {Deferred} deferred(n/a), {Failed} failed (batch size {Size})",
             enriched, gone, deferred, failed, pending.Count);
-        return enriched;
+        return new EnrichBatchResult(enriched, gone, deferred, failed);
     }
 
     private async Task<UserProfileFetchResult> FetchProfileResultSafeAsync(string handle, CancellationToken ct)

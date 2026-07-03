@@ -72,17 +72,20 @@ public class Phase4Worker : BackgroundService
                     _logger.LogInformation("Phase4Worker resuming (pending={Pending})", pending);
                     _wasIdle = false;
                 }
-                _logger.LogInformation("Phase4Worker draining batch (pending={Pending})", pending);
-                var processed = await userCollector.EnrichBatchAsync(stoppingToken);
+                _logger.LogDebug("Phase4Worker draining batch (pending={Pending})", pending);
+                var batch = await userCollector.EnrichBatchAsync(stoppingToken);
 
-                if (processed == 0)
+                // Back off ONLY on a genuinely dead batch: nothing was pulled (queue
+                // drained under a concurrent writer) or EVERY fetched row failed at the
+                // network layer (Cloudflare 403/429 burst). A batch that enriched, parked
+                // 404s, or deferred "n/a" rows IS real progress — loop straight into the
+                // next batch instead of sleeping, so the queue actually drains.
+                var deadBatch = batch.Processed == 0 || batch.Failed == batch.Processed;
+                if (deadBatch)
                 {
-                    // Nothing actually moved — likely Cloudflare 403 burst or every
-                    // pending row exhausted MaxEnrichmentAttempts. Back off to avoid
-                    // hammering RSI / spinning on poison rows.
                     _logger.LogWarning(
-                        "Phase4Worker batch returned 0 (pending={Pending}); idling {Idle} to avoid hot loop",
-                        pending, _options.Phase4IdleInterval);
+                        "Phase4Worker made no progress (pending={Pending}, failed={Failed}/{Processed}); idling {Idle} to avoid hot loop",
+                        pending, batch.Failed, batch.Processed, _options.Phase4IdleInterval);
                     _wasIdle = true;
                     await Task.Delay(_options.Phase4IdleInterval, stoppingToken);
                 }
