@@ -42,3 +42,10 @@ public class OrganizationSummaryDto
     public string Source { get; set; } = null!;
     public DateTime Timestamp { get; set; }
 }
+
+/// <summary>Admin-created account (no auto-login).</summary>
+public record CreateAccountRequest(
+    [Required, MinLength(3), MaxLength(100)] string Username,
+    [Required, EmailAddress] string Email,
+    [Required, MinLength(8)] string Password,
+    bool IsAdmin = false);

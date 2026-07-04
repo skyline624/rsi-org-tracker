@@ -25,6 +25,7 @@ export default async function UserLayout({ children }: { children: ReactNode }) 
             { href: "/favorites", label: "FAVORITES" },
             { href: "/settings", label: "SETTINGS" },
             { href: "/admin", label: "AJOUT" },
+            ...(session.isAdmin ? [{ href: "/accounts", label: "COMPTES" }] : []),
           ].map((it) => (
             <Link
               key={it.href}

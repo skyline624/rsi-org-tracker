@@ -1,5 +1,6 @@
 using Collector.Api.Data;
 using Collector.Api.Dtos.Admin;
+using Collector.Api.Dtos.Auth;
 using Collector.Api.Dtos.Common;
 using Collector.Api.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -15,11 +16,13 @@ public class AdminController : ControllerBase
 {
     private readonly ApiDbContext _db;
     private readonly ActivityLogService _activityLog;
+    private readonly AuthService _authService;
 
-    public AdminController(ApiDbContext db, ActivityLogService activityLog)
+    public AdminController(ApiDbContext db, ActivityLogService activityLog, AuthService authService)
     {
         _db = db;
         _activityLog = activityLog;
+        _authService = authService;
     }
 
     [HttpGet("users")]
@@ -106,6 +109,13 @@ public class AdminController : ControllerBase
     {
         var user = await _db.ApiUsers.FindAsync([id], ct)
             ?? throw new KeyNotFoundException($"User {id} not found");
+
+        // activity_logs has a NO ACTION FK to api_users; detach them (keep the audit
+        // trail) so deleting a user who has logged in doesn't violate the constraint.
+        await _db.ActivityLogs
+            .Where(l => l.ApiUserId == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.ApiUserId, (long?)null), ct);
+
         _db.ApiUsers.Remove(user);
         await _db.SaveChangesAsync(ct);
         return NoContent();
@@ -155,6 +165,34 @@ public class AdminController : ControllerBase
             TotalApiKeys = totalApiKeys,
             ActiveApiKeys = activeApiKeys,
             TotalActivityLogs = totalLogs,
+        });
+    }
+
+    // Create a new account (admin only). Unlike public register, there is no auto-login.
+    [HttpPost("users")]
+    public async Task<ActionResult<AdminUserDto>> CreateUser([FromBody] CreateAccountRequest request, CancellationToken ct)
+    {
+        var user = await _authService.RegisterAsync(
+            new RegisterRequest(request.Username, request.Email, request.Password), ct);
+
+        if (request.IsAdmin)
+        {
+            user.IsAdmin = true;
+            await _db.SaveChangesAsync(ct);
+        }
+
+        await _activityLog.LogAsync("admin_create_user", user.Id, "user", user.Id.ToString(), null, ct);
+
+        return Ok(new AdminUserDto
+        {
+            Id = user.Id,
+            Username = user.Username,
+            Email = user.Email,
+            IsAdmin = user.IsAdmin,
+            IsBanned = user.IsBanned,
+            CreatedAt = user.CreatedAt,
+            LastLoginAt = user.LastLoginAt,
+            ApiKeyCount = 0,
         });
     }
 }

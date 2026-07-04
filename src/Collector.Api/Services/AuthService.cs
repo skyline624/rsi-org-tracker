@@ -151,6 +151,20 @@ public class AuthService
         };
     }
 
+    /// <summary>Changes the password after verifying the current one. Keeps the session active.</summary>
+    public async Task ChangePasswordAsync(long userId, string currentPassword, string newPassword, CancellationToken ct = default)
+    {
+        var user = await _db.ApiUsers.FirstOrDefaultAsync(u => u.Id == userId, ct)
+            ?? throw new UnauthorizedAccessException("User not found");
+
+        if (!BCrypt.Net.BCrypt.Verify(currentPassword, user.PasswordHash))
+            throw new UnauthorizedAccessException("Current password is incorrect");
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+    }
+
     public static UserDto MapUser(ApiUser user) => new()
     {
         Id = user.Id,

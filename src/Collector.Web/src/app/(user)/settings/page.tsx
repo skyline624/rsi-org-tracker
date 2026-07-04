@@ -2,6 +2,7 @@ import { HudPanel } from "@/components/hud/HudPanel";
 import { HudBadge } from "@/components/hud/HudBadge";
 import { getSession } from "@/lib/auth/session";
 import { formatDate } from "@/lib/utils/format";
+import { ChangePasswordForm } from "./ChangePasswordForm";
 
 export default async function SettingsPage() {
   const session = await getSession();
@@ -53,11 +54,7 @@ export default async function SettingsPage() {
       </HudPanel>
 
       <HudPanel label="SECURITY">
-        <p className="py-4 text-center font-mono text-xs text-hud-text-dim">
-          — password change form arriving in v2 —
-          <br />
-          Use /api/auth/forgot-password for now.
-        </p>
+        <ChangePasswordForm />
       </HudPanel>
 
       <HudPanel label="SESSION TOKENS" accent="red">
