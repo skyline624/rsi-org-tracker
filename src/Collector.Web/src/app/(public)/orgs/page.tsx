@@ -1,4 +1,5 @@
 import { HudPanel } from "@/components/hud/HudPanel";
+import { QuickAddOrg } from "./QuickAddOrg";
 import { OrgsTable } from "@/components/org/OrgsTable";
 import { Pagination } from "@/components/layout/Pagination";
 import { listOrgs } from "@/lib/api/endpoints";
@@ -102,6 +103,8 @@ export default async function OrgsPage({ searchParams }: PageProps) {
           </button>
         </form>
       </header>
+
+      <QuickAddOrg />
 
       <HudPanel label={`${formatNumber(data.total)} ORGS INDEXED`}>
         <OrgsTable rows={data.items} sort={currentSort} />

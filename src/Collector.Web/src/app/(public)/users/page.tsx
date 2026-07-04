@@ -1,4 +1,5 @@
 import { HudPanel } from "@/components/hud/HudPanel";
+import { QuickAddUser } from "./QuickAddUser";
 import { UsersTable } from "@/components/user/UsersTable";
 import { Pagination } from "@/components/layout/Pagination";
 import { listUsers } from "@/lib/api/endpoints";
@@ -39,6 +40,8 @@ export default async function UsersPage({ searchParams }: PageProps) {
           </button>
         </form>
       </header>
+
+      <QuickAddUser />
 
       <HudPanel label={`${formatNumber(data.total)} CITIZENS INDEXED`}>
         <UsersTable rows={data.items} />

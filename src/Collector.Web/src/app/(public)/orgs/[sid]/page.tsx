@@ -17,6 +17,7 @@ import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
 import { getSession } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api/client";
 import { OrgNotesSection } from "./OrgNotesSection";
+import { QuickAddMember } from "./QuickAddMember";
 import type { OrgNoteDto } from "./org-note-actions";
 
 export const dynamic = "force-dynamic";
@@ -143,6 +144,8 @@ export default async function OrgDetailPage({ params }: PageProps) {
           )}
         </HudPanel>
       </section>
+
+      <QuickAddMember sid={sid} />
 
       {/* Members + Changes */}
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
