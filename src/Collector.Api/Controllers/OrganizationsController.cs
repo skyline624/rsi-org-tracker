@@ -69,7 +69,8 @@ public class OrganizationsController : ControllerBase
             var pattern = $"%{escaped}%";
             query = query.Where(o =>
                 EF.Functions.Like(o.Name, pattern, "\\") ||
-                EF.Functions.Like(o.Sid, pattern, "\\"));
+                EF.Functions.Like(o.Sid, pattern, "\\") ||
+                _db.OrgNotes.Any(n => n.OrgSid == o.Sid && EF.Functions.Like(n.Body, pattern, "\\")));
         }
         if (!string.IsNullOrWhiteSpace(archetype))
             query = query.Where(o => o.Archetype == archetype);

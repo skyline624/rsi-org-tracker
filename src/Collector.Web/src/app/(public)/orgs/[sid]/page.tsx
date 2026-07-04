@@ -14,6 +14,10 @@ import {
 import { ApiError } from "@/lib/api/errors";
 import type { OrganizationMemberDto } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
+import { getSession } from "@/lib/auth/session";
+import { apiGet } from "@/lib/api/client";
+import { OrgNotesSection } from "./OrgNotesSection";
+import type { OrgNoteDto } from "./org-note-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +54,16 @@ export default async function OrgDetailPage({ params }: PageProps) {
     date: g.date,
     value: g.membersCount,
   }));
+
+  // Notes on this organization (auth required — empty if not logged in).
+  const session = await getSession();
+  const notes = session
+    ? await apiGet<OrgNoteDto[]>(
+        `/api/organizations/${encodeURIComponent(sid)}/notes`,
+        undefined,
+        { bearerToken: session.accessToken },
+      ).catch(() => [] as OrgNoteDto[])
+    : [];
 
   return (
     <div className="flex flex-col gap-8">
@@ -191,6 +205,13 @@ export default async function OrgDetailPage({ params }: PageProps) {
           </HudPanel>
         </section>
       )}
+
+      <OrgNotesSection
+        sid={sid}
+        initialNotes={notes}
+        currentUserId={session?.userId}
+        isAdmin={session?.isAdmin}
+      />
     </div>
   );
 }

@@ -20,6 +20,7 @@ public class TrackerDbContext : DbContext
     public DbSet<EntityNote> EntityNotes { get; set; } = null!;
     public DbSet<EntityAudio> EntityAudios { get; set; } = null!;
     public DbSet<EntityMembership> EntityMemberships { get; set; } = null!;
+    public DbSet<OrgNote> OrgNotes { get; set; } = null!;
 
     public TrackerDbContext(DbContextOptions<TrackerDbContext> options)
         : base(options)
