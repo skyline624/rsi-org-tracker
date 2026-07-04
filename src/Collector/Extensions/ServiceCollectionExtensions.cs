@@ -41,6 +41,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IEntityAudioRepository, EntityAudioRepository>();
         services.AddScoped<IEntityMembershipRepository, EntityMembershipRepository>();
         services.AddScoped<IOrgNoteRepository, OrgNoteRepository>();
+        services.AddScoped<IEntityLinkRepository, EntityLinkRepository>();
 
         // Resolver lives in the data layer so both the collector and the API (which
         // only calls AddCollectorDataServices) can resolve tracked entities.

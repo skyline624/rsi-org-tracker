@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using Collector.Api.Data;
 using Collector.Api.Extensions;
 using Collector.Api.Middleware;
+using Collector.Api.Services;
 using Collector.Extensions;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -42,6 +43,9 @@ builder.Services.AddCollectorDataServices(builder.Configuration, dataDir);
 
 // API services (ApiDbContext, auth, JWT, application services)
 builder.Services.AddApiServices(builder.Configuration, dataDir);
+
+// Discord enrichment client (bot token from config Discord:BotToken / env Discord__BotToken).
+builder.Services.AddHttpClient<DiscordClient>();
 
 // CORS — strict whitelist from configuration (no more AllowAnyOrigin).
 var corsOrigins = builder.Configuration.GetSection("Api:Cors:AllowedOrigins").Get<string[]>()
