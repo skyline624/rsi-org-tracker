@@ -44,7 +44,9 @@ builder.Services.AddCollectorDataServices(builder.Configuration, dataDir);
 // API services (ApiDbContext, auth, JWT, application services)
 builder.Services.AddApiServices(builder.Configuration, dataDir);
 
-// Discord enrichment client (bot token from config Discord:BotToken / env Discord__BotToken).
+// Discord enrichment client. Token stored in data/discord.token (editable from the
+// admin dashboard), falling back to config Discord:BotToken / env Discord__BotToken.
+builder.Services.AddSingleton<DiscordTokenStore>();
 builder.Services.AddHttpClient<DiscordClient>();
 
 // CORS — strict whitelist from configuration (no more AllowAnyOrigin).

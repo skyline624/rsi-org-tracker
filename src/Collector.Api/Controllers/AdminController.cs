@@ -17,12 +17,18 @@ public class AdminController : ControllerBase
     private readonly ApiDbContext _db;
     private readonly ActivityLogService _activityLog;
     private readonly AuthService _authService;
+    private readonly DiscordTokenStore _discordTokens;
 
-    public AdminController(ApiDbContext db, ActivityLogService activityLog, AuthService authService)
+    public AdminController(
+        ApiDbContext db,
+        ActivityLogService activityLog,
+        AuthService authService,
+        DiscordTokenStore discordTokens)
     {
         _db = db;
         _activityLog = activityLog;
         _authService = authService;
+        _discordTokens = discordTokens;
     }
 
     [HttpGet("users")]
@@ -194,5 +200,18 @@ public class AdminController : ControllerBase
             LastLoginAt = user.LastLoginAt,
             ApiKeyCount = 0,
         });
+    }
+
+    // --- Discord bot token (admin only). The token itself is never returned. ---
+
+    [HttpGet("discord-token")]
+    public async Task<ActionResult> GetDiscordTokenStatus(CancellationToken ct)
+        => Ok(new { configured = await _discordTokens.IsConfiguredAsync(ct) });
+
+    [HttpPut("discord-token")]
+    public async Task<IActionResult> SetDiscordToken([FromBody] SetDiscordTokenRequest request, CancellationToken ct)
+    {
+        await _discordTokens.SetAsync(request.Token, ct);
+        return Ok(new { configured = true });
     }
 }

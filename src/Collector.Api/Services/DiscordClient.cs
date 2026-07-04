@@ -1,15 +1,15 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Collector.Api.Dtos.Discord;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Collector.Api.Services;
 
 /// <summary>
 /// Minimal read-only client for the Discord REST API. Resolves a public user
-/// profile from a numeric id using a bot token (config key Discord:BotToken,
-/// env Discord__BotToken). No gateway, no intents, no server membership needed.
+/// profile from a numeric id using a bot token (read from <see cref="DiscordTokenStore"/>
+/// on each call, so a rotated token applies immediately). No gateway / intents /
+/// server membership needed.
 /// </summary>
 public class DiscordClient
 {
@@ -31,33 +31,31 @@ public class DiscordClient
     };
 
     private readonly HttpClient _http;
+    private readonly DiscordTokenStore _tokenStore;
     private readonly ILogger<DiscordClient> _logger;
-    private readonly bool _configured;
 
-    public DiscordClient(HttpClient http, IConfiguration config, ILogger<DiscordClient> logger)
+    public DiscordClient(HttpClient http, DiscordTokenStore tokenStore, ILogger<DiscordClient> logger)
     {
         _http = http;
+        _tokenStore = tokenStore;
         _logger = logger;
-
-        var token = config["Discord:BotToken"];
-        _configured = !string.IsNullOrWhiteSpace(token);
 
         _http.BaseAddress = new Uri("https://discord.com/api/v10/");
         _http.Timeout = TimeSpan.FromSeconds(8);
-        if (_configured)
-            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bot", token);
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("SC-Org-Tracker/1.0");
     }
-
-    public bool IsConfigured => _configured;
 
     /// <summary>Public profile for a Discord user id, or null if unknown / unconfigured / invalid.</summary>
     public async Task<DiscordUserDto?> GetUserAsync(string id, CancellationToken ct = default)
     {
-        if (!_configured || !ulong.TryParse(id, out _)) return null;
+        if (!ulong.TryParse(id, out _)) return null;
+        var token = await _tokenStore.GetAsync(ct);
+        if (string.IsNullOrWhiteSpace(token)) return null;
         try
         {
-            using var resp = await _http.GetAsync($"users/{id}", ct);
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"users/{id}");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bot", token);
+            using var resp = await _http.SendAsync(req, ct);
             if (!resp.IsSuccessStatusCode) return null;
 
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));

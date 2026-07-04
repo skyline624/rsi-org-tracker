@@ -1,12 +1,22 @@
 import { HudPanel } from "@/components/hud/HudPanel";
 import { HudBadge } from "@/components/hud/HudBadge";
 import { getSession } from "@/lib/auth/session";
+import { apiGet } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils/format";
 import { ChangePasswordForm } from "./ChangePasswordForm";
+import { DiscordTokenForm } from "./DiscordTokenForm";
 
 export default async function SettingsPage() {
   const session = await getSession();
   if (!session) return null; // layout already redirects
+
+  const discordConfigured = session.isAdmin
+    ? await apiGet<{ configured: boolean }>("/api/admin/discord-token", undefined, {
+        bearerToken: session.accessToken,
+      })
+        .then((r) => r.configured)
+        .catch(() => false)
+    : false;
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -56,6 +66,12 @@ export default async function SettingsPage() {
       <HudPanel label="SECURITY">
         <ChangePasswordForm />
       </HudPanel>
+
+      {session.isAdmin && (
+        <HudPanel label="BOT DISCORD" accent="orange">
+          <DiscordTokenForm initialConfigured={discordConfigured} />
+        </HudPanel>
+      )}
 
       <HudPanel label="SESSION TOKENS" accent="red">
         <form action="/api/auth/logout" method="post">
