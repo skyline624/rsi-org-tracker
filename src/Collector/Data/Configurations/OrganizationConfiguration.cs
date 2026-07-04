@@ -53,5 +53,10 @@ public class OrganizationConfiguration : IEntityTypeConfiguration<Organization>
         builder.Property(o => o.FocusSecondaryName).HasMaxLength(200);
         builder.Property(o => o.FocusSecondaryImage).HasMaxLength(2000);
         builder.Property(o => o.ContentCollected).HasDefaultValue(false);
+
+        builder.Property(o => o.Source)
+            .IsRequired()
+            .HasMaxLength(20)
+            .HasDefaultValue(OrganizationSource.Collected);
     }
 }

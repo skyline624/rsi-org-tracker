@@ -1,5 +1,5 @@
 "use client";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -8,7 +8,6 @@ import { HudButton } from "@/components/hud/HudButton";
 import { HudInput } from "@/components/hud/HudInput";
 
 export default function LoginPage() {
-  const router = useRouter();
   const params = useSearchParams();
   const from = params.get("from") ?? "/dashboard";
 
@@ -37,8 +36,10 @@ export default function LoginPage() {
         throw new Error(body.title ?? body.error ?? "Login failed");
       }
       toast.success("Session opened");
-      router.push(from);
-      router.refresh();
+      // Navigation pleine page : garantit l'envoi du cookie fraîchement posé et
+      // évite un cache RSC périmé qui renverrait vers /login.
+      const dest = from.startsWith("/") ? from : "/dashboard";
+      window.location.assign(dest);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -86,12 +87,6 @@ export default function LoginPage() {
           </div>
         </form>
       </HudPanel>
-      <p className="text-center font-mono text-[11px] uppercase tracking-[0.15em] text-hud-text-dim">
-        NOT REGISTERED?{" "}
-        <Link href="/register" className="text-hud-cyan hover:text-hud-orange">
-          ENLIST HERE
-        </Link>
-      </p>
     </div>
   );
 }

@@ -4,28 +4,33 @@ import { COOKIE_ACCESS } from "@/lib/auth/cookies";
 /**
  * Middleware racine Next.js.
  *
- * Rôle : bloquer l'accès aux routes "(user)" quand l'utilisateur n'a pas
- * de cookie `sct_access`. On ne vérifie PAS la signature ici — juste la
- * présence. Les accès effectifs à l'API re-valident le token.
- *
- * Les pages admin (v2) seraient à ajouter ici avec un décodage du JWT.
+ * Le site est PRIVÉ : toutes les pages exigent un cookie `sct_access`, à
+ * l'exception des pages d'authentification publiques ci-dessous. On ne vérifie
+ * ici que la présence du cookie — l'API re-valide la signature du token, et les
+ * rôles (admin) sont appliqués côté API.
  */
 
-const PROTECTED_PREFIXES = ["/dashboard", "/favorites", "/settings"];
+// Seules ces routes sont accessibles sans compte.
+const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password"];
 
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
 
-  const needsAuth = PROTECTED_PREFIXES.some(
+  const isPublic = PUBLIC_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );
-  if (!needsAuth) return NextResponse.next();
+  if (isPublic) return NextResponse.next();
 
-  const hasAccess = req.cookies.has(COOKIE_ACCESS);
-  if (hasAccess) return NextResponse.next();
+  if (req.cookies.has(COOKIE_ACCESS)) return NextResponse.next();
 
-  // Redirect vers /login avec le "from" pour revenir après
-  const loginUrl = new URL("/login", req.url);
+  // Redirect vers /login avec le "from" pour revenir après.
+  // Derrière nginx, req.url porte l'hôte interne (localhost:3000) ; on reconstruit
+  // l'URL à partir du Host / X-Forwarded-Proto transmis par le proxy pour que le
+  // navigateur atterrisse sur l'URL publique.
+  const host =
+    req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? req.nextUrl.host;
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  const loginUrl = new URL(`${proto}://${host}/login`);
   loginUrl.searchParams.set("from", pathname);
   return NextResponse.redirect(loginUrl);
 }
@@ -33,6 +38,6 @@ export function middleware(req: NextRequest): NextResponse {
 export const config = {
   // Exclure tous les assets statiques et les routes API propres à Next
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|fonts/|textures/|api/auth|$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|fonts/|textures/|api/auth).*)",
   ],
 };

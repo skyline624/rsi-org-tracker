@@ -92,6 +92,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ActivityLogService>();
         services.AddScoped<StatsService>();
 
+        // Audio files are stored under <dataDir>/audio (outside the DB).
+        services.AddSingleton(new AudioStorageService(Path.Combine(dataDir, "audio")));
+
         return services;
     }
 }

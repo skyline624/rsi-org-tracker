@@ -36,6 +36,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IUserHandleHistoryRepository, UserHandleHistoryRepository>();
         services.AddScoped<IUserEnrichmentQueueRepository, UserEnrichmentQueueRepository>();
         services.AddScoped<IChangeEventRepository, ChangeEventRepository>();
+        services.AddScoped<ITrackedEntityRepository, TrackedEntityRepository>();
+        services.AddScoped<IEntityNoteRepository, EntityNoteRepository>();
+        services.AddScoped<IEntityAudioRepository, EntityAudioRepository>();
+        services.AddScoped<IEntityMembershipRepository, EntityMembershipRepository>();
+
+        // Resolver lives in the data layer so both the collector and the API (which
+        // only calls AddCollectorDataServices) can resolve tracked entities.
+        services.AddScoped<IEntityResolver, EntityResolver>();
 
         return services;
     }

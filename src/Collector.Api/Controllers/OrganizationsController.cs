@@ -36,7 +36,7 @@ public class OrganizationsController : ControllerBase
                    o.Archetype, o.Lang, o.Commitment, o.Recruiting, o.Roleplay,
                    o.MembersCount, o.Description, o.History, o.Manifesto, o.Charter,
                    o.FocusPrimaryName, o.FocusPrimaryImage, o.FocusSecondaryName,
-                   o.FocusSecondaryImage, o.ContentCollected
+                   o.FocusSecondaryImage, o.ContentCollected, o.Source
             FROM organizations AS o
             INNER JOIN (
                 SELECT Sid, MAX(Timestamp) AS MaxTs

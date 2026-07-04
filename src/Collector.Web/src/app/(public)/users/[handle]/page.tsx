@@ -15,6 +15,14 @@ import {
 import { ApiError } from "@/lib/api/errors";
 import type { OrganizationMemberDto } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
+import { getSession } from "@/lib/auth/session";
+import { apiGet } from "@/lib/api/client";
+import { NotesSection } from "./NotesSection";
+import { AudioSection } from "./AudioSection";
+import { MembershipsSection } from "./MembershipsSection";
+import type { NoteDto } from "./actions";
+import type { AudioDto } from "./audio-actions";
+import type { MembershipDto } from "./membership-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +71,30 @@ export default async function UserDetailPage({ params }: PageProps) {
     (c) =>
       c.oldValue !== "CITIZEN DOSSIER" && c.newValue !== "CITIZEN DOSSIER",
   );
+
+  // Notes attached to this citizen (auth required — empty if not logged in).
+  const session = await getSession();
+  const notes = session
+    ? await apiGet<NoteDto[]>(
+        `/api/users/${encodeURIComponent(handle)}/notes`,
+        undefined,
+        { bearerToken: session.accessToken },
+      ).catch(() => [] as NoteDto[])
+    : [];
+  const audio = session
+    ? await apiGet<AudioDto[]>(
+        `/api/users/${encodeURIComponent(handle)}/audio`,
+        undefined,
+        { bearerToken: session.accessToken },
+      ).catch(() => [] as AudioDto[])
+    : [];
+  const memberships = session
+    ? await apiGet<MembershipDto[]>(
+        `/api/users/${encodeURIComponent(handle)}/memberships`,
+        undefined,
+        { bearerToken: session.accessToken },
+      ).catch(() => [] as MembershipDto[])
+    : [];
 
   return (
     <div className="flex flex-col gap-8">
@@ -216,6 +248,27 @@ export default async function UserDetailPage({ params }: PageProps) {
           )}
         </HudPanel>
       </section>
+
+      <NotesSection
+        handle={handle}
+        initialNotes={notes}
+        currentUserId={session?.userId}
+        isAdmin={session?.isAdmin}
+      />
+
+      <AudioSection
+        handle={handle}
+        initialAudio={audio}
+        currentUserId={session?.userId}
+        isAdmin={session?.isAdmin}
+      />
+
+      <MembershipsSection
+        handle={handle}
+        initialMemberships={memberships}
+        currentUsername={session?.username}
+        isAdmin={session?.isAdmin}
+      />
     </div>
   );
 }

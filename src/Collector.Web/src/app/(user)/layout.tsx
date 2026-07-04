@@ -24,6 +24,7 @@ export default async function UserLayout({ children }: { children: ReactNode }) 
             { href: "/dashboard", label: "DASHBOARD" },
             { href: "/favorites", label: "FAVORITES" },
             { href: "/settings", label: "SETTINGS" },
+            { href: "/admin", label: "AJOUT" },
           ].map((it) => (
             <Link
               key={it.href}

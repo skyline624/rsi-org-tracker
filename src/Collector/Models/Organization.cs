@@ -91,4 +91,14 @@ public class Organization
 
     /// <summary>Whether extended content has been collected (Phase 2).</summary>
     public bool ContentCollected { get; set; }
+
+    /// <summary>Origin of this snapshot. See <see cref="OrganizationSource"/>.</summary>
+    public string Source { get; set; } = OrganizationSource.Collected;
+}
+
+/// <summary>Origin of an <see cref="Organization"/> snapshot.</summary>
+public static class OrganizationSource
+{
+    public const string Collected = "collected";
+    public const string Manual = "manual";
 }

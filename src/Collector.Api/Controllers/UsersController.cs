@@ -94,7 +94,21 @@ public class UsersController : ControllerBase
             WHERE m.UserHandle LIKE {1}
               AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle)
               AND NOT EXISTS (SELECT 1 FROM organization_members o
-                              WHERE o.UserHandle = m.UserHandle AND o.Timestamp > m.Timestamp)";
+                              WHERE o.UserHandle = m.UserHandle AND o.Timestamp > m.Timestamp)
+            UNION ALL
+            SELECT COALESCE(e.CitizenId, 0) AS CitizenId, e.CurrentHandle AS UserHandle, e.DisplayName,
+                   NULL AS UrlImage, NULL AS Bio, NULL AS Location, NULL AS Enlisted, e.UpdatedAt, 0 AS IsEnriched
+            FROM tracked_entities e
+            WHERE e.Source = 'manual' AND e.CurrentHandle IS NOT NULL
+              AND (e.CurrentHandle LIKE {0} ESCAPE '\' OR (e.DisplayName IS NOT NULL AND e.DisplayName LIKE {0} ESCAPE '\'))
+              AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = e.CurrentHandle)
+            UNION ALL
+            SELECT COALESCE(en.CitizenId, 0) AS CitizenId, en.CurrentHandle AS UserHandle, en.DisplayName,
+                   NULL AS UrlImage, NULL AS Bio, NULL AS Location, NULL AS Enlisted, en.UpdatedAt, 0 AS IsEnriched
+            FROM tracked_entities en
+            WHERE en.CurrentHandle IS NOT NULL
+              AND NOT (en.CurrentHandle LIKE {0} ESCAPE '\' OR (en.DisplayName IS NOT NULL AND en.DisplayName LIKE {0} ESCAPE '\'))
+              AND EXISTS (SELECT 1 FROM entity_notes nt WHERE nt.TrackedEntityId = en.Id AND nt.Body LIKE {0} ESCAPE '\')";
 
         var total = await _db.Database
             .SqlQueryRaw<int>($"SELECT COUNT(*) AS Value FROM ({union})", substring, prefix)

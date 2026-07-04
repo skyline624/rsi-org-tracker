@@ -21,6 +21,9 @@ public class AuthController : ControllerBase
         _currentUser = currentUser;
     }
 
+    // Le site est privé : l'inscription libre est fermée. Seul un administrateur
+    // authentifié peut créer de nouveaux comptes.
+    [Authorize(Policy = "AdminOnly")]
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request, CancellationToken ct)
     {

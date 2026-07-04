@@ -3,6 +3,7 @@ using System;
 using Collector.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Collector.Data.Migrations
 {
     [DbContext(typeof(TrackerDbContext))]
-    partial class TrackerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260703071419_AddEntityNotes")]
+    partial class AddEntityNotes
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.28");
@@ -112,105 +115,6 @@ namespace Collector.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("discovered_organizations", (string)null);
-                });
-
-            modelBuilder.Entity("Collector.Models.EntityAudio", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("AuthorApiUserId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("AuthorUsername")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<double?>("DurationSec")
-                        .HasColumnType("REAL");
-
-                    b.Property<string>("MimeType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("OriginalName")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("SizeBytes")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("StoredPath")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("TrackedEntityId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TrackedEntityId");
-
-                    b.ToTable("entity_audio", (string)null);
-                });
-
-            modelBuilder.Entity("Collector.Models.EntityMembership", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("AuthorApiUserId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("AuthorUsername")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("OrgSid")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Rank")
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("SinceDate")
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("TrackedEntityId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Via")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("discord");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OrgSid");
-
-                    b.HasIndex("TrackedEntityId");
-
-                    b.HasIndex("TrackedEntityId", "OrgSid")
-                        .IsUnique();
-
-                    b.ToTable("entity_memberships", (string)null);
                 });
 
             modelBuilder.Entity("Collector.Models.EntityNote", b =>

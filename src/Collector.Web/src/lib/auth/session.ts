@@ -23,6 +23,7 @@ interface JwtPayload {
   sub?: string;
   nameid?: string;
   name?: string;
+  unique_name?: string;
   email?: string;
   role?: string | string[];
   "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"?: string;
@@ -67,7 +68,7 @@ export async function getSession(): Promise<Session | null> {
   const name =
     payload[
       "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"
-    ] ?? payload.name;
+    ] ?? payload.name ?? payload.unique_name;
   const email =
     payload[
       "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
