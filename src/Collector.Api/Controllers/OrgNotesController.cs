@@ -34,6 +34,9 @@ public class OrgNotesController : ControllerBase
     [HttpPost("organizations/{sid}/notes")]
     public async Task<ActionResult<OrgNoteDto>> CreateNote(string sid, [FromBody] CreateOrgNoteRequest req, CancellationToken ct)
     {
+        // Canonicalise the SID to upper-case (project convention) so validation and
+        // storage match regardless of the capitalisation in the URL.
+        sid = sid.Trim().ToUpperInvariant();
         var org = await _orgs.GetLatestBySidAsync(sid, ct);
         if (org is null) return NotFound(new { message = "Unknown organization." });
 

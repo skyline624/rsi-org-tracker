@@ -18,6 +18,7 @@ import { getSession } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api/client";
 import { OrgNotesSection } from "./OrgNotesSection";
 import { QuickAddMember } from "./QuickAddMember";
+import { ManualMembersPanel, type OrgManualMember } from "./ManualMembersPanel";
 import type { OrgNoteDto } from "./org-note-actions";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +65,13 @@ export default async function OrgDetailPage({ params }: PageProps) {
         undefined,
         { bearerToken: session.accessToken },
       ).catch(() => [] as OrgNoteDto[])
+    : [];
+  const manualMembers = session
+    ? await apiGet<OrgManualMember[]>(
+        `/api/organizations/${encodeURIComponent(sid)}/manual-members`,
+        undefined,
+        { bearerToken: session.accessToken },
+      ).catch(() => [] as OrgManualMember[])
     : [];
 
   return (
@@ -146,6 +154,8 @@ export default async function OrgDetailPage({ params }: PageProps) {
       </section>
 
       <QuickAddMember sid={sid} />
+
+      <ManualMembersPanel members={manualMembers} />
 
       {/* Members + Changes */}
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">

@@ -54,11 +54,34 @@ public class MembershipsController : ControllerBase
         return Ok(rows.Select(r => ToDto(r, names.TryGetValue(r.OrgSid, out var o) ? o.Name : null)).ToList());
     }
 
+    [HttpGet("organizations/{sid}/manual-members")]
+    public async Task<ActionResult<IReadOnlyList<OrgMemberDto>>> GetManualOrgMembers(string sid, CancellationToken ct)
+    {
+        var rows = await _memberships.GetByOrgSidAsync(sid, ct);
+        if (rows.Count == 0) return Ok(Array.Empty<OrgMemberDto>());
+
+        var result = new List<OrgMemberDto>(rows.Count);
+        foreach (var r in rows)
+        {
+            var e = await _entities.GetByIdAsync(r.TrackedEntityId, ct);
+            if (e?.CurrentHandle is null) continue;
+            result.Add(new OrgMemberDto
+            {
+                Handle = e.CurrentHandle,
+                DisplayName = e.DisplayName,
+                Rank = r.Rank,
+                Via = r.Via,
+                SinceDate = r.SinceDate,
+            });
+        }
+        return Ok(result);
+    }
+
     [HttpPost("users/{handle}/memberships")]
     public async Task<ActionResult<MembershipDto>> CreateMembership(
         string handle, [FromBody] CreateMembershipRequest req, CancellationToken ct)
     {
-        var sid = req.OrgSid.Trim();
+        var sid = req.OrgSid.Trim().ToUpperInvariant();
         var via = string.IsNullOrWhiteSpace(req.Via) ? MembershipVia.Discord : req.Via.Trim().ToLowerInvariant();
         if (!MembershipVia.IsValid(via))
             return BadRequest(new { message = "Via must be one of: rsi, discord, both." });

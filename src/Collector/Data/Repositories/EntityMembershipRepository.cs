@@ -13,8 +13,16 @@ public class EntityMembershipRepository : Repository<EntityMembership>, IEntityM
             .OrderByDescending(m => m.SinceDate)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<EntityMembership>> GetByOrgSidAsync(string orgSid, CancellationToken ct = default)
+        // Case-insensitive on the SID: the org page may be reached under any capitalisation.
+        => await DbSet.AsNoTracking()
+            .Where(m => m.OrgSid.ToLower() == orgSid.ToLower())
+            .OrderByDescending(m => m.SinceDate)
+            .ToListAsync(ct);
+
     public async Task<EntityMembership?> GetByEntityAndOrgAsync(long entityId, string orgSid, CancellationToken ct = default)
-        => await DbSet.FirstOrDefaultAsync(m => m.TrackedEntityId == entityId && m.OrgSid == orgSid, ct);
+        => await DbSet.FirstOrDefaultAsync(
+            m => m.TrackedEntityId == entityId && m.OrgSid.ToLower() == orgSid.ToLower(), ct);
 
     public void Remove(EntityMembership membership) => DbSet.Remove(membership);
 }

@@ -11,5 +11,8 @@ public class TrackedEntityRepository : Repository<TrackedEntity>, ITrackedEntity
         => await DbSet.FirstOrDefaultAsync(e => e.CitizenId == citizenId, ct);
 
     public async Task<TrackedEntity?> GetByHandleAsync(string handle, CancellationToken ct = default)
-        => await DbSet.FirstOrDefaultAsync(e => e.CurrentHandle == handle, ct);
+        // Case-insensitive: handles are matched regardless of capitalisation, so a
+        // person is resolved (and not duplicated) whether accessed as "zeno1" or "Zeno1".
+        => await DbSet.FirstOrDefaultAsync(
+            e => e.CurrentHandle != null && e.CurrentHandle.ToLower() == handle.ToLower(), ct);
 }

@@ -82,11 +82,16 @@ public class UsersController : ControllerBase
         var prefixTerm = search.Trim().Replace("%", "");
         var prefix = prefixTerm.Length == 0 ? "" : prefixTerm + "%";
 
+        // Numeric term → also match by citizen id (enriched users + tracked entities).
+        // -1 can never match a real citizen id (all are > 0), so a non-numeric term is a no-op here.
+        var citizenId = int.TryParse(search.Trim(), out var cid) && cid > 0 ? cid : -1;
+
         // Shared UNION body. {0} = substring pattern (enriched), {1} = prefix pattern (members).
         const string union = @"
             SELECT CitizenId, UserHandle, DisplayName, UrlImage, Bio, Location, Enlisted, UpdatedAt, 1 AS IsEnriched
             FROM users
             WHERE UserHandle LIKE {0} ESCAPE '\' OR (DisplayName IS NOT NULL AND DisplayName LIKE {0} ESCAPE '\')
+               OR CitizenId = {2}
             UNION ALL
             SELECT 0 AS CitizenId, m.UserHandle, m.DisplayName, m.UrlImage,
                    NULL AS Bio, NULL AS Location, NULL AS Enlisted, m.Timestamp AS UpdatedAt, 0 AS IsEnriched
@@ -99,7 +104,7 @@ public class UsersController : ControllerBase
             SELECT COALESCE(e.CitizenId, 0) AS CitizenId, e.CurrentHandle AS UserHandle, e.DisplayName,
                    NULL AS UrlImage, NULL AS Bio, NULL AS Location, NULL AS Enlisted, e.UpdatedAt, 0 AS IsEnriched
             FROM tracked_entities e
-            WHERE e.Source = 'manual' AND e.CurrentHandle IS NOT NULL
+            WHERE e.CurrentHandle IS NOT NULL
               AND (e.CurrentHandle LIKE {0} ESCAPE '\' OR (e.DisplayName IS NOT NULL AND e.DisplayName LIKE {0} ESCAPE '\'))
               AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = e.CurrentHandle)
             UNION ALL
@@ -108,15 +113,21 @@ public class UsersController : ControllerBase
             FROM tracked_entities en
             WHERE en.CurrentHandle IS NOT NULL
               AND NOT (en.CurrentHandle LIKE {0} ESCAPE '\' OR (en.DisplayName IS NOT NULL AND en.DisplayName LIKE {0} ESCAPE '\'))
-              AND EXISTS (SELECT 1 FROM entity_notes nt WHERE nt.TrackedEntityId = en.Id AND nt.Body LIKE {0} ESCAPE '\')";
+              AND EXISTS (SELECT 1 FROM entity_notes nt WHERE nt.TrackedEntityId = en.Id AND nt.Body LIKE {0} ESCAPE '\')
+            UNION ALL
+            SELECT ec.CitizenId, ec.CurrentHandle AS UserHandle, ec.DisplayName,
+                   NULL AS UrlImage, NULL AS Bio, NULL AS Location, NULL AS Enlisted, ec.UpdatedAt, 0 AS IsEnriched
+            FROM tracked_entities ec
+            WHERE ec.CitizenId = {2} AND ec.CurrentHandle IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = ec.CurrentHandle)";
 
         var total = await _db.Database
-            .SqlQueryRaw<int>($"SELECT COUNT(*) AS Value FROM ({union})", substring, prefix)
+            .SqlQueryRaw<int>($"SELECT COUNT(*) AS Value FROM ({union})", substring, prefix, citizenId)
             .SingleAsync(ct);
 
-        var pageSql = $"SELECT * FROM ({union}) ORDER BY UserHandle COLLATE NOCASE LIMIT {{2}} OFFSET {{3}}";
+        var pageSql = $"SELECT * FROM ({union}) ORDER BY UserHandle COLLATE NOCASE LIMIT {{3}} OFFSET {{4}}";
         var items = await _db.Database
-            .SqlQueryRaw<UserProfileDto>(pageSql, substring, prefix, pageSize, (page - 1) * pageSize)
+            .SqlQueryRaw<UserProfileDto>(pageSql, substring, prefix, citizenId, pageSize, (page - 1) * pageSize)
             .ToListAsync(ct);
 
         return PaginatedResponse<UserProfileDto>.Create(items, page, pageSize, total);

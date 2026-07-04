@@ -9,7 +9,7 @@ public class OrgNoteRepository : Repository<OrgNote>, IOrgNoteRepository
 
     public async Task<IReadOnlyList<OrgNote>> GetByOrgSidAsync(string orgSid, CancellationToken ct = default)
         => await DbSet.AsNoTracking()
-            .Where(n => n.OrgSid == orgSid)
+            .Where(n => n.OrgSid.ToLower() == orgSid.ToLower())
             .OrderByDescending(n => n.CreatedAt)
             .ToListAsync(ct);
 

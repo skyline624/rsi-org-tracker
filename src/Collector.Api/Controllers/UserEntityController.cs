@@ -51,6 +51,13 @@ public class UserEntityController : ControllerBase
         if (holder is not null && holder.Id != entity.Id)
             return Conflict(new { message = $"Le citizen id {req.CitizenId} est déjà attribué à une autre personne." });
 
+        // Also refuse a citizen id already carried by a COLLECTED profile under a
+        // different handle — that would mean the value belongs to someone else.
+        var collidingUser = await _users.GetByCitizenIdAsync(req.CitizenId, ct);
+        if (collidingUser is not null
+            && !string.Equals(collidingUser.UserHandle, handle, StringComparison.OrdinalIgnoreCase))
+            return Conflict(new { message = $"Le citizen id {req.CitizenId} appartient déjà au profil collecté « {collidingUser.UserHandle} »." });
+
         entity.CitizenId = req.CitizenId;
         entity.UpdatedAt = DateTime.UtcNow;
         await _entities.SaveChangesAsync(ct);

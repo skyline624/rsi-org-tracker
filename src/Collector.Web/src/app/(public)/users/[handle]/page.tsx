@@ -16,6 +16,7 @@ import { ApiError } from "@/lib/api/errors";
 import type { OrganizationMemberDto } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
 import { UserAnnotations } from "./UserAnnotations";
+import { apiGet } from "@/lib/api/client";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,21 @@ export default async function UserDetailPage({ params }: PageProps) {
         return (
           <div className="flex flex-col gap-8">
             <PartialUserProfile handle={handle} orgs={knownOrgs} />
+            <UserAnnotations handle={handle} canSetCitizenId />
+          </div>
+        );
+      }
+      // Not in the collected roster either, but a tracked entity may exist
+      // (added manually via a membership, note, audio or link) — show it too.
+      const entity = await apiGet<{ id: number } | null>(
+        `/api/users/${encodeURIComponent(handle)}/entity`,
+        undefined,
+        { serverSide: true },
+      ).catch(() => null);
+      if (entity) {
+        return (
+          <div className="flex flex-col gap-8">
+            <PartialUserProfile handle={handle} orgs={[]} />
             <UserAnnotations handle={handle} canSetCitizenId />
           </div>
         );
@@ -223,7 +239,7 @@ export default async function UserDetailPage({ params }: PageProps) {
         </HudPanel>
       </section>
 
-      <UserAnnotations handle={handle} />
+      <UserAnnotations handle={handle} canSetCitizenId={!user.citizenId} />
     </div>
   );
 }
