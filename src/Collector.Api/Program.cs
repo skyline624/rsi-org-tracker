@@ -35,8 +35,9 @@ builder.Host.UseSerilog((ctx, sp, cfg) => cfg
     .Enrich.WithThreadId()
     .Enrich.WithProperty("Application", "Collector.Api"));
 
-// Data directory is one level above the bin folder (mirrors the Collector convention).
-var dataDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../..", "data"));
+// Data directory: COLLECTOR_DATA_DIR, else config DataDir, else the data folder above
+// the bin folder (mirrors the Collector convention).
+var dataDir = Collector.Extensions.DataDirectory.ResolveForCurrentProcess(builder.Configuration["DataDir"]);
 
 // Data layer (TrackerDbContext + repositories)
 builder.Services.AddCollectorDataServices(builder.Configuration, dataDir);
@@ -46,7 +47,7 @@ builder.Services.AddApiServices(builder.Configuration, dataDir);
 
 // Discord enrichment client. Token stored in data/discord.token (editable from the
 // admin dashboard), falling back to config Discord:BotToken / env Discord__BotToken.
-builder.Services.AddSingleton<DiscordTokenStore>();
+builder.Services.AddSingleton(sp => new DiscordTokenStore(sp.GetRequiredService<IConfiguration>(), dataDir));
 builder.Services.AddHttpClient<DiscordClient>();
 
 // CORS — strict whitelist from configuration (no more AllowAnyOrigin).

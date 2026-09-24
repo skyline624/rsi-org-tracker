@@ -8,8 +8,8 @@ using Serilog;
 
 try
 {
-    // Data directory is always at project root (one level above the bin folder)
-    var dataDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../..", "data"));
+    // Data directory: COLLECTOR_DATA_DIR, else the data folder above the bin folder.
+    var dataDir = DataDirectory.ResolveForCurrentProcess();
 
     // Create data directories before anything else (Serilog needs logs/ to exist)
     Directory.CreateDirectory(Path.Combine(dataDir, "logs"));

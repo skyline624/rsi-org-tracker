@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "lot-*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dotnet:
+    name: .NET build & tests
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore (locked)
+        run: dotnet restore Collector.sln --locked-mode
+
+      - name: Build
+        run: dotnet build Collector.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Collector.sln -c Release --no-build
+
+      - name: EF model matches migrations
+        env:
+          # Only needed so the API host can be built at design time; never a real secret.
+          COLLECTOR_API_Api__JwtSecret: ci-design-time-placeholder-0123456789abcdef
+          COLLECTOR_API_Api__AdminApiKey: ci-design-time-placeholder-0123456789
+        run: |
+          dotnet tool restore
+          dotnet ef migrations has-pending-model-changes --project src/Collector --context TrackerDbContext
+          dotnet ef migrations has-pending-model-changes --project src/Collector.Api --context ApiDbContext
+
+  web:
+    name: Web typecheck, tests & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/Collector.Web
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # pnpm version comes from the "packageManager" field of this file.
+          package_json_file: src/Collector.Web/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: src/Collector.Web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+        env:
+          API_BASE_URL: http://127.0.0.1:5000

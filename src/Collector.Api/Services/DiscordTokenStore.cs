@@ -13,10 +13,9 @@ public class DiscordTokenStore
     private readonly string _path;
     private readonly IConfiguration _config;
 
-    public DiscordTokenStore(IConfiguration config)
+    public DiscordTokenStore(IConfiguration config, string dataDir)
     {
         _config = config;
-        var dataDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../..", "data"));
         _path = Path.Combine(dataDir, "discord.token");
     }
 

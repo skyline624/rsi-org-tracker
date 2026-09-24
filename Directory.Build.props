@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Reproducible restores: packages.lock.json is committed and CI restores in locked mode. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>
