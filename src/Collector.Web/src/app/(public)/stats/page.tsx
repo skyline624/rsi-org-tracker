@@ -11,20 +11,23 @@ import {
   getStatsTimeline,
   getTopOrgs,
 } from "@/lib/api/endpoints";
+import { redirectIfUnauthorized, requireAuthCtx } from "@/lib/auth/server-api";
 import { formatRelative } from "@/lib/utils/format";
 
 export const revalidate = 120;
 
 export default async function StatsPage() {
   // On tolère que certains endpoints échouent ; chaque panel gère son propre cas vide.
-  const [overviewRes, timelineRes, topRes, archetypesRes, activityRes] =
-    await Promise.allSettled([
-      getStatsOverview({ serverSide: true }),
-      getStatsTimeline(30, { serverSide: true }),
-      getTopOrgs(10, { serverSide: true }),
-      getArchetypeStats({ serverSide: true }),
-      getMemberActivity(30, { serverSide: true }),
-    ]);
+  const ctx = await requireAuthCtx();
+  const results = await Promise.allSettled([
+    getStatsOverview(ctx),
+    getStatsTimeline(30, ctx),
+    getTopOrgs(10, ctx),
+    getArchetypeStats(ctx),
+    getMemberActivity(30, ctx),
+  ]);
+  redirectIfUnauthorized(results);
+  const [overviewRes, timelineRes, topRes, archetypesRes, activityRes] = results;
 
   const overview = overviewRes.status === "fulfilled" ? overviewRes.value : null;
   const timeline = timelineRes.status === "fulfilled" ? timelineRes.value : [];

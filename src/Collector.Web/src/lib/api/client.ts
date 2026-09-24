@@ -5,8 +5,9 @@ import { ApiError } from "./errors";
  * Fetch wrapper universel.
  *
  * Deux contextes :
- *   - **Serveur (RSC / route handlers)** : utilise l'API key interne
- *     (`process.env.API_INTERNAL_KEY`) côté `x-api-key`.
+ *   - **Serveur (RSC / route handlers / Server Actions)** : passe le JWT de
+ *     l'utilisateur (`bearerToken`). L'API valide la signature : aucune clé
+ *     de service n'est utilisée pour lire des données.
  *   - **Client navigateur** : passe le JWT via les cookies httpOnly qui sont
  *     posés par le BFF `/api/auth/*`. On `credentials: "include"` pour que les
  *     cookies soient envoyés cross-origin.
@@ -28,11 +29,6 @@ export interface FetchOptions {
   signal?: AbortSignal;
   /** Durée max, défaut 15 s. */
   timeoutMs?: number;
-  /**
-   * Si true, ajoute `x-api-key: API_INTERNAL_KEY` (contexte serveur).
-   * Si false, le navigateur enverra les cookies httpOnly seul.
-   */
-  serverSide?: boolean;
   /** JWT explicite à passer (contexte Bearer). */
   bearerToken?: string;
 }
@@ -61,7 +57,6 @@ export async function apiFetch<T>(
     headers = {},
     signal,
     timeoutMs = 15_000,
-    serverSide = false,
     bearerToken,
   } = opts;
 
@@ -76,11 +71,6 @@ export async function apiFetch<T>(
 
   if (body !== undefined) {
     finalHeaders["Content-Type"] = "application/json";
-  }
-
-  if (serverSide) {
-    const key = process.env.API_INTERNAL_KEY;
-    if (key) finalHeaders["x-api-key"] = key;
   }
 
   if (bearerToken) {
@@ -102,7 +92,7 @@ export async function apiFetch<T>(
       headers: finalHeaders,
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: controller.signal,
-      credentials: serverSide ? "omit" : "include",
+      credentials: bearerToken ? "omit" : "include",
       cache: "no-store",
     });
   } finally {

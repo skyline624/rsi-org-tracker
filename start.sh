@@ -53,7 +53,7 @@ fi
 
 if [ ! -f "$WEB_DIR/.env.local" ]; then
     echo "⚠  $WEB_DIR/.env.local absent — le frontend ne pourra pas joindre l'API." >&2
-    echo "   Copie .env.local.example et renseigne API_INTERNAL_KEY + SESSION_SECRET." >&2
+    echo "   Copie .env.local.example vers .env.local (API_BASE_URL)." >&2
 fi
 
 # ── Build .NET solution (optionnel) ────────────────────────

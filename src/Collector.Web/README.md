@@ -13,10 +13,8 @@ Frontend Next.js 15 au-dessus de `Collector.Api`. Thème cockpit HUD cyan/orange
 
 ```bash
 cp .env.local.example .env.local
-# Renseigne API_INTERNAL_KEY avec l'admin key du backend :
-#   cd ../Collector.Api && dotnet user-secrets list | grep AdminApiKey
-# Et SESSION_SECRET :
-#   openssl rand -hex 32
+# Aucune clé d'API à renseigner : les pages serveur appellent l'API avec le
+# JWT de l'utilisateur connecté.
 
 pnpm install
 pnpm dev
@@ -63,5 +61,5 @@ pnpm build && pnpm start
 ## Dépannage
 
 - **Erreur TLS au fetch de l'API en RSC** : vérifier `NODE_TLS_REJECT_UNAUTHORIZED=0` dans `.env.local` (dev only).
-- **401 partout** : l'API key dans `API_INTERNAL_KEY` doit être valide (≥ 24 char, pas `change-me*`).
+- **Redirection vers /login en boucle** : la session a expiré ou le JWT est refusé par l'API (vérifier `Api:JwtSecret` côté backend).
 - **CORS error** : vérifier `http://localhost:3000` dans `Collector.Api/appsettings.json` → `Api:Cors:AllowedOrigins`.

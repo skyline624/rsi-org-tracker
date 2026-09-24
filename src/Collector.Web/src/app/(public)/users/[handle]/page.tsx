@@ -17,6 +17,7 @@ import type { OrganizationMemberDto } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
 import { UserAnnotations } from "./UserAnnotations";
 import { apiGet } from "@/lib/api/client";
+import { requireAuthCtx, withAuthRedirect } from "@/lib/auth/server-api";
 
 export const dynamic = "force-dynamic";
 
@@ -26,18 +27,19 @@ interface PageProps {
 
 export default async function UserDetailPage({ params }: PageProps) {
   const { handle } = await params;
+  const ctx = await requireAuthCtx();
 
   let user;
   try {
-    user = await getUser(handle, { serverSide: true });
+    user = await withAuthRedirect(getUser(handle, ctx));
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
       // Profile not enriched (or wrongly stored under a parsed-out handle) —
       // fall back to partial view if the handle is known anywhere in
       // organization_members, including inactive (former) memberships.
-      const knownOrgs = await getUserOrgs(handle, true, {
-        serverSide: true,
-      }).catch(() => [] as OrganizationMemberDto[]);
+      const knownOrgs = await getUserOrgs(handle, true, ctx).catch(
+        () => [] as OrganizationMemberDto[],
+      );
       if (knownOrgs.length > 0) {
         return (
           <div className="flex flex-col gap-8">
@@ -51,7 +53,7 @@ export default async function UserDetailPage({ params }: PageProps) {
       const entity = await apiGet<{ id: number } | null>(
         `/api/users/${encodeURIComponent(handle)}/entity`,
         undefined,
-        { serverSide: true },
+        ctx,
       ).catch(() => null);
       if (entity) {
         return (
@@ -69,11 +71,11 @@ export default async function UserDetailPage({ params }: PageProps) {
   const [allOrgs, history, rawChanges] = await Promise.all([
     // include_inactive=true: surface former memberships too (e.g. orgs the
     // citizen left). UserOrgsTable shows a STATUS column to distinguish them.
-    getUserOrgs(handle, true, { serverSide: true }).catch(
+    getUserOrgs(handle, true, ctx).catch(
       () => [] as OrganizationMemberDto[],
     ),
-    getUserHandleHistory(handle, { serverSide: true }).catch(() => []),
-    getUserChanges(handle, 50, { serverSide: true }).catch(() => []),
+    getUserHandleHistory(handle, ctx).catch(() => []),
+    getUserChanges(handle, 50, ctx).catch(() => []),
   ]);
 
   const activeCount = allOrgs.filter((o) => o.isActive).length;

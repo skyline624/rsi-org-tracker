@@ -3,6 +3,7 @@ import { QuickAddOrg } from "./QuickAddOrg";
 import { OrgsTable } from "@/components/org/OrgsTable";
 import { Pagination } from "@/components/layout/Pagination";
 import { listOrgs } from "@/lib/api/endpoints";
+import { requireAuthCtx, withAuthRedirect } from "@/lib/auth/server-api";
 import { formatNumber } from "@/lib/utils/format";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +41,8 @@ export default async function OrgsPage({ searchParams }: PageProps) {
   const sortDir: "asc" | "desc" | undefined =
     sp.sortDir === "asc" || sp.sortDir === "desc" ? sp.sortDir : undefined;
 
-  const data = await listOrgs(
+  const ctx = await requireAuthCtx();
+  const data = await withAuthRedirect(listOrgs(
     {
       search: sp.search,
       archetype: sp.archetype,
@@ -56,8 +58,8 @@ export default async function OrgsPage({ searchParams }: PageProps) {
       sortBy: sortKey,
       sortDir: sortKey ? (sortDir ?? "asc") : undefined,
     },
-    { serverSide: true },
-  );
+    ctx,
+  ));
 
   const currentSort = sortKey
     ? { key: sortKey, dir: (sortDir ?? "asc") as "asc" | "desc" }

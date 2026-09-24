@@ -1,6 +1,6 @@
 /**
  * Fonctions typées par endpoint. Importées depuis les pages RSC et les hooks
- * TanStack Query. Le serveur passe `{ serverSide: true }` ; le client rien.
+ * TanStack Query. Le serveur passe le JWT de l'utilisateur (`{ bearerToken }`).
  */
 
 import { apiDelete, apiGet, apiPost, apiPut } from "./client";
@@ -28,7 +28,7 @@ import type {
   UserResolveDto,
 } from "./types";
 
-type Ctx = { serverSide?: boolean; bearerToken?: string };
+type Ctx = { bearerToken?: string };
 
 // ── Health ──────────────────────────────────────────────────
 export const getHealth = (ctx: Ctx = {}) =>

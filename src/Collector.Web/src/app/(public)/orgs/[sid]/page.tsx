@@ -15,6 +15,7 @@ import { ApiError } from "@/lib/api/errors";
 import type { OrganizationMemberDto } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
 import { getSession } from "@/lib/auth/session";
+import { requireAuthCtx, withAuthRedirect } from "@/lib/auth/server-api";
 import { apiGet } from "@/lib/api/client";
 import { OrgNotesSection } from "./OrgNotesSection";
 import { QuickAddMember } from "./QuickAddMember";
@@ -29,10 +30,11 @@ interface PageProps {
 
 export default async function OrgDetailPage({ params }: PageProps) {
   const { sid } = await params;
+  const ctx = await requireAuthCtx();
 
   let org;
   try {
-    org = await getOrg(sid, { serverSide: true });
+    org = await withAuthRedirect(getOrg(sid, ctx));
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
     throw err;
@@ -42,11 +44,11 @@ export default async function OrgDetailPage({ params }: PageProps) {
   // The API returns the latest snapshot per member with the IsActive flag so we
   // know whether they're still in the org or have since left.
   const [allMembers, growth, changes] = await Promise.all([
-    getOrgMembers(sid, { include_inactive: true }, { serverSide: true }).catch(
+    getOrgMembers(sid, { include_inactive: true }, ctx).catch(
       () => [] as OrganizationMemberDto[],
     ),
-    getOrgGrowth(sid, { serverSide: true }).catch(() => []),
-    getOrgMemberChanges(sid, 20, { serverSide: true }).catch(() => []),
+    getOrgGrowth(sid, ctx).catch(() => []),
+    getOrgMemberChanges(sid, 20, ctx).catch(() => []),
   ]);
 
   const members = allMembers.filter((m) => m.isActive);

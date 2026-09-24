@@ -6,10 +6,11 @@ import { toast } from "sonner";
 import { HudPanel } from "@/components/hud/HudPanel";
 import { HudButton } from "@/components/hud/HudButton";
 import { HudInput } from "@/components/hud/HudInput";
+import { safeInternalPath } from "@/lib/utils/safe-redirect";
 
 export default function LoginPage() {
   const params = useSearchParams();
-  const from = params.get("from") ?? "/dashboard";
+  const from = safeInternalPath(params.get("from"));
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,8 +39,7 @@ export default function LoginPage() {
       toast.success("Session opened");
       // Navigation pleine page : garantit l'envoi du cookie fraîchement posé et
       // évite un cache RSC périmé qui renverrait vers /login.
-      const dest = from.startsWith("/") ? from : "/dashboard";
-      window.location.assign(dest);
+      window.location.assign(from);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

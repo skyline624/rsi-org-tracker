@@ -8,6 +8,7 @@ import {
   getStatsOverview,
   listChanges,
 } from "@/lib/api/endpoints";
+import { redirectIfUnauthorized, requireAuthCtx } from "@/lib/auth/server-api";
 import { formatRelative, formatNumber } from "@/lib/utils/format";
 import { Activity, Database, Users, Radar } from "lucide-react";
 
@@ -17,11 +18,14 @@ export const revalidate = 60;
 async function fetchDashboardData() {
   // On tolère que certains appels échouent (l'API n'expose pas forcément tous
   // les endpoints stats encore) pour ne pas casser la home.
-  const [overview, cycle, recentChanges] = await Promise.allSettled([
-    getStatsOverview({ serverSide: true }),
-    getCycleStatus({ serverSide: true }),
-    listChanges({ limit: 100 }, { serverSide: true }),
+  const ctx = await requireAuthCtx();
+  const results = await Promise.allSettled([
+    getStatsOverview(ctx),
+    getCycleStatus(ctx),
+    listChanges({ limit: 100 }, ctx),
   ]);
+  redirectIfUnauthorized(results);
+  const [overview, cycle, recentChanges] = results;
 
   return {
     overview: overview.status === "fulfilled" ? overview.value : null,

@@ -15,12 +15,16 @@ import type { AuthResponse } from "@/lib/api/types";
  *   - `logout` → supprime les cookies après relais
  *   - autres (`forgot-password`, `reset-password`) → relais pur
  *
- * Le navigateur ne voit jamais les tokens : ils sont posés en `HttpOnly` et
- * le fetch côté client utilise `credentials: "include"` qui les renverra
+ * Le navigateur ne voit jamais les tokens : ils sont posés en `HttpOnly`, et
+ * retirés du corps renvoyé (seuls `user` et `expiresAt` sont relayés). Le
+ * fetch côté client utilise `credentials: "include"` qui renverra les cookies
  * automatiquement pour les appels au même host.
  */
 
 const API_BASE = process.env.API_BASE_URL ?? "https://localhost:5001";
+
+// Les réponses d'auth ne doivent jamais être mises en cache (proxy, navigateur).
+const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 // Les segments de route qui existent côté API .NET.
 const ALLOWED_SEGMENTS = new Set([
@@ -51,7 +55,7 @@ async function handle(
   const { route } = await ctx.params;
   const segment = route[0];
   if (!segment || !ALLOWED_SEGMENTS.has(segment)) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
   }
 
   // Pour `me`, on relit le JWT depuis le cookie et on le pose en Authorization.
@@ -63,7 +67,7 @@ async function handle(
   if (isMe) {
     const access = req.cookies.get(COOKIE_ACCESS)?.value;
     if (!access) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: NO_STORE });
     }
     headers["Authorization"] = `Bearer ${access}`;
   }
@@ -76,7 +80,7 @@ async function handle(
   if (segment === "refresh" && (!body || body === "")) {
     const rt = req.cookies.get(COOKIE_REFRESH)?.value;
     if (!rt) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: NO_STORE });
     }
     finalBody = JSON.stringify({ refreshToken: rt });
   }
@@ -92,49 +96,54 @@ async function handle(
       method,
       headers,
       body: finalBody,
-      // accept self-signed cert in dev
-      // @ts-expect-error — Next/Node 20+ supports this via env var only
-      rejectUnauthorized: false,
     });
-  } catch (e) {
+  } catch {
     return NextResponse.json(
-      { title: "Upstream unreachable", detail: String(e) },
-      { status: 502 },
+      { title: "Upstream unreachable" },
+      { status: 502, headers: NO_STORE },
     );
   }
 
   const text = await upstream.text();
-  const response = new NextResponse(text, {
-    status: upstream.status,
-    headers: {
-      "Content-Type":
-        upstream.headers.get("content-type") ?? "application/json",
-    },
-  });
+  let responseBody = text;
+  let auth: AuthResponse | null = null;
 
-  // Post login/register/refresh — extraire AuthResponse et poser cookies.
+  // Post login/register/refresh — extraire AuthResponse pour poser les cookies.
   if (
     upstream.ok &&
     (segment === "login" || segment === "refresh" || segment === "register")
   ) {
     try {
-      const auth = JSON.parse(text) as AuthResponse;
+      const parsed = JSON.parse(text) as AuthResponse;
       // `register` renvoie UserDto, pas AuthResponse — skip si pas de token.
-      if (auth?.accessToken && auth?.refreshToken && auth?.expiresAt) {
-        response.cookies.set(
-          COOKIE_ACCESS,
-          auth.accessToken,
-          accessCookieOptions(new Date(auth.expiresAt)),
-        );
-        response.cookies.set(
-          COOKIE_REFRESH,
-          auth.refreshToken,
-          refreshCookieOptions(),
-        );
+      if (parsed?.accessToken && parsed?.refreshToken && parsed?.expiresAt) {
+        auth = parsed;
+        responseBody = JSON.stringify({
+          user: parsed.user,
+          expiresAt: parsed.expiresAt,
+        });
       }
     } catch {
       /* body non-JSON — laisser tel quel */
     }
+  }
+
+  const response = new NextResponse(responseBody, {
+    status: upstream.status,
+    headers: {
+      ...NO_STORE,
+      "Content-Type":
+        upstream.headers.get("content-type") ?? "application/json",
+    },
+  });
+
+  if (auth) {
+    response.cookies.set(
+      COOKIE_ACCESS,
+      auth.accessToken,
+      accessCookieOptions(new Date(auth.expiresAt)),
+    );
+    response.cookies.set(COOKIE_REFRESH, auth.refreshToken, refreshCookieOptions());
   }
 
   // Post logout — clear cookies quelle que soit la réponse upstream.

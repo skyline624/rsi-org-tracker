@@ -3,6 +3,7 @@ import { QuickAddUser } from "./QuickAddUser";
 import { UsersTable } from "@/components/user/UsersTable";
 import { Pagination } from "@/components/layout/Pagination";
 import { listUsers } from "@/lib/api/endpoints";
+import { requireAuthCtx, withAuthRedirect } from "@/lib/auth/server-api";
 import { formatNumber } from "@/lib/utils/format";
 
 export const dynamic = "force-dynamic";
@@ -16,9 +17,9 @@ export default async function UsersPage({ searchParams }: PageProps) {
   const page = Number(sp.page ?? "1") || 1;
   const pageSize = 30;
 
-  const data = await listUsers(
-    { search: sp.search, page, pageSize },
-    { serverSide: true },
+  const ctx = await requireAuthCtx();
+  const data = await withAuthRedirect(
+    listUsers({ search: sp.search, page, pageSize }, ctx),
   );
 
   return (
