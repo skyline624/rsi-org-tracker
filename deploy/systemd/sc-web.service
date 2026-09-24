@@ -1,0 +1,19 @@
+[Unit]
+Description=SC Org Tracker - Web (Next.js standalone)
+After=network-online.target sc-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/sc-tracker/current/web
+EnvironmentFile=/etc/sc-tracker/web.env
+ExecStart=/usr/bin/node /home/ubuntu/sc-tracker/current/web/server.js
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

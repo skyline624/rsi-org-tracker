@@ -1,0 +1,23 @@
+[Unit]
+Description=SC Org Tracker - Collector (collection loop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/sc-tracker/current/collector
+EnvironmentFile=/etc/sc-tracker/collector.env
+ExecStart=/home/ubuntu/.dotnet/dotnet /home/ubuntu/sc-tracker/current/collector/Collector.dll
+Restart=always
+RestartSec=10
+# The collection loop only listens to Ctrl+C (SIGINT) until lot 8 moves it to the
+# generic host; give an in-flight organisation time to commit.
+KillSignal=SIGINT
+TimeoutStopSec=120
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Release builds (deploy/deploy.sh, CI) set NEXT_OUTPUT=standalone to get a
+  // self-contained server (.next/standalone/server.js) that runs from its release
+  // directory without the source tree. Off by default: tracing uses symlinks,
+  // which Windows refuses without Developer Mode.
+  output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   reactStrictMode: true,
   poweredByHeader: false,
   // RSI CDN hosts avatars and org banners. Allow them through next/image optimisation.

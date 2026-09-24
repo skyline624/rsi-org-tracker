@@ -70,6 +70,30 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm build
+
+      - name: Build (standalone, as deploy.sh does)
+        run: pnpm build
         env:
+          NEXT_OUTPUT: standalone
           API_BASE_URL: http://127.0.0.1:5000
+
+      - name: Standalone server starts from a release-like directory
+        run: |
+          release=$(mktemp -d)
+          cp -a .next/standalone/. "$release/"
+          mkdir -p "$release/.next" && cp -a .next/static "$release/.next/static"
+          (cd "$release" && PORT=3100 HOSTNAME=127.0.0.1 API_BASE_URL=http://127.0.0.1:5000 node server.js &)
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/login || true)
+            [ "$code" = 200 ] && exit 0
+            sleep 1
+          done
+          echo "standalone server did not answer 200 on /login (last: $code)"; exit 1
+
+  deploy-scripts:
+    name: Deploy scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: for f in deploy/*.sh deploy/tests/*.sh; do bash -n "$f"; done
+      - run: bash deploy/tests/test-rollback.sh

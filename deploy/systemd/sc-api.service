@@ -1,0 +1,19 @@
+[Unit]
+Description=SC Org Tracker - API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/sc-tracker/current/api
+EnvironmentFile=/etc/sc-tracker/api.env
+ExecStart=/home/ubuntu/.dotnet/dotnet /home/ubuntu/sc-tracker/current/api/Collector.Api.dll
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
