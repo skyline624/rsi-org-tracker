@@ -43,6 +43,7 @@ public class AdminController : ControllerBase
         pageSize = Paging.PageSize(pageSize);
         var total = await _db.ApiUsers.CountAsync(ct);
         var users = await _db.ApiUsers
+            .AsNoTracking()
             .Include(u => u.ApiKeys)
             .OrderBy(u => u.Id)
             .Skip((page - 1) * pageSize)

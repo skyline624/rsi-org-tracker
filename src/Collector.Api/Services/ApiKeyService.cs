@@ -55,6 +55,7 @@ public class ApiKeyService
     public async Task<IReadOnlyList<ApiKeyDto>> ListAsync(long userId, CancellationToken ct = default)
     {
         var keys = await _db.ApiKeys
+            .AsNoTracking()
             .Where(k => k.ApiUserId == userId)
             .OrderByDescending(k => k.CreatedAt)
             .ToListAsync(ct);

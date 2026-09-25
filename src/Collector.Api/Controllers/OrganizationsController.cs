@@ -231,7 +231,7 @@ public class OrganizationsController : ControllerBase
         [FromQuery] DateTime? to,
         CancellationToken ct = default)
     {
-        var query = _db.Organizations.Where(o => o.Sid == sid.ToUpperInvariant());
+        var query = _db.Organizations.AsNoTracking().Where(o => o.Sid == sid.ToUpperInvariant());
         if (from.HasValue) query = query.Where(o => o.Timestamp >= from.Value.ToUniversalTime());
         if (to.HasValue) query = query.Where(o => o.Timestamp <= to.Value.ToUniversalTime());
 

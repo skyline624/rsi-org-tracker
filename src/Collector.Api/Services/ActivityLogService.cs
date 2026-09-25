@@ -32,6 +32,7 @@ public class ActivityLogService
         int page, int pageSize, long? userId = null, CancellationToken ct = default)
     {
         var query = _db.ActivityLogs
+            .AsNoTracking()
             .Include(l => l.ApiUser)
             .AsQueryable();
 

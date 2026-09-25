@@ -21,6 +21,7 @@ public class UsersController : ControllerBase
     private readonly IUserHandleHistoryRepository _handleHistoryRepo;
     private readonly IOrganizationMemberRepository _memberRepo;
     private readonly IChangeEventRepository _changeRepo;
+    private readonly IOrganizationRepository _orgRepo;
     private readonly TrackerDbContext _db;
 
     public UsersController(
@@ -28,8 +29,10 @@ public class UsersController : ControllerBase
         IUserHandleHistoryRepository handleHistoryRepo,
         IOrganizationMemberRepository memberRepo,
         IChangeEventRepository changeRepo,
+        IOrganizationRepository orgRepo,
         TrackerDbContext db)
     {
+        _orgRepo = orgRepo;
         _userRepo = userRepo;
         _handleHistoryRepo = handleHistoryRepo;
         _memberRepo = memberRepo;
@@ -231,12 +234,7 @@ public class UsersController : ControllerBase
         // Resolve the latest known name for each org so the frontend can show
         // "SID — Name" instead of just the SID.
         var orgSids = memberships.Select(m => m.OrgSid).Distinct().ToList();
-        var orgNames = await _db.Organizations
-            .AsNoTracking()
-            .Where(o => orgSids.Contains(o.Sid))
-            .GroupBy(o => o.Sid)
-            .Select(g => g.OrderByDescending(o => o.Timestamp).First())
-            .ToDictionaryAsync(o => o.Sid, o => o.Name, ct);
+        var orgNames = await _orgRepo.GetLatestNamesBySidsAsync(orgSids, ct);
 
         return Ok(memberships
             .Select(m => m.ToDto(
