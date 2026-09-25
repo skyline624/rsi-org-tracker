@@ -1,19 +1,54 @@
 using Collector.Data;
 using Collector.Api.Dtos.Stats;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Collector.Api.Services;
 
+/// <summary>
+/// Statistics pages. Each figure scans the large tables (0.5-1.4 s on production
+/// data), so results are cached for <see cref="CacheDuration"/> per method and parameters.
+/// </summary>
 public class StatsService
 {
-    private readonly TrackerDbContext _db;
+    public static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(10);
 
-    public StatsService(TrackerDbContext db)
+    private readonly TrackerDbContext _db;
+    private readonly IMemoryCache _cache;
+
+    public StatsService(TrackerDbContext db, IMemoryCache cache)
     {
         _db = db;
+        _cache = cache;
     }
 
-    public async Task<StatsOverviewDto> GetOverviewAsync(CancellationToken ct = default)
+    public Task<StatsOverviewDto> GetOverviewAsync(CancellationToken ct = default)
+        => CachedAsync("stats:overview", () => ComputeOverviewAsync(ct));
+
+    public Task<IReadOnlyList<TimelinePointDto>> GetTimelineAsync(int days = 30, CancellationToken ct = default)
+        => CachedAsync($"stats:timeline:{days}", () => ComputeTimelineAsync(days, ct));
+
+    public Task<IReadOnlyList<OrganizationTopDto>> GetTopOrganizationsAsync(int limit = 10, CancellationToken ct = default)
+        => CachedAsync($"stats:top:{limit}", () => ComputeTopOrganizationsAsync(limit, ct));
+
+    public Task<IReadOnlyList<ArchetypeStatsDto>> GetArchetypesAsync(CancellationToken ct = default)
+        => CachedAsync("stats:archetypes", () => ComputeArchetypesAsync(ct));
+
+    public Task<IReadOnlyList<MemberActivityDto>> GetMemberActivityAsync(int days = 30, CancellationToken ct = default)
+        => CachedAsync($"stats:activity:{days}", () => ComputeMemberActivityAsync(days, ct));
+
+    private async Task<T> CachedAsync<T>(string key, Func<Task<T>> compute) where T : class
+    {
+        if (_cache.TryGetValue(key, out T? cached) && cached != null)
+        {
+            return cached;
+        }
+        var value = await compute();
+        _cache.Set(key, value, CacheDuration);
+        return value;
+    }
+
+    private async Task<StatsOverviewDto> ComputeOverviewAsync(CancellationToken ct)
     {
         var orgCount = await _db.Organizations.Select(o => o.Sid).Distinct().CountAsync(ct);
         var userCount = await _db.Users.CountAsync(ct);
@@ -27,7 +62,7 @@ public class StatsService
         };
     }
 
-    public async Task<IReadOnlyList<TimelinePointDto>> GetTimelineAsync(int days = 30, CancellationToken ct = default)
+    private async Task<IReadOnlyList<TimelinePointDto>> ComputeTimelineAsync(int days, CancellationToken ct)
     {
         var since = DateTime.UtcNow.AddDays(-days);
         return await _db.ChangeEvents
@@ -38,7 +73,7 @@ public class StatsService
             .ToListAsync(ct);
     }
 
-    public async Task<IReadOnlyList<OrganizationTopDto>> GetTopOrganizationsAsync(int limit = 10, CancellationToken ct = default)
+    private async Task<IReadOnlyList<OrganizationTopDto>> ComputeTopOrganizationsAsync(int limit, CancellationToken ct)
     {
         // Raw SQL: avoids materializing 103k Organization objects
         var sql = $"""
@@ -78,7 +113,7 @@ public class StatsService
         return results;
     }
 
-    public async Task<IReadOnlyList<ArchetypeStatsDto>> GetArchetypesAsync(CancellationToken ct = default)
+    private async Task<IReadOnlyList<ArchetypeStatsDto>> ComputeArchetypesAsync(CancellationToken ct)
     {
         const string sql = """
             SELECT COALESCE(o.Archetype, 'Unknown') AS Archetype, COUNT(*) AS Count
@@ -115,7 +150,7 @@ public class StatsService
         return results;
     }
 
-    public async Task<IReadOnlyList<MemberActivityDto>> GetMemberActivityAsync(int days = 30, CancellationToken ct = default)
+    private async Task<IReadOnlyList<MemberActivityDto>> ComputeMemberActivityAsync(int days, CancellationToken ct)
     {
         var since = DateTime.UtcNow.AddDays(-days);
 

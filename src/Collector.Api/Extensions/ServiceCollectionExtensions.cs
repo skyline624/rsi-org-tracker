@@ -88,6 +88,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<RefreshTokenCleanupService>();
         services.AddScoped<ApiKeyService>();
         services.AddScoped<ActivityLogService>();
+        services.AddMemoryCache();
         services.AddScoped<StatsService>();
 
         // Audio files are stored under <dataDir>/audio (outside the DB).
