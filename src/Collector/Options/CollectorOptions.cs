@@ -16,7 +16,8 @@ public class CollectorOptions
     public TimeSpan ErrorDelay { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// Base delay between API requests (rate limiting).
+    /// Minimum delay between two RSI request starts, for the whole process
+    /// (cycle phases and Phase 4 worker share it).
     /// </summary>
     public double RateLimitDelaySeconds { get; set; } = 0.5;
 
@@ -31,7 +32,7 @@ public class CollectorOptions
     public int BatchSize { get; set; } = 100;
 
     /// <summary>
-    /// Maximum concurrent API requests.
+    /// Maximum RSI requests in flight at once, for the whole process.
     /// </summary>
     public int MaxConcurrentRequests { get; set; } = 5;
 
@@ -90,4 +91,16 @@ public class CollectorOptions
     /// the threshold (or after a poison-batch back-off). Default: 5 minutes.
     /// </summary>
     public TimeSpan Phase4IdleInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Shared pause after RSI throttles a request (HTTP 403/429/503 or ErrApiThrottled).
+    /// Doubles on each new throttle episode up to <see cref="MaxThrottlePauseSeconds"/>.
+    /// </summary>
+    public double ThrottlePauseSeconds { get; set; } = 30;
+
+    /// <summary>Upper bound of the shared throttle pause.</summary>
+    public double MaxThrottlePauseSeconds { get; set; } = 300;
+
+    /// <summary>Timeout of one RSI request, counted once the request leaves the rate gate.</summary>
+    public double RequestTimeoutSeconds { get; set; } = 30;
 }

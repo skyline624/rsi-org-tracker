@@ -126,7 +126,7 @@ public class UserCollector : IUserCollector
         ct.ThrowIfCancellationRequested();
 
         // ── Fetch profiles concurrently ───────────────────────────────
-        // GetUserProfileResultAsync handles its own semaphore (MaxConcurrentRequests slots)
+        // The shared RsiRateGate caps concurrency (MaxConcurrentRequests) and pacing
         var fetchTasks = pending
             .Select(item => FetchProfileResultSafeAsync(item.UserHandle, ct))
             .ToList();

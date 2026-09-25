@@ -261,7 +261,7 @@ public class OrganizationCollector : IOrganizationCollector
             var latestOrgs = await _orgRepo.GetLatestBySidsAsync(batch.Select(d => d.Sid), ct);
 
             // ── Fetch pages concurrently ──────────────────────────────────
-            // GetOrgPageHtmlAsync handles its own semaphore (MaxConcurrentRequests slots)
+            // The shared RsiRateGate caps concurrency (MaxConcurrentRequests) and pacing
             var fetchTasks = batch.Select(org => FetchPageSafeAsync(org.Sid, ct)).ToList();
             var fetchResults = await Task.WhenAll(fetchTasks);
 

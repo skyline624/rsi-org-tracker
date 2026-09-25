@@ -1,11 +1,13 @@
 using Collector.Data;
 using Collector.Data.Repositories;
+using Collector.Http;
 using Collector.Options;
 using Collector.Parsers;
 using Collector.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace Collector.Extensions;
@@ -78,12 +80,19 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MemberHtmlParser>();
         services.AddSingleton<UserProfileHtmlParser>();
 
-        // HTTP Client with Polly
+        // RSI HTTP client. One RsiRateGate for the whole process (pacing, concurrency,
+        // shared throttle pause); every typed-client instance goes through it.
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<RsiRateGate>();
+        services.AddTransient<RsiThrottlingHandler>();
         services.AddHttpClient<IRsiApiClient, RsiApiClient>(client =>
-        {
-            client.DefaultRequestHeaders.Add("User-Agent", "SC-Organizations-Tracker/2.0");
-            client.Timeout = TimeSpan.FromMinutes(5);
-        });
+            {
+                client.DefaultRequestHeaders.Add("User-Agent", "SC-Organizations-Tracker/2.0");
+                // No client-wide timeout: it would count the time queued in the gate.
+                // RsiThrottlingHandler times each request (RequestTimeoutSeconds) instead.
+                client.Timeout = Timeout.InfiniteTimeSpan;
+            })
+            .AddHttpMessageHandler<RsiThrottlingHandler>();
 
         // Services
         services.AddScoped<IOrganizationCollector, OrganizationCollector>();

@@ -36,6 +36,12 @@ public class CollectorOptionsValidator : IValidateOptions<CollectorOptions>
             failures.Add($"{nameof(CollectorOptions.MetadataRefreshIntervalHours)} must be > 0.");
         if (options.MaxEnrichmentAttempts <= 0)
             failures.Add($"{nameof(CollectorOptions.MaxEnrichmentAttempts)} must be > 0.");
+        if (options.ThrottlePauseSeconds <= 0)
+            failures.Add($"{nameof(CollectorOptions.ThrottlePauseSeconds)} must be > 0.");
+        if (options.MaxThrottlePauseSeconds < options.ThrottlePauseSeconds)
+            failures.Add($"{nameof(CollectorOptions.MaxThrottlePauseSeconds)} must be >= {nameof(CollectorOptions.ThrottlePauseSeconds)}.");
+        if (options.RequestTimeoutSeconds <= 0)
+            failures.Add($"{nameof(CollectorOptions.RequestTimeoutSeconds)} must be > 0.");
         if (options.DiscoverSortMethods == null || options.DiscoverSortMethods.Length == 0)
             failures.Add($"{nameof(CollectorOptions.DiscoverSortMethods)} cannot be empty.");
 
