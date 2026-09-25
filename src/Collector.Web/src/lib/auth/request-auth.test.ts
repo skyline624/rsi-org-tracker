@@ -44,6 +44,29 @@ describe("authenticateRequest", () => {
     expect(res.status).toBe(307);
   });
 
+  it("hands extra request headers (CSP nonce) to the page on every pass-through", async () => {
+    const extra = { "content-security-policy-report-only": "script-src 'nonce-n1'" };
+    const passes = [
+      await authenticateRequest(request("/login"), deps({}), extra),
+      await authenticateRequest(
+        request("/orgs", { sct_access: "good" }),
+        deps({ good: { sub: "1", exp: nowSec() + 600 } }),
+        extra,
+      ),
+      await authenticateRequest(
+        request("/orgs", { sct_refresh: "rt-csp" }),
+        deps({}, { accessToken: "a", refreshToken: "r", expiresAt: new Date(Date.now() + 900_000).toISOString() }),
+        extra,
+      ),
+    ];
+
+    for (const res of passes) {
+      expect(res.headers.get("x-middleware-request-content-security-policy-report-only")).toBe(
+        "script-src 'nonce-n1'",
+      );
+    }
+  });
+
   it("redirects to the public /login URL when there is no session", async () => {
     const res = await authenticateRequest(request("/orgs/OPPF"), deps({}));
 

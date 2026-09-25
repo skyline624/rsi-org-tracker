@@ -1,6 +1,7 @@
 import type { NextRequest, NextResponse } from "next/server";
 import { verifyAccessToken } from "@/lib/auth/jwt";
 import { authenticateRequest, type RefreshedTokens } from "@/lib/auth/request-auth";
+import { buildCsp, newNonce } from "@/lib/security/csp";
 
 /**
  * Middleware racine Next.js.
@@ -36,11 +37,20 @@ async function refreshWithApi(
   };
 }
 
-export function middleware(req: NextRequest): Promise<NextResponse> {
-  return authenticateRequest(req, {
-    verify: (token) => verifyAccessToken(token),
-    refresh: refreshWithApi,
-  });
+// Report-Only first: violations are reported by browsers without breaking pages.
+// Switch to "content-security-policy" once the console stays clean.
+const CSP_HEADER = "content-security-policy-report-only";
+
+export async function middleware(req: NextRequest): Promise<NextResponse> {
+  const csp = buildCsp(newNonce(), { dev: process.env.NODE_ENV !== "production" });
+  const res = await authenticateRequest(
+    req,
+    { verify: (token) => verifyAccessToken(token), refresh: refreshWithApi },
+    // Next.js reads the nonce from this request header and stamps it on its scripts.
+    { [CSP_HEADER]: csp },
+  );
+  res.headers.set(CSP_HEADER, csp);
+  return res;
 }
 
 export const config = {

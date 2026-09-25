@@ -73,11 +73,26 @@ function loginRedirect(req: NextRequest) {
   return res;
 }
 
-function withTokens(req: NextRequest, tokens: RefreshedTokens) {
+/** Extra headers handed to the page with the request (e.g. the CSP carrying the nonce). */
+export type ForwardedHeaders = Record<string, string>;
+
+function requestHeaders(req: NextRequest, extra: ForwardedHeaders) {
+  const headers = new Headers(req.headers);
+  for (const [name, value] of Object.entries(extra)) headers.set(name, value);
+  return headers;
+}
+
+function pass(req: NextRequest, extra: ForwardedHeaders) {
+  return Object.keys(extra).length === 0
+    ? NextResponse.next()
+    : NextResponse.next({ request: { headers: requestHeaders(req, extra) } });
+}
+
+function withTokens(req: NextRequest, tokens: RefreshedTokens, extra: ForwardedHeaders) {
   const cookies = req.cookies;
   cookies.set(COOKIE_ACCESS, tokens.accessToken);
   cookies.set(COOKIE_REFRESH, tokens.refreshToken);
-  const headers = new Headers(req.headers);
+  const headers = requestHeaders(req, extra);
   headers.set("cookie", cookies.toString());
 
   const res = NextResponse.next({ request: { headers } });
@@ -93,23 +108,24 @@ function withTokens(req: NextRequest, tokens: RefreshedTokens) {
 export async function authenticateRequest(
   req: NextRequest,
   deps: AuthDeps,
+  extra: ForwardedHeaders = {},
 ): Promise<NextResponse> {
-  if (isPublic(req.nextUrl.pathname)) return NextResponse.next();
+  if (isPublic(req.nextUrl.pathname)) return pass(req, extra);
 
   const access = req.cookies.get(COOKIE_ACCESS)?.value;
   const refresh = req.cookies.get(COOKIE_REFRESH)?.value;
 
   const payload = access ? await deps.verify(access) : null;
   const secondsLeft = payload?.exp ? payload.exp - Math.floor(Date.now() / 1000) : 0;
-  if (payload && secondsLeft > REFRESH_MARGIN_SECONDS) return NextResponse.next();
+  if (payload && secondsLeft > REFRESH_MARGIN_SECONDS) return pass(req, extra);
 
   if (refresh) {
     const clientIp = firstForwardedIp(req.headers.get("x-forwarded-for"));
     const tokens = await refreshOnce(refresh, clientIp, deps);
-    if (tokens) return withTokens(req, tokens);
+    if (tokens) return withTokens(req, tokens, extra);
   }
 
   // Refresh impossible : un token encore valide quelques secondes reste utilisable.
-  if (payload && secondsLeft > 0) return NextResponse.next();
+  if (payload && secondsLeft > 0) return pass(req, extra);
   return loginRedirect(req);
 }
