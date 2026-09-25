@@ -19,6 +19,27 @@ public sealed class MigrateModeTests : IDisposable
     [Fact]
     public async Task MigrateMode_AppliesTheMigrationsAndExits()
     {
+        var (exited, exitCode, output) = await RunMigrateAsync("Development");
+
+        exited.Should().BeTrue("--migrate must exit instead of starting the collection loop");
+        exitCode.Should().Be(0, output);
+        await using var db = new TrackerDbContext(new DbContextOptionsBuilder<TrackerDbContext>()
+            .UseSqlite($"Data Source={Path.Combine(_dataDir, "tracker.db")};Pooling=False").Options);
+        (await db.Database.GetPendingMigrationsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task InProduction_AMissingDatabaseStopsTheCollector_InsteadOfStartingAnEmptyOne()
+    {
+        var (exited, exitCode, output) = await RunMigrateAsync("Production");
+
+        exited.Should().BeTrue();
+        exitCode.Should().NotBe(0, output);
+        File.Exists(Path.Combine(_dataDir, "tracker.db")).Should().BeFalse();
+    }
+
+    private async Task<(bool Exited, int ExitCode, string Output)> RunMigrateAsync(string environment)
+    {
         Directory.CreateDirectory(_dataDir);
         var start = new ProcessStartInfo(
             Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet",
@@ -29,7 +50,7 @@ public sealed class MigrateModeTests : IDisposable
             UseShellExecute = false,
         };
         start.Environment["COLLECTOR_DATA_DIR"] = _dataDir;
-        start.Environment["DOTNET_ENVIRONMENT"] = "Development";
+        start.Environment["DOTNET_ENVIRONMENT"] = environment;
         // Should the mode be missing, the collection loop must not reach RSI from a test.
         start.Environment["HTTPS_PROXY"] = "http://127.0.0.1:9";
         start.Environment["HTTP_PROXY"] = "http://127.0.0.1:9";
@@ -38,12 +59,7 @@ public sealed class MigrateModeTests : IDisposable
         var output = process.StandardOutput.ReadToEndAsync();
         var exited = process.WaitForExit(TimeSpan.FromSeconds(60));
         if (!exited) process.Kill(entireProcessTree: true);
-
-        exited.Should().BeTrue("--migrate must exit instead of starting the collection loop");
-        process.ExitCode.Should().Be(0, await output);
-        await using var db = new TrackerDbContext(new DbContextOptionsBuilder<TrackerDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_dataDir, "tracker.db")};Pooling=False").Options);
-        (await db.Database.GetPendingMigrationsAsync()).Should().BeEmpty();
+        return (exited, exited ? process.ExitCode : -1, await output);
     }
 
     public void Dispose()

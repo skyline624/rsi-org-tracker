@@ -34,6 +34,7 @@ builder.Host.UseSerilog((ctx, sp, cfg) => cfg
 // Data directory: COLLECTOR_DATA_DIR, else config DataDir, else the data folder above
 // the bin folder (mirrors the Collector convention).
 var dataDir = Collector.Extensions.DataDirectory.ResolveForCurrentProcess(builder.Configuration["DataDir"]);
+Collector.Extensions.DataDirectory.EnsureExistingDatabase(dataDir, builder.Environment.IsProduction());
 
 // Data layer (TrackerDbContext + repositories)
 builder.Services.AddCollectorDataServices(builder.Configuration, dataDir);

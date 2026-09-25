@@ -10,6 +10,9 @@ try
 {
     // Data directory: COLLECTOR_DATA_DIR, else the data folder above the bin folder.
     var dataDir = DataDirectory.ResolveForCurrentProcess();
+    // Same environment the host is about to read (DOTNET_ENVIRONMENT, Production by default).
+    DataDirectory.EnsureExistingDatabase(dataDir, production:
+        (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? Environments.Production) == Environments.Production);
 
     // Create data directories before anything else (Serilog needs logs/ to exist)
     Directory.CreateDirectory(Path.Combine(dataDir, "logs"));

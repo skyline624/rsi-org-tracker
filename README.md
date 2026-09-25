@@ -172,7 +172,7 @@ Fichiers `/etc/sc-tracker/{api,web,collector}.env` (modèles dans `deploy/env/`)
 
 | Service | Variable | Rôle |
 |---|---|---|
-| tous (.NET) | `COLLECTOR_DATA_DIR` | dossier de `tracker.db`, `api.db`, `logs/`, `audio/` |
+| tous (.NET) | `COLLECTOR_DATA_DIR` | dossier de `tracker.db`, `api.db`, `logs/`, `audio/` ; en Production, le collector et l'API refusent de démarrer s'il ne contient pas `tracker.db` (jamais de base vide créée par erreur) |
 | API | `ASPNETCORE_URLS` | `http://127.0.0.1:5000` |
 | API | `ASPNETCORE_ENVIRONMENT` | `Production` (pas de Swagger ni de détail d'erreur) |
 | API | `COLLECTOR_API_Api__Jwt__PrivateKeyPath` | clé RSA ≥ 2048 bits, mode 0600 |
