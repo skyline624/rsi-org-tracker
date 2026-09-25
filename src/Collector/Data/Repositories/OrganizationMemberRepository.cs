@@ -56,34 +56,6 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
             .ToListAsync(ct);
     }
 
-    public async Task<IReadOnlyList<string>> GetKnownHandlesAsync(CancellationToken ct = default)
-    {
-        return await DbSet
-            .Select(m => m.UserHandle)
-            .Distinct()
-            .ToListAsync(ct);
-    }
-
-    public async Task<Dictionary<string, OrganizationMember>> GetLatestByOrgSidAsync(string orgSid, CancellationToken ct = default)
-    {
-        // Same window-function trick as GetByOrgSidAsync — see its comment.
-        var members = await DbSet
-            .FromSqlInterpolated($@"
-                SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
-                       Rank, RolesJson, UrlImage, IsActive
-                FROM (
-                    SELECT *,
-                           ROW_NUMBER() OVER (PARTITION BY UserHandle ORDER BY Timestamp DESC) AS _rn
-                    FROM organization_members
-                    WHERE OrgSid = {orgSid}
-                )
-                WHERE _rn = 1")
-            .AsNoTracking()
-            .ToListAsync(ct);
-
-        return members.ToDictionary(m => m.UserHandle);
-    }
-
     public async Task UpdateCitizenIdByHandleAsync(string handle, int citizenId, CancellationToken ct = default)
     {
         await DbSet

@@ -22,13 +22,6 @@ public readonly record struct EnrichBatchResult(int Enriched, int Gone, int Defe
 {
     /// <summary>Total rows pulled from the queue and handled in this batch.</summary>
     public int Processed => Enriched + Gone + Deferred + Failed;
-
-    /// <summary>
-    /// Rows that made durable progress out of the pending set (enriched, parked as
-    /// gone, or spent a retry attempt). Excludes <see cref="Deferred"/>, which stay
-    /// pending by design — used by drain loops to detect "only n/a rows left".
-    /// </summary>
-    public int Advanced => Enriched + Gone + Failed;
 }
 
 /// <summary>
@@ -36,13 +29,6 @@ public readonly record struct EnrichBatchResult(int Enriched, int Gone, int Defe
 /// </summary>
 public interface IUserCollector
 {
-    /// <summary>
-    /// Phase 4 (legacy): drains the enrichment queue end-to-end. Kept as a thin
-    /// loop around <see cref="EnrichBatchAsync"/> for one-shot/test use; live
-    /// runs are driven by <c>Phase4Worker</c> instead.
-    /// </summary>
-    Task<int> EnrichAllUsersAsync(CancellationToken ct = default);
-
     /// <summary>
     /// Processes a single batch from the enrichment queue (sized by
     /// <c>MaxConcurrentRequests * 2</c>). Returns a per-outcome breakdown of the
@@ -98,23 +84,6 @@ public class UserCollector : IUserCollector
         _profileParser = profileParser;
         _logger = logger;
         _options = options.Value;
-    }
-
-    public async Task<int> EnrichAllUsersAsync(CancellationToken ct = default)
-    {
-        _logger.LogInformation("Starting user enrichment (drain mode)");
-        var totalEnriched = 0;
-        while (true)
-        {
-            var batch = await EnrichBatchAsync(ct);
-            // Stop when a batch makes no durable progress: the queue is empty, or
-            // only deferred "n/a" rows remain — which would otherwise re-fetch
-            // forever since deferral never spends an attempt.
-            if (batch.Advanced == 0) break;
-            totalEnriched += batch.Enriched;
-        }
-        _logger.LogInformation("User enrichment drain complete: {Count} users enriched", totalEnriched);
-        return totalEnriched;
     }
 
     public async Task<EnrichBatchResult> EnrichBatchAsync(CancellationToken ct = default)

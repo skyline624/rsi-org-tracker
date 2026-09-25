@@ -73,11 +73,6 @@ public class UserEnrichmentQueueRepository : Repository<UserEnrichmentQueue>, IU
         }
     }
 
-    public async Task<bool> IsQueuedAsync(string userHandle, CancellationToken ct = default)
-    {
-        return await DbSet.AnyAsync(q => q.UserHandle == userHandle && !q.Enriched, ct);
-    }
-
     public async Task<int> CountPendingAsync(int maxAttempts = int.MaxValue, CancellationToken ct = default)
     {
         return await DbSet

@@ -15,14 +15,6 @@ public class OrganizationRepository : Repository<Organization>, IOrganizationRep
             .FirstOrDefaultAsync(ct);
     }
 
-    public async Task<IReadOnlyList<Organization>> GetHistoryBySidAsync(string sid, CancellationToken ct = default)
-    {
-        return await DbSet
-            .Where(o => o.Sid == sid)
-            .OrderByDescending(o => o.Timestamp)
-            .ToListAsync(ct);
-    }
-
     public async Task<IReadOnlyList<OrganizationListing>> GetLatestListingsAsync(CancellationToken ct = default)
     {
         // Latest timestamp per SID, joined back to its row; both sides use the

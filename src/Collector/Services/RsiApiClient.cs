@@ -37,14 +37,6 @@ public interface IRsiApiClient
         CancellationToken ct = default);
 
     /// <summary>
-    /// Gets all organizations using pagination.
-    /// </summary>
-    Task<IReadOnlyList<OrganizationData>> GetAllOrganizationsAsync(
-        string[] sortMethods,
-        int pageSize = 12,
-        CancellationToken ct = default);
-
-    /// <summary>
     /// Gets a page of members for an organization.
     /// </summary>
     Task<(IReadOnlyList<MemberData> Members, int TotalRows)?> GetOrganizationMembersAsync(
@@ -72,13 +64,6 @@ public interface IRsiApiClient
     /// </summary>
     Task<OrgPageFetchResult> GetOrgPageHtmlAsync(
         string sid,
-        CancellationToken ct = default);
-
-    /// <summary>
-    /// Gets a user's profile page HTML.
-    /// </summary>
-    Task<string?> GetUserProfileHtmlAsync(
-        string handle,
         CancellationToken ct = default);
 
     /// <summary>
@@ -318,50 +303,6 @@ public class RsiApiClient : IRsiApiClient
         return organizations;
     }
 
-    public async Task<IReadOnlyList<OrganizationData>> GetAllOrganizationsAsync(
-        string[] sortMethods,
-        int pageSize = 12,
-        CancellationToken ct = default)
-    {
-        var allOrganizations = new Dictionary<string, OrganizationData>();
-
-        foreach (var sortMethod in sortMethods)
-        {
-            _logger.LogInformation("Discovering organizations with sort: {SortMethod}", sortMethod);
-
-            var page = 1;
-            var emptyPages = 0;
-
-            while (emptyPages < _options.EmptyPagesThreshold)
-            {
-                var orgs = await GetOrganizationsAsync(page, "", sortMethod, pageSize, ct);
-                if (orgs == null || orgs.Count == 0)
-                {
-                    emptyPages++;
-                    page++;
-                    continue;
-                }
-
-                emptyPages = 0;
-                foreach (var org in orgs)
-                {
-                    allOrganizations[org.Sid] = org;
-                }
-
-                if (page % 10 == 0)
-                {
-                    _logger.LogInformation(
-                        "Discovery progress: page {Page}, {Count} organizations found so far",
-                        page, allOrganizations.Count);
-                }
-
-                page++;
-            }
-        }
-
-        return allOrganizations.Values.ToList();
-    }
-
     public async Task<(IReadOnlyList<MemberData> Members, int TotalRows)?> GetOrganizationMembersAsync(
         string orgSymbol,
         int page = 1,
@@ -481,9 +422,6 @@ public class RsiApiClient : IRsiApiClient
             _ => new OrgPageFetchResult(null, OrgPageFetchOutcome.Failed),
         };
     }
-
-    public async Task<string?> GetUserProfileHtmlAsync(string handle, CancellationToken ct = default)
-        => (await GetUserProfileResultAsync(handle, ct)).Html;
 
     public async Task<UserProfileFetchResult> GetUserProfileResultAsync(string handle, CancellationToken ct = default)
     {

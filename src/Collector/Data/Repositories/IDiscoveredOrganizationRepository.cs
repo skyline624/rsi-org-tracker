@@ -4,9 +4,7 @@ namespace Collector.Data.Repositories;
 
 public interface IDiscoveredOrganizationRepository : IRepository<DiscoveredOrganization>
 {
-    Task<bool> ExistsAsync(string sid, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetAllSidsAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<DiscoveredOrganization>> GetAllUnprocessedAsync(CancellationToken ct = default);
     /// <summary>Returns orgs that have no organizations row with Timestamp >= since (not yet enriched this cycle), excluding tombstoned orgs.</summary>
     Task<IReadOnlyList<DiscoveredOrganization>> GetStaleAsync(DateTime since, CancellationToken ct = default);
 
@@ -15,8 +13,6 @@ public interface IDiscoveredOrganizationRepository : IRepository<DiscoveredOrgan
 
     /// <summary>Records that Phase 3 just collected this organization.</summary>
     Task MarkMembersCollectedAsync(string sid, DateTime when, CancellationToken ct = default);
-    Task MarkProcessedAsync(string sid, CancellationToken ct = default);
-
     /// <summary>
     /// Atomically increments ConsecutiveNotFoundCount and sets DeadAt when the
     /// new count reaches <paramref name="deadThreshold"/>. Returns true if the

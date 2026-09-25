@@ -17,11 +17,6 @@ public class UserRepository : Repository<User>, IUserRepository
         return await DbSet.FirstOrDefaultAsync(u => u.UserHandle == handle, ct);
     }
 
-    public async Task<bool> ExistsAsync(int citizenId, CancellationToken ct = default)
-    {
-        return await DbSet.AnyAsync(u => u.CitizenId == citizenId, ct);
-    }
-
     public async Task<Dictionary<string, string?>> GetDisplayNamesByHandlesAsync(IReadOnlyList<string> handles, CancellationToken ct = default)
     {
         if (handles.Count == 0) return new(StringComparer.OrdinalIgnoreCase);
@@ -43,14 +38,5 @@ public class UserRepository : Repository<User>, IUserRepository
                 g => g.Key,
                 g => g.OrderByDescending(r => r.UpdatedAt).First().DisplayName,
                 StringComparer.OrdinalIgnoreCase);
-    }
-
-    public async Task<IReadOnlyList<string>> GetExistingHandlesAsync(IReadOnlyList<string> handles, CancellationToken ct = default)
-    {
-        if (handles.Count == 0) return Array.Empty<string>();
-        return await DbSet
-            .Where(u => handles.Contains(u.UserHandle))
-            .Select(u => u.UserHandle)
-            .ToListAsync(ct);
     }
 }

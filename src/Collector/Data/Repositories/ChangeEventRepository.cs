@@ -24,12 +24,4 @@ public class ChangeEventRepository : Repository<ChangeEvent>, IChangeEventReposi
             .Take(limit)
             .ToListAsync(ct);
     }
-
-    public async Task<IReadOnlyList<ChangeEvent>> GetRecentAsync(int limit = 100, CancellationToken ct = default)
-    {
-        return await DbSet
-            .OrderByDescending(c => c.Timestamp)
-            .Take(limit)
-            .ToListAsync(ct);
-    }
 }

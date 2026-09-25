@@ -23,8 +23,6 @@ public interface IUserEnrichmentQueueRepository : IRepository<UserEnrichmentQueu
     /// </summary>
     Task DeferAsync(long id, string? reason, CancellationToken ct = default);
 
-    Task<bool> IsQueuedAsync(string userHandle, CancellationToken ct = default);
-
     /// <summary>
     /// Counts entries with Enriched=0 and AttemptCount &lt; <paramref name="maxAttempts"/>.
     /// Used by Phase4Worker to decide between idle and drain.
