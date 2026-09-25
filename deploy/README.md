@@ -90,6 +90,42 @@ secours : Tailscale ou console KVM OVH).
 6. **Vérification** depuis l'extérieur : `nmap -Pn -p 22,80,443,3000,5000,5001,5173 <IP>` —
    seuls 22, 80 et 443 ouverts ; `curl -skI https://<IP>/ | grep -i x-content-type`.
 
+## Maintenance de la base (lot 11)
+
+À faire seulement quand les lots 9 et 10 tournent en production depuis au moins un
+cycle complet : l'ancien code recréerait aussitôt les lignes purgées. Supprimer des
+lignes est irréversible ; seule la sauvegarde permet de revenir en arrière.
+
+1. **Sauvegarde vérifiée** (méthode du 24/09) : collector arrêté,
+   `PRAGMA wal_checkpoint(TRUNCATE)`, copie en flux `pigz` vers le poste local, contrôle sha256.
+2. `sudo systemctl stop sc-collector` (l'API peut rester en marche, elle ne fait que lire).
+3. Commande, avec l'environnement du service :
+
+   ```bash
+   cd /home/ubuntu/sc-tracker/current/collector
+   set -a; . /etc/sc-tracker/collector.env; set +a
+   M="/home/ubuntu/.dotnet/dotnet Collector.dll --maintenance"
+   $M measure                                   # ce que chaque purge supprimerait
+   $M purge content-null-events --dry-run       # puis sans --dry-run
+   $M purge member-count-repeats
+   $M purge queue-enriched
+   $M purge queue-terminal
+   $M check                                     # doit afficher « quick_check: ok »
+   $M measure                                   # comptes après, et pages libres
+   ```
+
+   Répétition sur la copie du 24/09 : 1,15 M événements en 31 s, 64 k en 5 s,
+   5,3 M lignes de file en 6 min, 116 k en 8 s ; `check` 82 s.
+   Chaque purge s'arrête d'elle-même si le WAL reste au-dessus de 1 Gio après un
+   checkpoint, ou s'il reste moins de 3 Gio de disque : relancer la même commande
+   reprend là où elle s'est arrêtée.
+4. `sudo systemctl start sc-collector`.
+
+Pas de VACUUM : les pages libérées vont dans la freelist (ligne « freelist pages » de
+`measure`) et la base les réutilise en grossissant. Les événements `rank_changed` et
+`roles_changed` du parser v1 et les départs en rafale des rosters tronqués sont
+seulement mesurés.
+
 ## Tests
 
 `deploy/tests/test-rollback.sh` vérifie la bascule et le retour arrière avec
