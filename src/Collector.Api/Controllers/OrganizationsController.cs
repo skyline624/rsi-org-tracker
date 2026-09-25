@@ -149,7 +149,15 @@ public class OrganizationsController : ControllerBase
             }
         }
 
-        return Ok(MapOrg(org));
+        var dto = MapOrg(org);
+        var checks = await _db.DiscoveredOrganizations
+            .AsNoTracking()
+            .Where(d => d.Sid == sid)
+            .Select(d => new { d.ContentCheckedAt, d.LastMembersCollectedAt })
+            .FirstOrDefaultAsync(ct);
+        dto.ContentCheckedAt = checks?.ContentCheckedAt;
+        dto.MembersCollectedAt = checks?.LastMembersCollectedAt;
+        return Ok(dto);
     }
 
     /// <summary>

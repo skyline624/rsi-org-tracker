@@ -73,6 +73,10 @@ export interface OrganizationDto {
   description?: string | null;
   focusPrimaryName?: string | null;
   focusSecondaryName?: string | null;
+  /** Detail only: last read of the org page (Phase 2), changed or not. */
+  contentCheckedAt?: string | null;
+  /** Detail only: last read of the roster (Phase 3). */
+  membersCollectedAt?: string | null;
 }
 
 export interface OrganizationMemberDto {

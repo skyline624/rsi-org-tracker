@@ -14,6 +14,7 @@ import {
 import { ApiError } from "@/lib/api/errors";
 import type { OrganizationMemberDto, PaginatedResponse } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
+import { lastChecked } from "@/lib/utils/last-checked";
 import { getSession } from "@/lib/auth/session";
 import { requireAuthCtx, withAuthRedirect } from "@/lib/auth/server-api";
 import { apiGet } from "@/lib/api/client";
@@ -107,7 +108,7 @@ export default async function OrgDetailPage({ params, searchParams }: PageProps)
               {org.lang && <HudBadge tone="dim">{org.lang}</HudBadge>}
               {org.recruiting && <HudBadge tone="green">RECRUITING</HudBadge>}
               {org.roleplay && <HudBadge tone="orange">ROLEPLAY</HudBadge>}
-              <span>· LAST SYNC {formatRelative(org.timestamp)}</span>
+              <span>· LAST SYNC {formatRelative(lastChecked(org))}</span>
             </div>
             {org.description && (
               <p className="mt-4 max-w-3xl font-ui text-sm leading-relaxed text-hud-text">
@@ -122,9 +123,9 @@ export default async function OrgDetailPage({ params, searchParams }: PageProps)
       <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <HudStatTile label="Members" value={org.membersCount} accent="cyan" />
         <HudStatTile
-          label="Indexed at"
-          value={formatDate(org.timestamp)}
-          sub={formatRelative(org.timestamp)}
+          label="Last checked"
+          value={formatDate(lastChecked(org))}
+          sub={`last change ${formatRelative(org.timestamp)}`}
           compact={false}
           accent="green"
         />

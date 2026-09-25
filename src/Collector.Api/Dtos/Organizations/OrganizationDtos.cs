@@ -16,6 +16,15 @@ public class OrganizationDto
     public string? Description { get; set; }
     public string? FocusPrimaryName { get; set; }
     public string? FocusSecondaryName { get; set; }
+
+    // A snapshot (Timestamp) is only written when something changes. These say when
+    // the collector last looked; only the detail fills them.
+
+    /// <summary>Last time Phase 2 read the org page, changed or not.</summary>
+    public DateTime? ContentCheckedAt { get; set; }
+
+    /// <summary>Last time Phase 3 read the roster.</summary>
+    public DateTime? MembersCollectedAt { get; set; }
 }
 
 public class OrganizationMemberDto

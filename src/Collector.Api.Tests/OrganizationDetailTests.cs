@@ -49,6 +49,32 @@ public class OrganizationDetailTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task Detail_SaysWhenTheOrgWasLastChecked_NotOnlyWhenItLastChanged()
+    {
+        // A snapshot is only written when something changes: its timestamp can be months
+        // old for an org checked every day.
+        await SeedAsync("CHECKED");
+        var contentChecked = new DateTime(2026, 9, 24, 8, 0, 0, DateTimeKind.Utc);
+        var membersCollected = new DateTime(2026, 9, 25, 6, 30, 0, DateTimeKind.Utc);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TrackerDbContext>();
+            db.DiscoveredOrganizations.Add(new DiscoveredOrganization
+            {
+                Sid = "CHECKED", Name = "Checked", DiscoveredAt = contentChecked.AddYears(-1),
+                ContentCheckedAt = contentChecked, LastMembersCollectedAt = membersCollected,
+            });
+            await db.SaveChangesAsync();
+        }
+        var client = await factory.SignedInClientAsync("org-checked");
+
+        var org = await client.GetFromJsonAsync<JsonElement>("/api/organizations/CHECKED");
+
+        org.GetProperty("contentCheckedAt").GetDateTime().Should().Be(contentChecked);
+        org.GetProperty("membersCollectedAt").GetDateTime().Should().Be(membersCollected);
+    }
+
+    [Fact]
     public async Task List_CarriesNoLongTexts()
     {
         using (var scope = factory.Services.CreateScope())
