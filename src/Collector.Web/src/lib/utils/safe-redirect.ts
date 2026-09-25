@@ -22,5 +22,11 @@ export function safeInternalPath(from: string | null | undefined): string {
   const url = new URL(from, PROBE_ORIGIN);
   if (url.origin !== PROBE_ORIGIN) return FALLBACK;
 
-  return `${url.pathname}${url.search}${url.hash}`;
+  // Parsing removes dot segments, which can recreate a leading "//" ("/..//evil"):
+  // check the normalized path, and that it still resolves on this site.
+  const path = `${url.pathname}${url.search}${url.hash}`;
+  if (path.startsWith("//") || path.startsWith("/\\")) return FALLBACK;
+  if (new URL(path, PROBE_ORIGIN).origin !== PROBE_ORIGIN) return FALLBACK;
+
+  return path;
 }

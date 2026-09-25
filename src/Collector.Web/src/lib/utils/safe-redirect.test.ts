@@ -18,6 +18,11 @@ describe("safeInternalPath", () => {
     "evil.example",
     "",
     "/%2F%2Fevil.example",
+    // Dot segments are removed while parsing, which can recreate a leading "//".
+    "/..//evil.example",
+    "/.//evil.example",
+    "/%2e%2e//evil.example",
+    "/..\\\\evil.example",
   ])("rejects %s and falls back to /dashboard", (input) => {
     expect(safeInternalPath(input)).toBe("/dashboard");
   });
