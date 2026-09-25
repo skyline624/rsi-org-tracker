@@ -27,6 +27,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     private readonly string _dataDir =
         Path.Combine(Path.GetTempPath(), "sc-tracker-api-tests", Guid.NewGuid().ToString("N"));
 
+    public string DataDir => _dataDir;
+
     public ApiFactory()
     {
         Directory.CreateDirectory(_dataDir);

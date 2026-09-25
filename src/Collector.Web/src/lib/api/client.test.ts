@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiFetch } from "./client";
+import { apiFetch, apiUpload } from "./client";
 
 describe("apiFetch", () => {
   afterEach(() => {
@@ -35,6 +35,23 @@ describe("apiFetch", () => {
 
     const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
     expect(headers["X-Forwarded-For"]).toBe("203.0.113.7");
+  });
+
+  it("uploads multipart form data with the caller's token and IP", async () => {
+    const fetchMock = stubFetch();
+    const form = new FormData();
+    form.append("file", new Blob(["ID3"]), "a.mp3");
+
+    await apiUpload("/api/users/x/audio", form, { bearerToken: "jwt", clientIp: "203.0.113.7" });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    const headers = init!.headers as Record<string, string>;
+    expect(String(url)).toBe("http://127.0.0.1:5000/api/users/x/audio");
+    expect(init!.method).toBe("POST");
+    expect(init!.body).toBe(form);
+    expect(headers["Authorization"]).toBe("Bearer jwt");
+    expect(headers["X-Forwarded-For"]).toBe("203.0.113.7");
+    expect(headers["Content-Type"]).toBeUndefined();
   });
 
   it("forwards the caller's bearer token", async () => {

@@ -92,7 +92,6 @@ export default async function OrgDetailPage({ params }: PageProps) {
                 alt={org.name}
                 fill
                 className="object-cover"
-                unoptimized
               />
             </div>
           )}

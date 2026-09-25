@@ -104,7 +104,6 @@ export default async function UserDetailPage({ params }: PageProps) {
                 alt={user.userHandle}
                 fill
                 className="object-cover"
-                unoptimized
               />
             </div>
           )}

@@ -92,6 +92,8 @@ public static class ServiceCollectionExtensions
 
         // Audio files are stored under <dataDir>/audio (outside the DB).
         services.AddSingleton(new AudioStorageService(Path.Combine(dataDir, "audio")));
+        services.AddHostedService<AudioOrphanSweeper>();
+        services.AddOptions<Collector.Api.Options.AudioSettings>().Bind(configuration.GetSection(Collector.Api.Options.AudioSettings.Section));
 
         return services;
     }

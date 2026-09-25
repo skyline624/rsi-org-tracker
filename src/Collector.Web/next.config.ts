@@ -8,20 +8,17 @@ const nextConfig: NextConfig = {
   output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   reactStrictMode: true,
   poweredByHeader: false,
-  // RSI CDN hosts avatars and org banners. Allow them through next/image optimisation.
+  // Avatars and banners are loaded straight from the RSI CDN: no /_next/image
+  // optimizer (an unauthenticated proxy that fetches remote images for anyone).
   images: {
-    remotePatterns: [
-      { protocol: "https", hostname: "cdn.robertsspaceindustries.com" },
-      { protocol: "https", hostname: "robertsspaceindustries.com" },
-      { protocol: "https", hostname: "media.robertsspaceindustries.com" },
-    ],
+    unoptimized: true,
   },
   experimental: {
-    // Typed routes would be nice but conflict with dynamic segments on v15.1.
+    serverActions: {
+      // Voice recordings go through a Server Action; the API caps them at 25 MB.
+      bodySizeLimit: "26mb",
+    },
   },
-  // In dev we hit a self-signed cert; skip validation for the fetch inside RSC/BFF.
-  // This is only effective for Node fetch inside server code — browser calls still
-  // go through the browser's TLS stack.
 };
 
 export default nextConfig;

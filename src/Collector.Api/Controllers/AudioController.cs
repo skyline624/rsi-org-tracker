@@ -1,11 +1,13 @@
 using Collector.Api.Auth;
 using Collector.Api.Dtos.Audio;
+using Collector.Api.Options;
 using Collector.Api.Services;
 using Collector.Data.Repositories;
 using Collector.Models;
 using Collector.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Collector.Api.Controllers;
 
@@ -35,6 +37,7 @@ public class AudioController : ControllerBase
     private readonly IUserRepository _users;
     private readonly AudioStorageService _storage;
     private readonly CurrentUserAccessor _currentUser;
+    private readonly AudioSettings _settings;
 
     public AudioController(
         IEntityResolver resolver,
@@ -42,7 +45,8 @@ public class AudioController : ControllerBase
         IEntityAudioRepository audio,
         IUserRepository users,
         AudioStorageService storage,
-        CurrentUserAccessor currentUser)
+        CurrentUserAccessor currentUser,
+        IOptions<AudioSettings> settings)
     {
         _resolver = resolver;
         _entities = entities;
@@ -50,6 +54,7 @@ public class AudioController : ControllerBase
         _users = users;
         _storage = storage;
         _currentUser = currentUser;
+        _settings = settings.Value;
     }
 
     [HttpGet("users/{handle}/audio")]
@@ -80,6 +85,22 @@ public class AudioController : ControllerBase
             && !file.ContentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Declared content type is not audio." });
 
+        // The bytes must be the container the extension claims (the declared content
+        // type comes from the client and proves nothing).
+        var header = new byte[AudioSignature.HeaderLength];
+        int headerLength;
+        await using (var probe = file.OpenReadStream())
+        {
+            headerLength = await probe.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, ct);
+        }
+        if (!AudioSignature.Matches(ext, header.AsSpan(0, headerLength)))
+            return BadRequest(new { message = $"The file content is not a {ext[1..]} recording." });
+
+        var authorId = _currentUser.UserId ?? 0;
+        var used = await _audio.GetTotalBytesByAuthorAsync(authorId, ct);
+        if (used + file.Length > _settings.MaxBytesPerUser)
+            return BadRequest(new { message = "Audio storage quota reached for this account." });
+
         var user = await _users.GetByHandleAsync(handle, ct);
         var entityId = await _resolver.ResolveOrCreateAsync(user?.CitizenId, handle, user?.DisplayName, ct);
 
@@ -93,7 +114,7 @@ public class AudioController : ControllerBase
         var row = new EntityAudio
         {
             TrackedEntityId = entityId,
-            AuthorApiUserId = _currentUser.UserId ?? 0,
+            AuthorApiUserId = authorId,
             AuthorUsername = _currentUser.Username ?? "unknown",
             OriginalName = Path.GetFileName(file.FileName),
             StoredPath = relPath,
@@ -102,8 +123,16 @@ public class AudioController : ControllerBase
             DurationSec = null,
             CreatedAt = DateTime.UtcNow,
         };
-        await _audio.AddAsync(row, ct);
-        await _audio.SaveChangesAsync(ct);
+        try
+        {
+            await _audio.AddAsync(row, ct);
+            await _audio.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            _storage.Delete(relPath); // no row, no file
+            throw;
+        }
         return Ok(ToDto(row));
     }
 
@@ -116,6 +145,8 @@ public class AudioController : ControllerBase
         var full = _storage.GetFullPath(row.StoredPath);
         if (!System.IO.File.Exists(full)) return NotFound();
 
+        // User-supplied bytes: the browser must honour the audio MIME type, never sniff one.
+        Response.Headers.XContentTypeOptions = "nosniff";
         // enableRangeProcessing lets the browser seek within the audio.
         return PhysicalFile(full, row.MimeType, enableRangeProcessing: true);
     }
@@ -128,9 +159,10 @@ public class AudioController : ControllerBase
         if (!(_currentUser.IsAdmin || row.AuthorApiUserId == (_currentUser.UserId ?? -1)))
             return Forbid();
 
-        _storage.Delete(row.StoredPath);
+        // Row first: if the file cannot be removed, the orphan sweeper deletes it later.
         _audio.Remove(row);
         await _audio.SaveChangesAsync(ct);
+        _storage.Delete(row.StoredPath);
         return NoContent();
     }
 

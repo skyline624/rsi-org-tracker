@@ -121,6 +121,33 @@ export async function apiFetch<T>(
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+/**
+ * Multipart upload (FormData) to the API with the caller's token and IP. The
+ * browser boundary is set by fetch itself, so no Content-Type is forced here.
+ */
+export async function apiUpload<T>(
+  path: string,
+  form: FormData,
+  opts: Pick<FetchOptions, "bearerToken" | "clientIp" | "timeoutMs"> = {},
+): Promise<T> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "X-Correlation-Id": uuidv4(),
+  };
+  if (opts.bearerToken) headers["Authorization"] = `Bearer ${opts.bearerToken}`;
+  if (opts.clientIp) headers["X-Forwarded-For"] = opts.clientIp;
+
+  const res = await fetch(buildUrl(path), {
+    method: "POST",
+    headers,
+    body: form,
+    cache: "no-store",
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
+  });
+  if (!res.ok) throw await ApiError.fromResponse(res);
+  return (await res.json()) as T;
+}
+
 // Convenience wrappers
 export const apiGet = <T>(
   path: string,

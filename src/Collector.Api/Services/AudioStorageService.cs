@@ -13,6 +13,8 @@ public class AudioStorageService
         _baseDir = baseDir;
     }
 
+    public string BaseDirectory => _baseDir;
+
     /// <summary>Saves a stream and returns its (relativePath, sizeBytes).</summary>
     public async Task<(string RelativePath, long Size)> SaveAsync(
         long entityId, Stream content, string extension, CancellationToken ct)

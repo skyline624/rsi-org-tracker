@@ -14,4 +14,12 @@ public class EntityAudioRepository : Repository<EntityAudio>, IEntityAudioReposi
             .ToListAsync(ct);
 
     public void Remove(EntityAudio audio) => DbSet.Remove(audio);
+
+    public async Task<long> GetTotalBytesByAuthorAsync(long authorApiUserId, CancellationToken ct = default)
+        => await DbSet.AsNoTracking()
+            .Where(a => a.AuthorApiUserId == authorApiUserId)
+            .SumAsync(a => (long?)a.SizeBytes, ct) ?? 0;
+
+    public async Task<IReadOnlySet<string>> GetAllStoredPathsAsync(CancellationToken ct = default)
+        => (await DbSet.AsNoTracking().Select(a => a.StoredPath).ToListAsync(ct)).ToHashSet(StringComparer.Ordinal);
 }

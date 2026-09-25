@@ -1,7 +1,8 @@
 "use server";
 
 import { getSession, sessionCtx } from "@/lib/auth/session";
-import { apiDelete } from "@/lib/api/client";
+import { apiDelete, apiUpload } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/errors";
 
 export interface AudioDto {
   id: number;
@@ -31,22 +32,17 @@ export async function uploadAudioAction(handle: string, formData: FormData): Pro
   try {
     const apiForm = new FormData();
     apiForm.append("file", file);
-    const res = await fetch(
-      `${process.env.API_BASE_URL}/api/users/${encodeURIComponent(handle)}/audio`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${session.accessToken}` },
-        body: apiForm,
-        cache: "no-store",
-      },
+    const audio = await apiUpload<AudioDto>(
+      `/api/users/${encodeURIComponent(handle)}/audio`,
+      apiForm,
+      sessionCtx(session),
     );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, error: body.message ?? body.title ?? `Erreur ${res.status}` };
-    }
-    const audio = (await res.json()) as AudioDto;
     return { ok: true, audio };
   } catch (e) {
+    if (e instanceof ApiError) {
+      const message = (e.problem as { message?: string }).message;
+      return { ok: false, error: message ?? e.problem.title ?? `Erreur ${e.status}` };
+    }
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };
   }
 }
