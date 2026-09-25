@@ -92,9 +92,13 @@ public class HealthController : ControllerBase
         var queueStuck = await _trackerDb.UserEnrichmentQueue
             .CountAsync(q => q.Outcome == EnrichmentOutcome.Abandoned && q.EnrichedAt >= abandonedSince, ct);
 
-        var lastCollection = await _trackerDb.MemberCollectionLogs
-            .OrderByDescending(l => l.CollectionTime)
-            .Select(l => new { l.OrgSid, l.CollectionTime })
+        // Phase 3 stamps each org it visits; sorting the 100k discovered orgs replaces
+        // a scan of member_collection_log (31 M rows, no index on CollectionTime alone).
+        var lastCollection = await _trackerDb.DiscoveredOrganizations
+            .AsNoTracking()
+            .Where(d => d.LastMembersCollectedAt != null)
+            .OrderByDescending(d => d.LastMembersCollectedAt)
+            .Select(d => new { OrgSid = d.Sid, CollectionTime = d.LastMembersCollectedAt!.Value })
             .FirstOrDefaultAsync(ct);
 
         var orgCount = await _trackerDb.DiscoveredOrganizations

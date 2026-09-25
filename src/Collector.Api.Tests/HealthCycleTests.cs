@@ -44,4 +44,24 @@ public class HealthCycleTests(ApiFactory factory)
         body.GetProperty("queue_pending").GetInt32().Should().Be(1, "rows waiting for their next attempt are not due");
         body.GetProperty("queue_stuck").GetInt32().Should().Be(1, "rows abandoned in the last 24 hours");
     }
+
+    [Fact]
+    public async Task LastMemberCollection_ComesFromTheDiscoveredOrganizations()
+    {
+        var at = DateTime.UtcNow.AddMinutes(5);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TrackerDbContext>();
+            db.DiscoveredOrganizations.Add(new DiscoveredOrganization
+            {
+                Sid = "HEALTHY", Name = "Healthy", DiscoveredAt = at.AddDays(-1), LastMembersCollectedAt = at,
+            });
+            await db.SaveChangesAsync();
+        }
+        var client = await factory.SignedInClientAsync("health-last-collection");
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/health/cycle");
+
+        body.GetProperty("last_member_collection").GetProperty("org_sid").GetString().Should().Be("HEALTHY");
+    }
 }
