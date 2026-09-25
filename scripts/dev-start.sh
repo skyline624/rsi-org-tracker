@@ -10,15 +10,17 @@
 #   │              :3000 HTTP                    │
 #   └────────────────────────────────────────────┘
 #
+# Développement local uniquement (refuse de tourner à côté des services systemd).
+#
 # Utilisation :
-#   ./start.sh          — build + lance les 3 services + attache la session
-#   ./start.sh --no-attach  — ne fait pas `tmux attach` à la fin (utile en CI)
-#   ./start.sh --skip-build — ne rebuild pas (assume que bin/ est à jour)
+#   scripts/dev-start.sh               — build + lance les 3 services + attache la session
+#   scripts/dev-start.sh --no-attach   — ne fait pas `tmux attach` à la fin
+#   scripts/dev-start.sh --skip-build  — ne rebuild pas (assume que bin/ est à jour)
 #
 
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SESSION="collector"
 WEB_DIR="$PROJECT_DIR/src/Collector.Web"
 
@@ -35,6 +37,16 @@ for arg in "$@"; do
         *) echo "unknown flag: $arg" >&2; exit 1 ;;
     esac
 done
+
+# ── Jamais à côté de la production ─────────────────────────
+# Sur le serveur, les services systemd tournent déjà : un second collector sur la
+# même tracker.db, ou un arrêt qui tuerait le serveur web de production, serait le
+# résultat. Ce script est réservé au poste de développement.
+if command -v systemctl >/dev/null 2>&1     && systemctl is-active --quiet sc-api sc-collector sc-web 2>/dev/null; then
+    echo "✗ Les services de production (sc-api / sc-collector / sc-web) sont actifs ici :" >&2
+    echo "  ce script est réservé au développement local. Utiliser systemctl." >&2
+    exit 1
+fi
 
 # ── Vérifications ──────────────────────────────────────────
 command -v dotnet >/dev/null 2>&1 || { echo "✗ dotnet manquant" >&2; exit 1; }
@@ -103,7 +115,7 @@ echo "Commandes utiles :"
 echo "    tmux attach -t $SESSION          # (re)voir la session"
 echo "    Ctrl-B puis D                    # détacher sans arrêter"
 echo "    Ctrl-B puis flèches              # changer de pane"
-echo "    ./stop.sh                        # arrêter les 3 services"
+echo "    scripts/dev-stop.sh              # arrêter les 3 services"
 echo
 
 if [ "$ATTACH" -eq 1 ]; then
