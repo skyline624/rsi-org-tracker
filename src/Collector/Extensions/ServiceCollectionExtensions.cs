@@ -115,6 +115,10 @@ public static class ServiceCollectionExtensions
         // Corrupted-handle repair (one-shot) — see CorruptedUserRepairService docs.
         services.AddScoped<ICorruptedUserRepairService, CorruptedUserRepairService>();
 
+        // Database maintenance (one-shot, collector stopped): purges and measurements.
+        services.AddSingleton<IStorageProbe>(new FileStorageProbe(Path.Combine(dataDir, "tracker.db")));
+        services.AddScoped<MaintenanceService>();
+
         // Hosted services: the Phase 1-3 cycle loop and the Phase 4 worker, which
         // drains user_enrichment_queue in parallel. Skipped for one-shot CLI modes.
         if (registerHostedServices)

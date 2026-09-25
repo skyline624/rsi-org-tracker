@@ -23,7 +23,8 @@ try
     var skipPhase2 = args.Contains("--skip-phase2");
     var backfillQueue = args.Contains("--backfill-enrichment-queue");
     var repairCorrupted = args.Contains("--repair-corrupted-handles");
-    var continuousMode = !singleRun && !integrityCheck && !backfillQueue && !repairCorrupted;
+    var maintenance = args.Contains("--maintenance");
+    var continuousMode = !singleRun && !integrityCheck && !backfillQueue && !repairCorrupted && !maintenance;
 
     // Build host
     var builder = Host.CreateDefaultBuilder(args)
@@ -89,7 +90,38 @@ try
     await host.StartAsync();
     var ct = host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
 
-    if (backfillQueue)
+    if (maintenance)
+    {
+        // Run with the collector service stopped:
+        //   --maintenance measure
+        //   --maintenance check
+        //   --maintenance purge <target> [--dry-run] [--batch N]
+        using var scope = host.Services.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<MaintenanceService>();
+        var verb = args.SkipWhile(a => a != "--maintenance").Skip(1).FirstOrDefault();
+        switch (verb)
+        {
+            case "measure":
+                await service.MeasureAsync(DateTime.UtcNow, ct);
+                break;
+            case "check":
+                Console.WriteLine($"quick_check: {await service.QuickCheckAsync(ct)}");
+                break;
+            case "purge":
+                var target = args.SkipWhile(a => a != "purge").Skip(1).FirstOrDefault() ?? "";
+                var batchIdx = Array.IndexOf(args, "--batch");
+                var batch = batchIdx >= 0 && batchIdx + 1 < args.Length && int.TryParse(args[batchIdx + 1], out var n) ? n : 20_000;
+                var report = await service.PurgeAsync(target, args.Contains("--dry-run"), batch, DateTime.UtcNow, ct);
+                Console.WriteLine($"{report.Target}: {report.Deleted}/{report.Matched} deleted in {report.Batches} batches"
+                    + (report.StoppedBecause != null ? $", stopped: {report.StoppedBecause}" : ""));
+                break;
+            default:
+                Console.WriteLine("usage: --maintenance measure | check | purge <target> [--dry-run] [--batch N]");
+                Console.WriteLine($"purge targets: {string.Join(", ", MaintenanceService.TargetNames)}");
+                break;
+        }
+    }
+    else if (backfillQueue)
     {
         logger.LogInformation("Running enrichment queue backfill (one-shot)");
         using var scope = host.Services.CreateScope();
