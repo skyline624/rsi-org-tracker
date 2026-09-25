@@ -27,8 +27,9 @@ public static class ServiceCollectionExtensions
         string dataDir)
     {
         var dbPath = Path.Combine(dataDir, "tracker.db");
-        services.AddDbContext<TrackerDbContext>(options =>
-            options.UseSqlite($"Data Source={dbPath}"));
+        services.AddDbContext<TrackerDbContext>(options => options
+            .UseSqlite($"Data Source={dbPath}")
+            .AddInterceptors(new SqlitePragmaInterceptor()));
 
         services.AddScoped<IOrganizationRepository, OrganizationRepository>();
         services.AddScoped<IDiscoveredOrganizationRepository, DiscoveredOrganizationRepository>();
@@ -120,6 +121,7 @@ public static class ServiceCollectionExtensions
             services.AddHostedService(sp => new CollectionWorker(
                 sp.GetRequiredService<CollectionOrchestrator>(), skipPhase2));
             services.AddHostedService<Phase4Worker>();
+            services.AddHostedService<SqliteMaintenanceService>();
         }
 
         return services;
@@ -137,6 +139,10 @@ public static class ServiceCollectionExtensions
         var logger = scope.ServiceProvider
             .GetService<Microsoft.Extensions.Logging.ILoggerFactory>()
             ?.CreateLogger("DatabaseBootstrap");
+
+        // WAL lets the API read while the collector writes. Persistent in the file;
+        // a no-op when the database is already in WAL mode.
+        await dbContext.Database.ExecuteSqlRawAsync("PRAGMA journal_mode = WAL;");
 
         await Collector.Data.DatabaseBootstrap.MigrateOrAdoptAsync(dbContext, "organizations", logger);
 
