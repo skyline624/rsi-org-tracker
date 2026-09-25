@@ -37,4 +37,10 @@ public class MemberCollectionLog
     /// Member's roles as JSON at collection time. Used to detect role changes.
     /// </summary>
     public string? RolesJson { get; set; }
+
+    /// <summary>
+    /// Version of the roster parser that produced the row (see MemberHtmlParser.Version).
+    /// Rows written before the column existed are 1.
+    /// </summary>
+    public int ParserVersion { get; set; } = 1;
 }

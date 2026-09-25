@@ -4,6 +4,7 @@ using Collector.Data.Repositories;
 using Collector.Dtos;
 using Collector.Models;
 using Collector.Options;
+using Collector.Parsers;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -38,6 +39,7 @@ public class MemberCollector : IMemberCollector
     private readonly IChangeEventRepository _changeEventRepo;
     private readonly IUserEnrichmentQueueRepository _enrichmentQueueRepo;
     private readonly IDiscoveredOrganizationRepository _discoveredRepo;
+    private readonly IOrgMemberCountRepository _countRepo;
     private readonly IChangeDetector _changeDetector;
     private readonly IUserRepository _userRepo;
     private readonly ILogger<MemberCollector> _logger;
@@ -51,6 +53,7 @@ public class MemberCollector : IMemberCollector
         IChangeEventRepository changeEventRepo,
         IUserEnrichmentQueueRepository enrichmentQueueRepo,
         IDiscoveredOrganizationRepository discoveredRepo,
+        IOrgMemberCountRepository countRepo,
         IChangeDetector changeDetector,
         IUserRepository userRepo,
         ILogger<MemberCollector> logger,
@@ -63,6 +66,7 @@ public class MemberCollector : IMemberCollector
         _changeEventRepo = changeEventRepo;
         _enrichmentQueueRepo = enrichmentQueueRepo;
         _discoveredRepo = discoveredRepo;
+        _countRepo = countRepo;
         _changeDetector = changeDetector;
         _userRepo = userRepo;
         _logger = logger;
@@ -130,6 +134,8 @@ public class MemberCollector : IMemberCollector
         var collection = await _apiClient.GetAllOrganizationMembersAsync(
             orgSid, _options.MemberCollectionPageSize, ct);
 
+        await RecordCountersAsync(orgSid, collection, ct);
+
         switch (collection.Status)
         {
             // Nothing read: we have no authoritative signal to act on.
@@ -151,7 +157,6 @@ public class MemberCollector : IMemberCollector
 
             // A truncated roster would turn every unread member into a false departure.
             case RosterStatus.Partial:
-            case RosterStatus.Capped:
                 await ReconcileMembersCountAsync(orgSid, collection.TotalRows, ct);
                 _logger.LogWarning(
                     "Roster of {Sid} not written ({Status}: {Raw}/{Total} rows read); keeping prior roster",
@@ -169,12 +174,33 @@ public class MemberCollector : IMemberCollector
             return 0;
         }
 
-        var members = collection.Members;
+        var members = collection.Status == RosterStatus.Capped
+            ? await WithMembersBeyondTheWindowAsync(orgSid, collection.Members, ct)
+            : collection.Members;
 
         var previousLog = await _logRepo.GetLatestAsync(orgSid, ct);
         var previousSnapshots = previousLog != null
             ? await GetPreviousSnapshotsAsync(orgSid, previousLog.CollectionTime, ct)
             : new List<MemberSnapshot>();
+
+        // First collection of the org, or first since the v1 parser whose ranks were
+        // overlay titles: this pass is the reference, comparing would only be noise.
+        var baseline = previousLog == null || previousLog.ParserVersion < MemberHtmlParser.Version;
+
+        // Roster rows carry no citizen number. Take it from users / handle history on
+        // both sides, so a renamed member matches itself and a known citizen is recognized.
+        var citizenIds = await _userRepo.GetCitizenIdsByHandlesAsync(
+            members.Select(m => m.Handle).Concat(previousSnapshots.Select(s => s.Handle))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            ct);
+        int? CitizenIdOf(string handle, int? stored) => citizenIds.TryGetValue(handle, out var id) ? id : stored;
+        foreach (var member in members)
+        {
+            member.CitizenId = CitizenIdOf(member.Handle, member.CitizenId);
+        }
+        previousSnapshots = previousSnapshots
+            .Select(s => s with { CitizenId = CitizenIdOf(s.Handle, s.CitizenId) })
+            .ToList();
 
         // Look up display names BEFORE opening the transaction — this can touch ~400k
         // rows of the users table on SQLite and we don't want it holding a write lock.
@@ -207,12 +233,21 @@ public class MemberCollector : IMemberCollector
             members.Where(m => !previousHandleSet.Contains(m.Handle)).Select(m => m.Handle),
             StringComparer.OrdinalIgnoreCase);
 
-        // Detect changes but suppress member_joined for new handles — Phase 4 will emit
-        // them after verifying citizen_id (new player vs. renamed player).
+        // A known citizen new to the org is announced now. An unknown handle waits for
+        // Phase 4, which reads its profile and tells a new player from a renamed one.
         var allChanges = _changeDetector.DetectMemberChanges(orgSid, previousSnapshots, currentSnapshots);
-        var changes = allChanges
-            .Where(e => !(e.ChangeType == "member_joined" && e.UserHandle != null && newHandleSet.Contains(e.UserHandle)))
-            .ToList();
+        var changes = baseline
+            ? []
+            : allChanges
+                .Where(e => !(e.ChangeType == "member_joined" && e.UserHandle != null
+                    && newHandleSet.Contains(e.UserHandle) && !citizenIds.ContainsKey(e.UserHandle)))
+                .ToList();
+        if (baseline && previousLog != null)
+        {
+            _logger.LogInformation(
+                "First collection of {Sid} with roster parser v{Version}: reference pass, no member events",
+                orgSid, MemberHtmlParser.Version);
+        }
 
         // Build the queue batch up-front; InsertPendingIgnoreDuplicatesAsync will
         // atomically drop anything that already has a pending row.
@@ -276,6 +311,7 @@ public class MemberCollector : IMemberCollector
                     Rank = m.Rank,
                     RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null,
                     UrlImage = m.UrlImage,
+                    Stars = m.Stars,
                     Timestamp = timestamp
                 }).ToList();
 
@@ -288,7 +324,8 @@ public class MemberCollector : IMemberCollector
                     CitizenId = m.CitizenId,
                     UserHandle = m.Handle,
                     Rank = m.Rank,
-                    RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null
+                    RolesJson = m.Roles != null ? JsonSerializer.Serialize(m.Roles) : null,
+                    ParserVersion = MemberHtmlParser.Version
                 }).ToList();
 
                 await _logRepo.AddRangeAsync(logEntries, ct);
@@ -342,6 +379,63 @@ public class MemberCollector : IMemberCollector
             members.Count, orgSid, changes.Count, queued);
 
         return members.Count;
+    }
+
+    /// <summary>
+    /// Stores the roster counters when they changed. Only a complete read gives the
+    /// visible / redacted / hidden split; otherwise the total alone is kept.
+    /// </summary>
+    private async Task RecordCountersAsync(string orgSid, MemberCollectionResult roster, CancellationToken ct)
+    {
+        if (roster.Status is RosterStatus.Unreachable or RosterStatus.OrgGone) return;
+
+        var complete = roster.Status == RosterStatus.Complete;
+        try
+        {
+            await _countRepo.RecordIfChangedAsync(new OrgMemberCount
+            {
+                OrgSid = orgSid,
+                CollectedAt = DateTime.UtcNow,
+                TotalRows = roster.TotalRows,
+                VisibleCount = complete ? roster.RawRows - roster.RedactedRows - roster.HiddenRows : null,
+                RedactedCount = complete ? roster.RedactedRows : null,
+                HiddenCount = complete ? roster.HiddenRows : null,
+            }, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not record member counters for {Sid} (non-fatal)", orgSid);
+        }
+    }
+
+    /// <summary>
+    /// RSI serves only the first 400 roster pages. For a larger org, members active in
+    /// our last snapshot but outside that window are kept with their last known values:
+    /// from the window alone, a departure cannot be told from a member out of sight.
+    /// </summary>
+    private async Task<IReadOnlyList<MemberData>> WithMembersBeyondTheWindowAsync(
+        string orgSid, IReadOnlyList<MemberData> window, CancellationToken ct)
+    {
+        var seen = window.Select(m => m.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var beyond = (await _memberRepo.GetByOrgSidAsync(orgSid, null, ct))
+            .Where(m => m.IsActive && !seen.Contains(m.UserHandle))
+            .Select(m => new MemberData
+            {
+                OrgSid = orgSid,
+                Handle = m.UserHandle,
+                CitizenId = m.CitizenId,
+                DisplayName = m.DisplayName,
+                Rank = m.Rank,
+                Stars = m.Stars,
+                Roles = m.RolesJson != null ? JsonSerializer.Deserialize<string[]>(m.RolesJson) : null,
+                UrlImage = m.UrlImage,
+            })
+            .ToList();
+
+        _logger.LogInformation(
+            "Roster of {Sid} exceeds RSI's {Pages}-page window: {Window} members read, {Beyond} kept from the last snapshot",
+            orgSid, RsiApiClient.MaxRosterPages, window.Count, beyond.Count);
+        return [.. window, .. beyond];
     }
 
     /// <summary>

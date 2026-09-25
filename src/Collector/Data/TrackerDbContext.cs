@@ -22,6 +22,7 @@ public class TrackerDbContext : DbContext
     public DbSet<EntityMembership> EntityMemberships { get; set; } = null!;
     public DbSet<OrgNote> OrgNotes { get; set; } = null!;
     public DbSet<EntityLink> EntityLinks { get; set; } = null!;
+    public DbSet<OrgMemberCount> OrgMemberCounts { get; set; } = null!;
 
     public TrackerDbContext(DbContextOptions<TrackerDbContext> options)
         : base(options)

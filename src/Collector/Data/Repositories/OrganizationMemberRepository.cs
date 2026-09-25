@@ -19,7 +19,7 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
             return await DbSet
                 .FromSqlInterpolated($@"
                     SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
-                           Rank, RolesJson, UrlImage, IsActive
+                           Rank, RolesJson, UrlImage, IsActive, Stars
                     FROM (
                         SELECT *,
                                ROW_NUMBER() OVER (PARTITION BY UserHandle ORDER BY Timestamp DESC) AS _rn
@@ -35,7 +35,7 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
         return await DbSet
             .FromSqlInterpolated($@"
                 SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
-                       Rank, RolesJson, UrlImage, IsActive
+                       Rank, RolesJson, UrlImage, IsActive, Stars
                 FROM (
                     SELECT *,
                            ROW_NUMBER() OVER (PARTITION BY UserHandle ORDER BY Timestamp DESC) AS _rn

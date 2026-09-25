@@ -35,6 +35,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDiscoveredOrganizationRepository, DiscoveredOrganizationRepository>();
         services.AddScoped<IOrganizationMemberRepository, OrganizationMemberRepository>();
         services.AddScoped<IMemberCollectionLogRepository, MemberCollectionLogRepository>();
+        services.AddScoped<IOrgMemberCountRepository, OrgMemberCountRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IUserHandleHistoryRepository, UserHandleHistoryRepository>();
         services.AddScoped<IUserEnrichmentQueueRepository, UserEnrichmentQueueRepository>();

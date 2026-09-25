@@ -4,6 +4,7 @@ using Collector.Dtos;
 using Collector.Extensions;
 using Collector.Models;
 using Collector.Options;
+using Collector.Parsers;
 using Collector.Services;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
@@ -28,8 +29,8 @@ public sealed class MemberCollectorTests : IAsyncLifetime
 
     private static MemberCollectionResult Roster(RosterStatus status, int totalRows, params string[] handles)
         => new(status,
-            handles.Select(h => new MemberData { OrgSid = "", Handle = h, Rank = "Pilot" }).ToList(),
-            totalRows, RawRows: handles.Length, RedactedRows: 0, HiddenRows: totalRows - handles.Length);
+            handles.Select(h => new MemberData { OrgSid = "", Handle = h, Rank = "Pilot", Stars = 3 }).ToList(),
+            totalRows, RawRows: totalRows, RedactedRows: 0, HiddenRows: totalRows - handles.Length);
 
     public async Task InitializeAsync()
     {
@@ -60,6 +61,7 @@ public sealed class MemberCollectorTests : IAsyncLifetime
             new ChangeEventRepository(db),
             new UserEnrichmentQueueRepository(db),
             new DiscoveredOrganizationRepository(db),
+            new OrgMemberCountRepository(db),
             new ChangeDetector(NullLogger<ChangeDetector>.Instance),
             new UserRepository(db),
             NullLogger<MemberCollector>.Instance,
@@ -192,6 +194,135 @@ public sealed class MemberCollectorTests : IAsyncLifetime
         var (_, db) = Create();
         (await db.Organizations.AsNoTracking().Where(o => o.Sid == "COUNT").Select(o => o.MembersCount).SingleAsync())
             .Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Capped_KeepsMembersBeyondRsisWindow_AndInfersNoDeparture()
+    {
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "bravo");
+        await CollectAsync("HUGE");
+
+        _roster = _ => Roster(RosterStatus.Capped, 20_000, "alpha", "charlie");
+        await CollectAsync("HUGE");
+
+        (await ActiveHandlesAsync("HUGE")).Should().Equal("alpha", "bravo", "charlie");
+        (await EventTypesAsync()).Should().NotContain("member_left");
+    }
+
+    [Fact]
+    public async Task Stars_AreStoredWithTheMember()
+    {
+        await CollectAsync("STARS");
+
+        var (_, db) = Create();
+        (await db.OrganizationMembers.AsNoTracking().Where(m => m.OrgSid == "STARS").Select(m => m.Stars).SingleAsync())
+            .Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Counters_AreRecordedOnlyWhenOneChanges()
+    {
+        _roster = _ => Roster(RosterStatus.Complete, 3, "alpha");
+        await CollectAsync("COUNTS");
+        await CollectAsync("COUNTS");
+        _roster = _ => Roster(RosterStatus.Complete, 4, "alpha", "bravo");
+        await CollectAsync("COUNTS");
+
+        var rows = await CountersAsync("COUNTS");
+        rows.Should().Equal((3, 1, 0, 2), (4, 2, 0, 2));
+    }
+
+    [Fact]
+    public async Task Counters_OfAnIncompleteRead_KeepOnlyTheTotal()
+    {
+        _roster = _ => Roster(RosterStatus.Partial, 5, "alpha");
+        await CollectAsync("PARTIAL");
+        await CollectAsync("PARTIAL");
+
+        (await CountersAsync("PARTIAL")).Should().Equal((5, (int?)null, (int?)null, (int?)null));
+    }
+
+    [Fact]
+    public async Task AKnownCitizen_NewToTheOrg_IsAnnouncedInPhase3()
+    {
+        await SeedUserAsync("charlie", 777);
+        _roster = _ => Roster(RosterStatus.Complete, 1, "alpha");
+        await CollectAsync("JOIN");
+
+        _roster = _ => Roster(RosterStatus.Complete, 3, "alpha", "charlie", "stranger");
+        await CollectAsync("JOIN");
+
+        var (_, db) = Create();
+        var joined = await db.ChangeEvents.AsNoTracking()
+            .Where(e => e.ChangeType == "member_joined").Select(e => e.UserHandle).ToListAsync();
+        joined.Should().Equal(["charlie"], "an unknown handle is announced by Phase 4 once its profile is read");
+    }
+
+    [Fact]
+    public async Task ARenamedMember_IsNeitherLeftNorJoined()
+    {
+        await SeedUserAsync("oldname", 555);
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "oldname");
+        await CollectAsync("RENAME");
+
+        var (_, db) = Create();
+        var user = await db.Users.SingleAsync(u => u.CitizenId == 555);
+        user.UserHandle = "newname";
+        db.UserHandleHistories.Add(new UserHandleHistory
+        {
+            CitizenId = 555, UserHandle = "oldname", FirstSeen = DateTime.UtcNow.AddDays(-9), LastSeen = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "newname");
+        await CollectAsync("RENAME");
+
+        (await EventTypesAsync()).Should().NotContain(["member_left", "member_joined"]);
+    }
+
+    [Fact]
+    public async Task TheFirstCollectionAfterV1Rows_IsABaselineWithoutMemberEvents()
+    {
+        var (_, db) = Create();
+        var before = DateTime.UtcNow.AddDays(-1);
+        foreach (var handle in new[] { "alpha", "bravo" })
+        {
+            db.MemberCollectionLogs.Add(new MemberCollectionLog
+            {
+                OrgSid = "LEGACY", CollectionTime = before, UserHandle = handle, Rank = "Roles", ParserVersion = 1,
+            });
+            db.OrganizationMembers.Add(new OrganizationMember
+            {
+                OrgSid = "LEGACY", UserHandle = handle, Rank = "Roles", Timestamp = before,
+            });
+        }
+        await db.SaveChangesAsync();
+        await SeedUserAsync("charlie", 888);
+
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "charlie");
+        await CollectAsync("LEGACY");
+
+        (await EventTypesAsync()).Should().BeEmpty("v1 ranks were overlay titles: comparing them would be noise");
+        var (_, check) = Create();
+        (await check.MemberCollectionLogs.AsNoTracking().Where(l => l.OrgSid == "LEGACY" && l.CollectionTime > before)
+            .Select(l => l.ParserVersion).Distinct().ToListAsync()).Should().Equal(MemberHtmlParser.Version);
+    }
+
+    private async Task SeedUserAsync(string handle, int citizenId)
+    {
+        var (_, db) = Create();
+        db.Users.Add(new User
+        {
+            CitizenId = citizenId, UserHandle = handle, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<List<(int, int?, int?, int?)>> CountersAsync(string sid)
+    {
+        var (_, db) = Create();
+        return (await db.OrgMemberCounts.AsNoTracking().Where(c => c.OrgSid == sid).OrderBy(c => c.Id).ToListAsync())
+            .Select(c => (c.TotalRows, c.VisibleCount, c.RedactedCount, c.HiddenCount)).ToList();
     }
 
     private async Task<int> LogRowCountAsync()

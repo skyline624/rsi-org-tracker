@@ -44,6 +44,11 @@ public class OrganizationMember
     public string? RolesJson { get; set; }
 
     /// <summary>
+    /// Rank level shown as stars on RSI (0-5). Null for rows collected before it was parsed.
+    /// </summary>
+    public int? Stars { get; set; }
+
+    /// <summary>
     /// URL to member's avatar image.
     /// </summary>
     public string? UrlImage { get; set; }

@@ -27,5 +27,10 @@ public class MemberCollectionLogConfiguration : IEntityTypeConfiguration<MemberC
 
         builder.Property(m => m.Rank)
             .HasMaxLength(100);
+
+        // Rows written before the class-token parser (v2) have ranks that are
+        // overlay titles; the first v2 collection of an org is only a baseline.
+        builder.Property(m => m.ParserVersion)
+            .HasDefaultValue(1);
     }
 }
