@@ -13,7 +13,8 @@ import { formatRelative, formatNumber } from "@/lib/utils/format";
 import { Activity, Database, Users, Radar } from "lucide-react";
 
 // RSC — re-render every 60s via Next cache revalidation.
-export const revalidate = 60;
+// Reads the session cookie: rendered on every request.
+export const dynamic = "force-dynamic";
 
 async function fetchDashboardData() {
   // On tolère que certains appels échouent (l'API n'expose pas forcément tous

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -25,6 +26,21 @@ interface PageProps {
   params: Promise<{ handle: string }>;
 }
 
+/** Notes, audio, memberships and links take five API calls: the profile renders first. */
+function Annotations(props: { handle: string; canSetCitizenId: boolean }) {
+  return (
+    <Suspense
+      fallback={
+        <HudPanel label="ANNOTATIONS">
+          <div className="py-6 text-center font-mono text-xs text-hud-text-dim">— loading —</div>
+        </HudPanel>
+      }
+    >
+      <UserAnnotations {...props} />
+    </Suspense>
+  );
+}
+
 export default async function UserDetailPage({ params }: PageProps) {
   const { handle } = await params;
   const ctx = await requireAuthCtx();
@@ -44,7 +60,7 @@ export default async function UserDetailPage({ params }: PageProps) {
         return (
           <div className="flex flex-col gap-8">
             <PartialUserProfile handle={handle} orgs={knownOrgs} />
-            <UserAnnotations handle={handle} canSetCitizenId />
+            <Annotations handle={handle} canSetCitizenId />
           </div>
         );
       }
@@ -59,7 +75,7 @@ export default async function UserDetailPage({ params }: PageProps) {
         return (
           <div className="flex flex-col gap-8">
             <PartialUserProfile handle={handle} orgs={[]} />
-            <UserAnnotations handle={handle} canSetCitizenId />
+            <Annotations handle={handle} canSetCitizenId />
           </div>
         );
       }
@@ -240,7 +256,7 @@ export default async function UserDetailPage({ params }: PageProps) {
         </HudPanel>
       </section>
 
-      <UserAnnotations handle={handle} canSetCitizenId={!user.citizenId} />
+      <Annotations handle={handle} canSetCitizenId={!user.citizenId} />
     </div>
   );
 }

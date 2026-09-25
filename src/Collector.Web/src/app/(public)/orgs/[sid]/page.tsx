@@ -4,7 +4,7 @@ import { HudPanel } from "@/components/hud/HudPanel";
 import { HudBadge } from "@/components/hud/HudBadge";
 import { HudStatTile } from "@/components/hud/HudStatTile";
 import { OrgMembersTable } from "@/components/org/OrgMembersTable";
-import { TimelineChart } from "@/components/charts/TimelineChart";
+import { TimelineChart } from "@/components/charts/lazy";
 import {
   getOrg,
   getOrgGrowth,

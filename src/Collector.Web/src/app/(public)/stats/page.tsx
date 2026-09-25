@@ -1,9 +1,7 @@
 import { HudPanel } from "@/components/hud/HudPanel";
 import { HudStatTile } from "@/components/hud/HudStatTile";
 import { TopOrgsTable } from "@/components/stats/TopOrgsTable";
-import { TimelineChart } from "@/components/charts/TimelineChart";
-import { ArchetypeDonut } from "@/components/charts/ArchetypeDonut";
-import { MemberActivityBar } from "@/components/charts/MemberActivityBar";
+import { ArchetypeDonut, MemberActivityBar, TimelineChart } from "@/components/charts/lazy";
 import {
   getArchetypeStats,
   getMemberActivity,
@@ -14,7 +12,8 @@ import {
 import { redirectIfUnauthorized, requireAuthCtx } from "@/lib/auth/server-api";
 import { formatRelative } from "@/lib/utils/format";
 
-export const revalidate = 120;
+// Reads the session cookie: rendered on every request (the API caches the figures).
+export const dynamic = "force-dynamic";
 
 export default async function StatsPage() {
   // On tolère que certains endpoints échouent ; chaque panel gère son propre cas vide.
