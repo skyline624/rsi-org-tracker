@@ -81,6 +81,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<CurrentUserAccessor>();
         services.AddScoped<TokenService>();
         services.AddScoped<AuthService>();
+        services.AddHostedService<RefreshTokenCleanupService>();
         services.AddScoped<ApiKeyService>();
         services.AddScoped<ActivityLogService>();
         services.AddScoped<StatsService>();

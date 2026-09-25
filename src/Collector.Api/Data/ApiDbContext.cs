@@ -43,7 +43,10 @@ public class ApiDbContext : DbContext
             e.ToTable("refresh_tokens");
             e.HasKey(t => t.Id);
             e.HasIndex(t => t.TokenHash).IsUnique();
+            e.HasIndex(t => t.FamilyId);
             e.Property(t => t.TokenHash).IsRequired();
+            e.Property(t => t.FamilyId).HasMaxLength(64);
+            e.Property(t => t.RevokedReason).HasMaxLength(32);
             e.HasOne(t => t.ApiUser)
                 .WithMany(u => u.RefreshTokens)
                 .HasForeignKey(t => t.ApiUserId);

@@ -89,11 +89,11 @@ public class AuthController : ControllerBase
     // Change the current user's password (requires the current password).
     [Authorize]
     [HttpPost("change-password")]
-    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request, CancellationToken ct)
+    public async Task<ActionResult<AuthResponse>> ChangePassword([FromBody] ChangePasswordRequest request, CancellationToken ct)
     {
         var userId = _currentUser.UserId ?? throw new UnauthorizedAccessException();
-        await _authService.ChangePasswordAsync(userId, request.CurrentPassword, request.NewPassword, ct);
+        var result = await _authService.ChangePasswordAsync(userId, request.CurrentPassword, request.NewPassword, ct);
         await _activityLog.LogAsync("change_password", userId, "user", userId.ToString(), _currentUser.IpAddress, ct);
-        return Ok(new { message = "Password changed" });
+        return Ok(result);
     }
 }

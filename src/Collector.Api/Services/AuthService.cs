@@ -7,6 +7,14 @@ namespace Collector.Api.Services;
 
 public class AuthService
 {
+    /// <summary>
+    /// A rotated refresh token presented again within this window is treated as a race
+    /// between two tabs refreshing at once, not as theft.
+    /// </summary>
+    public static readonly TimeSpan RotationGracePeriod = TimeSpan.FromSeconds(30);
+
+    private const string RevokedByRotation = "rotated";
+
     private readonly ApiDbContext _db;
     private readonly TokenService _tokenService;
     private readonly IConfiguration _configuration;
@@ -59,23 +67,47 @@ public class AuthService
 
     public async Task<AuthResponse> RefreshAsync(string refreshToken, CancellationToken ct = default)
     {
+        var now = DateTime.UtcNow;
         var tokenHash = _tokenService.HashToken(refreshToken);
         var stored = await _db.RefreshTokens
             .Include(t => t.ApiUser)
             .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct)
             ?? throw new UnauthorizedAccessException("Invalid refresh token");
 
-        if (stored.IsRevoked || stored.ExpiresAt < DateTime.UtcNow)
+        if (stored.IsRevoked)
+        {
+            var concurrentRefresh = stored.RevokedReason == RevokedByRotation
+                && stored.RevokedAt is { } revokedAt
+                && now - revokedAt <= RotationGracePeriod;
+            if (!concurrentRefresh)
+            {
+                // A token that was already rotated away is being replayed: assume it leaked
+                // and end the whole session, including the tokens issued after it.
+                _logger.LogWarning(
+                    "Refresh token reuse detected for user {UserId} (family {FamilyId}); revoking the session",
+                    stored.ApiUserId, stored.FamilyId);
+                await RevokeFamilyAsync(stored, "reuse_detected", now, ct);
+                throw new UnauthorizedAccessException("Refresh token expired or revoked");
+            }
+        }
+
+        if (stored.ExpiresAt < now)
             throw new UnauthorizedAccessException("Refresh token expired or revoked");
 
         if (stored.ApiUser.IsBanned)
             throw new UnauthorizedAccessException("Account is banned");
 
-        // Rotate: revoke old token
-        stored.IsRevoked = true;
+        // Tokens issued before families existed start one on their first rotation.
+        stored.FamilyId ??= NewFamilyId();
+        if (!stored.IsRevoked)
+        {
+            stored.IsRevoked = true;
+            stored.RevokedAt = now;
+            stored.RevokedReason = RevokedByRotation;
+        }
 
-        var response = await CreateAuthResponseAsync(stored.ApiUser, ct);
-        stored.ReplacedByTokenHash = _tokenService.HashToken(response.RefreshToken);
+        var response = await CreateAuthResponseAsync(stored.ApiUser, stored.FamilyId, ct);
+        stored.ReplacedByTokenHash ??= _tokenService.HashToken(response.RefreshToken);
         await _db.SaveChangesAsync(ct);
         return response;
     }
@@ -86,10 +118,26 @@ public class AuthService
         var stored = await _db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
         if (stored is not null)
         {
-            stored.IsRevoked = true;
-            await _db.SaveChangesAsync(ct);
+            await RevokeFamilyAsync(stored, "logout", DateTime.UtcNow, ct);
         }
     }
+
+    /// <summary>Revokes every still-valid token of <paramref name="token"/>'s session.</summary>
+    private async Task RevokeFamilyAsync(RefreshToken token, string reason, DateTime now, CancellationToken ct)
+    {
+        var family = token.FamilyId is null
+            ? new List<RefreshToken> { token }
+            : await _db.RefreshTokens.Where(t => t.FamilyId == token.FamilyId).ToListAsync(ct);
+        foreach (var t in family.Where(t => !t.IsRevoked))
+        {
+            t.IsRevoked = true;
+            t.RevokedAt = now;
+            t.RevokedReason = reason;
+        }
+        await _db.SaveChangesAsync(ct);
+    }
+
+    private static string NewFamilyId() => Guid.NewGuid().ToString("N");
 
     public async Task<ApiUser?> GetMeAsync(long userId, CancellationToken ct = default) =>
         await _db.ApiUsers.FindAsync([userId], ct);
@@ -120,14 +168,26 @@ public class AuthService
         user.PasswordResetTokenExpiry = null;
         user.UpdatedAt = DateTime.UtcNow;
 
-        // Revoke all refresh tokens
-        var tokens = await _db.RefreshTokens.Where(t => t.ApiUserId == user.Id && !t.IsRevoked).ToListAsync(ct);
-        foreach (var t in tokens) t.IsRevoked = true;
+        await RevokeAllSessionsAsync(user.Id, "password_reset", ct);
+    }
 
+    private async Task RevokeAllSessionsAsync(long userId, string reason, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var tokens = await _db.RefreshTokens.Where(t => t.ApiUserId == userId && !t.IsRevoked).ToListAsync(ct);
+        foreach (var t in tokens)
+        {
+            t.IsRevoked = true;
+            t.RevokedAt = now;
+            t.RevokedReason = reason;
+        }
         await _db.SaveChangesAsync(ct);
     }
 
-    private async Task<AuthResponse> CreateAuthResponseAsync(ApiUser user, CancellationToken ct)
+    private Task<AuthResponse> CreateAuthResponseAsync(ApiUser user, CancellationToken ct) =>
+        CreateAuthResponseAsync(user, NewFamilyId(), ct);
+
+    private async Task<AuthResponse> CreateAuthResponseAsync(ApiUser user, string familyId, CancellationToken ct)
     {
         var (accessToken, expiresAt) = _tokenService.GenerateAccessToken(user);
         var rawRefresh = _tokenService.GenerateRefreshToken();
@@ -137,6 +197,7 @@ public class AuthService
         {
             ApiUserId = user.Id,
             TokenHash = _tokenService.HashToken(rawRefresh),
+            FamilyId = familyId,
             CreatedAt = DateTime.UtcNow,
             ExpiresAt = DateTime.UtcNow.AddDays(days),
         });
@@ -151,8 +212,11 @@ public class AuthService
         };
     }
 
-    /// <summary>Changes the password after verifying the current one. Keeps the session active.</summary>
-    public async Task ChangePasswordAsync(long userId, string currentPassword, string newPassword, CancellationToken ct = default)
+    /// <summary>
+    /// Changes the password after verifying the current one, ends every existing session
+    /// (other devices included) and returns fresh tokens for the caller.
+    /// </summary>
+    public async Task<AuthResponse> ChangePasswordAsync(long userId, string currentPassword, string newPassword, CancellationToken ct = default)
     {
         var user = await _db.ApiUsers.FirstOrDefaultAsync(u => u.Id == userId, ct)
             ?? throw new UnauthorizedAccessException("User not found");
@@ -162,7 +226,8 @@ public class AuthService
 
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
         user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        await RevokeAllSessionsAsync(user.Id, "password_changed", ct);
+        return await CreateAuthResponseAsync(user, ct);
     }
 
     public static UserDto MapUser(ApiUser user) => new()
