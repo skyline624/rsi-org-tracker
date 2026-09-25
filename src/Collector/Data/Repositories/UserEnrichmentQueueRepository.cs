@@ -14,14 +14,35 @@ public class UserEnrichmentQueueRepository : Repository<UserEnrichmentQueue>, IU
     public static TimeSpan RetryDelay(int failures)
         => TimeSpan.FromHours(Math.Min(Math.Pow(4, Math.Max(failures, 1) - 1), 24));
 
+    /// <summary>Queue priorities, highest first: 1 for members new to an org, 0 for the rest.</summary>
+    private static readonly int[] PrioritiesHighFirst = [1, 0];
+
+    /// <summary>
+    /// Due rows of one priority, oldest first. With Enriched and Priority as equalities the
+    /// (Enriched, Priority, QueuedAt) index returns them in order; a single query ordered
+    /// by Priority DESC, QueuedAt sorted every pending row (150-330 ms per batch on the
+    /// production copy).
+    /// </summary>
+    public static IQueryable<UserEnrichmentQueue> DueQuery(IQueryable<UserEnrichmentQueue> source, int priority, DateTime now)
+    {
+        // A parameter, not the constant false: EF writes "== false" as NOT (Enriched),
+        // which the index cannot seek on.
+        var pending = false;
+        return source
+            .Where(q => q.Enriched == pending && q.Priority == priority
+                && (q.NextAttemptAt == null || q.NextAttemptAt <= now))
+            .OrderBy(q => q.QueuedAt);
+    }
+
     public async Task<IReadOnlyList<UserEnrichmentQueue>> GetPendingAsync(int limit, DateTime now, CancellationToken ct = default)
     {
-        return await DbSet
-            .Where(q => !q.Enriched && (q.NextAttemptAt == null || q.NextAttemptAt <= now))
-            .OrderByDescending(q => q.Priority)
-            .ThenBy(q => q.QueuedAt)
-            .Take(limit)
-            .ToListAsync(ct);
+        var rows = new List<UserEnrichmentQueue>(limit);
+        foreach (var priority in PrioritiesHighFirst)
+        {
+            if (rows.Count >= limit) break;
+            rows.AddRange(await DueQuery(DbSet, priority, now).Take(limit - rows.Count).ToListAsync(ct));
+        }
+        return rows;
     }
 
     public async Task<int> CountPendingAsync(DateTime now, CancellationToken ct = default)

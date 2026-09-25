@@ -110,6 +110,17 @@ public sealed class EnrichmentQueueLifecycleTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task NewcomersComeFirst_ThenTheOldestRows()
+    {
+        await QueueAsync("old-orphan", priority: 0, queuedAt: Now.AddDays(-3));
+        await QueueAsync("newcomer", priority: 1, queuedAt: Now.AddHours(-1));
+        await QueueAsync("recent-orphan", priority: 0, queuedAt: Now.AddDays(-1));
+
+        (await DueAsync(Now)).Should().Equal("newcomer", "old-orphan", "recent-orphan");
+        (await Create().Queue.GetPendingAsync(2, Now)).Select(q => q.UserHandle).Should().Equal("newcomer", "old-orphan");
+    }
+
+    [Fact]
     public async Task Count_OnlyCountsRowsThatAreDue()
     {
         await QueueAsync("due");
