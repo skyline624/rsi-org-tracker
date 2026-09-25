@@ -38,8 +38,11 @@ public class ChangesController : ControllerBase
         if (!string.IsNullOrWhiteSpace(userHandle))
             query = query.Where(c => c.UserHandle == userHandle);
 
+        // Newest recorded first: the rowid order needs no sort (ORDER BY Timestamp scanned
+        // and sorted every event), and with a type filter the ChangeType index is
+        // already in rowid order.
         var changes = await query
-            .OrderByDescending(c => c.Timestamp)
+            .OrderByDescending(c => c.Id)
             .Take(limit)
             .ToListAsync(ct);
 
@@ -79,7 +82,7 @@ public class ChangesController : ControllerBase
     {
         var changes = await _db.ChangeEvents
             .Where(c => c.ChangeType == changeType)
-            .OrderByDescending(c => c.Timestamp)
+            .OrderByDescending(c => c.Id)
             .Take(limit)
             .ToListAsync(ct);
         return Ok(changes.Select(MapChange).ToList());
