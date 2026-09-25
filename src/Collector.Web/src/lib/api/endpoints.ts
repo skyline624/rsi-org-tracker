@@ -19,7 +19,6 @@ import type {
   OrganizationMemberDto,
   OrganizationTopDto,
   PaginatedResponse,
-  RegisterRequest,
   StatsOverviewDto,
   TimelinePointDto,
   UserDto,
@@ -180,8 +179,6 @@ export const getChangesSummary = (days = 30, ctx: Ctx = {}) =>
   apiGet<ChangeSummaryDto[]>("/api/changes/summary", { days }, ctx);
 
 // ── Auth ────────────────────────────────────────────────────
-export const register = (body: RegisterRequest) =>
-  apiPost<UserDto>("/api/auth/register", body);
 export const login = (body: LoginRequest) =>
   apiPost<AuthResponse>("/api/auth/login", body);
 export const refresh = (refreshToken: string) =>
@@ -190,13 +187,6 @@ export const logout = (refreshToken: string) =>
   apiPost<{ message: string }>("/api/auth/logout", { refreshToken });
 export const me = (bearerToken: string) =>
   apiGet<UserDto>("/api/auth/me", undefined, { bearerToken });
-export const forgotPassword = (email: string) =>
-  apiPost<{ message: string }>("/api/auth/forgot-password", { email });
-export const resetPassword = (token: string, newPassword: string) =>
-  apiPost<{ message: string }>("/api/auth/reset-password", {
-    token,
-    newPassword,
-  });
 
 // ── ApiKeys ─────────────────────────────────────────────────
 export const listApiKeys = (bearerToken: string) =>

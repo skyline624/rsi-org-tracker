@@ -78,12 +78,6 @@ export function TopNav({ authenticated }: { authenticated: boolean }) {
               >
                 LOGIN
               </Link>
-              <Link
-                href="/register"
-                className="font-mono text-xs uppercase tracking-[0.2em] text-hud-cyan hover:text-hud-orange"
-              >
-                ENLIST
-              </Link>
             </>
           )}
         </div>

@@ -53,8 +53,4 @@ public class TokenService
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
-
-    public string GenerateResetToken() =>
-        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
-            .Replace("+", "-").Replace("/", "_").Replace("=", "");
 }

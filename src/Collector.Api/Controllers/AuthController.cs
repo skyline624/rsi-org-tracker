@@ -24,18 +24,8 @@ public class AuthController : ControllerBase
         _currentUser = currentUser;
     }
 
-    // Le site est privé : l'inscription libre est fermée. Seul un administrateur
-    // authentifié peut créer de nouveaux comptes.
-    [Authorize(Policy = "AdminOnly")]
-    [HttpPost("register")]
-    public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request, CancellationToken ct)
-    {
-        var user = await _authService.RegisterAsync(request, ct);
-        await _activityLog.LogAsync("register", user.Id, "user", user.Id.ToString(), _currentUser.IpAddress, ct);
-
-        var loginResult = await _authService.LoginAsync(new LoginRequest(request.Username, request.Password), ct);
-        return Ok(loginResult);
-    }
+    // Le site est privé : pas d'inscription ni de réinitialisation par email. Les comptes
+    // sont créés par un administrateur (POST /api/admin/users).
 
     // Public key set used by the web front to verify access tokens (RS256).
     [AllowAnonymous]
@@ -44,6 +34,7 @@ public class AuthController : ControllerBase
         Ok(new { keys = new[] { keys.PublicJwk } });
 
     [EnableRateLimiting(RateLimitingExtensions.LoginPolicy)]
+    [AllowAnonymous]
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
@@ -53,6 +44,7 @@ public class AuthController : ControllerBase
     }
 
     [EnableRateLimiting(RateLimitingExtensions.LoginPolicy)]
+    [AllowAnonymous]
     [HttpPost("refresh")]
     public async Task<ActionResult<AuthResponse>> Refresh([FromBody] RefreshRequest request, CancellationToken ct)
     {
@@ -60,6 +52,7 @@ public class AuthController : ControllerBase
         return Ok(result);
     }
 
+    [AllowAnonymous]
     [HttpPost("logout")]
     public async Task<IActionResult> Logout([FromBody] LogoutRequest request, CancellationToken ct)
     {
@@ -75,20 +68,6 @@ public class AuthController : ControllerBase
         var user = await _authService.GetMeAsync(userId, ct)
             ?? throw new NotFoundException("User not found");
         return Ok(AuthService.MapUser(user));
-    }
-
-    [HttpPost("forgot-password")]
-    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request, CancellationToken ct)
-    {
-        await _authService.ForgotPasswordAsync(request.Email, ct);
-        return Ok(new { message = "If that email is registered, a reset token has been sent." });
-    }
-
-    [HttpPost("reset-password")]
-    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request, CancellationToken ct)
-    {
-        await _authService.ResetPasswordAsync(request.Token, request.NewPassword, ct);
-        return Ok(new { message = "Password reset successfully" });
     }
 
     // Change the current user's password (requires the current password).

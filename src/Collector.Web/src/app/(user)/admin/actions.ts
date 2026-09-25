@@ -8,14 +8,14 @@ export interface ActionResult {
   error?: string;
 }
 
-/** Manually create a tracked person (redacted / roster-only). Admin only. */
+/** Manually create a tracked person (redacted / roster-only). Open to every signed-in account (see AdminDataController). */
 export async function createEntityAction(input: {
   handle?: string;
   displayName?: string;
   citizenId?: number;
 }): Promise<ActionResult> {
   const session = await getSession();
-  if (!session?.isAdmin) return { ok: false, error: "Accès réservé aux administrateurs." };
+  if (!session) return { ok: false, error: "Non authentifié." };
 
   try {
     await apiPost(
@@ -33,7 +33,7 @@ export async function createEntityAction(input: {
   }
 }
 
-/** Manually create an organization (private / undiscovered). Admin only. */
+/** Manually create an organization (private / undiscovered). Open to every signed-in account (see AdminDataController). */
 export async function createOrganizationAction(input: {
   sid: string;
   name: string;
@@ -42,7 +42,7 @@ export async function createOrganizationAction(input: {
   description?: string;
 }): Promise<ActionResult> {
   const session = await getSession();
-  if (!session?.isAdmin) return { ok: false, error: "Accès réservé aux administrateurs." };
+  if (!session) return { ok: false, error: "Non authentifié." };
 
   try {
     await apiPost(

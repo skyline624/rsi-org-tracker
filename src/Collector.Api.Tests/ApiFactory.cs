@@ -1,6 +1,9 @@
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using Collector.Data;
 using Collector.Extensions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
@@ -37,6 +40,14 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             File.SetUnixFileMode(keyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
 
+        // tracker.db is migrated by the collector in production; give the API the same schema.
+        using (var trackerDb = new ServiceCollection()
+                   .AddDbContext<TrackerDbContext>(o => o.UseSqlite($"Data Source={Path.Combine(_dataDir, "tracker.db")}"))
+                   .BuildServiceProvider())
+        {
+            trackerDb.EnsureDatabaseAsync(_dataDir).GetAwaiter().GetResult();
+        }
+
         Environment.SetEnvironmentVariable(DataDirectory.EnvironmentVariable, _dataDir);
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__JwtSecret", LegacyJwtSecret);
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__Jwt__PrivateKeyPath", keyPath);
@@ -47,6 +58,16 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__UserPermitLimit", "100000");
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__AnonymousPermitLimit", "100000");
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__Login__PermitLimit", "100000");
+    }
+
+    /// <summary>An HTTP client authenticated as a freshly created account.</summary>
+    public async Task<HttpClient> SignedInClientAsync(string username, bool isAdmin = false)
+    {
+        await CreateAccountAsync(username, "correct horse battery", isAdmin);
+        var login = await LoginAsync(username, "correct horse battery");
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", login.AccessToken);
+        return client;
     }
 
     /// <summary>Logs in and returns the raw auth response body.</summary>

@@ -8,7 +8,6 @@ using Microsoft.EntityFrameworkCore;
 namespace Collector.Api.Controllers;
 
 [ApiController]
-[AllowAnonymous]
 // Probes (systemd health checks, deploy script) must never be throttled.
 [DisableRateLimiting]
 public class HealthController : ControllerBase
@@ -25,9 +24,11 @@ public class HealthController : ControllerBase
         _logger = logger;
     }
 
+    [AllowAnonymous]
     [HttpGet("/")]
     public IActionResult Root() => Ok(new { status = "ok" });
 
+    [AllowAnonymous]
     [HttpGet("api/health")]
     public IActionResult Health() => Ok(new { status = "ok" });
 
@@ -46,9 +47,11 @@ public class HealthController : ControllerBase
         });
     }
 
+    [AllowAnonymous]
     [HttpGet("api/health/live")]
     public IActionResult Live() => Ok(new { status = "alive" });
 
+    [AllowAnonymous]
     [HttpGet("api/health/ready")]
     public async Task<IActionResult> Ready(CancellationToken ct)
     {

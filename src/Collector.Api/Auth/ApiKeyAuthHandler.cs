@@ -29,10 +29,10 @@ public class ApiKeyAuthHandler : AuthenticationHandler<ApiKeySchemeOptions>
     {
         string? rawKey = null;
 
+        // Header only: a key in the query string ends up in access logs, proxies and
+        // browser history.
         if (Request.Headers.TryGetValue("x-api-key", out var headerValue))
             rawKey = headerValue.ToString();
-        else if (Request.Query.TryGetValue("api_key", out var queryValue))
-            rawKey = queryValue.ToString();
 
         if (string.IsNullOrWhiteSpace(rawKey))
             return AuthenticateResult.NoResult();

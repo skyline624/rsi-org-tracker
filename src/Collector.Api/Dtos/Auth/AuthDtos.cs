@@ -17,13 +17,6 @@ public record RefreshRequest([Required] string RefreshToken);
 
 public record LogoutRequest([Required] string RefreshToken);
 
-public record ForgotPasswordRequest([Required, EmailAddress] string Email);
-
-public record ResetPasswordRequest(
-    [Required] string Token,
-    [Required, MinLength(8)] string NewPassword
-);
-
 public record ChangePasswordRequest(
     [Required] string CurrentPassword,
     [Required, MinLength(8)] string NewPassword

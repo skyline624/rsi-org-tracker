@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Collector.Api.Dtos.Admin;
 using Collector.Data.Repositories;
 using Collector.Models;
@@ -64,7 +65,18 @@ public class AdminDataController : ControllerBase
     public async Task<ActionResult<OrganizationSummaryDto>> CreateOrganization(
         [FromBody] CreateOrganizationRequest request, CancellationToken ct)
     {
-        var sid = request.Sid.Trim();
+        // RSI SIDs are upper-case, at most 10 characters of A-Z, 0-9, '_' and '-'. Storing
+        // them normalised keeps lookups (which upper-case the SID) working.
+        var sid = request.Sid.Trim().ToUpperInvariant();
+        if (!SidPattern.IsMatch(sid))
+            return BadRequest(new { message = "SID must be 1-10 characters: A-Z, 0-9, '_' or '-'." });
+        if (!IsSafeImageUrl(request.UrlImage))
+            return BadRequest(new { message = "Image URL must be an http(s) URL or a site-relative path." });
+
+        // Only for organizations the tracker doesn't know: a manual snapshot of a known SID
+        // would become its latest snapshot and hide the collected data.
+        if (await _orgs.GetLatestBySidAsync(sid, ct) is not null)
+            return Conflict(new { message = $"Organization '{sid}' already exists." });
 
         // A manual org is just a new snapshot in `organizations`. The collector only ever
         // appends further snapshots (keyed by Sid + Timestamp), so it never overwrites or
@@ -92,6 +104,16 @@ public class AdminDataController : ControllerBase
             Source = org.Source,
             Timestamp = org.Timestamp,
         });
+    }
+
+    private static readonly Regex SidPattern = new("^[A-Z0-9_-]{1,10}$", RegexOptions.Compiled);
+
+    private static bool IsSafeImageUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return true;
+        if (url.StartsWith('/') && !url.StartsWith("//")) return true; // RSI-relative (/media/…)
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
     }
 
     private static TrackedEntityDto ToDto(TrackedEntity e) => new()

@@ -12,9 +12,12 @@ import { firstForwardedIp } from "@/lib/api/client-ip";
  * BFF (Backend-for-Frontend) des routes `/api/auth/*`.
  *
  * Proxifie vers `Collector.Api` et intercepte les réponses :
- *   - `login` / `refresh` / `register` → pose `sct_access` + `sct_refresh` en httpOnly
- *   - `logout` → supprime les cookies après relais
- *   - autres (`forgot-password`, `reset-password`) → relais pur
+ *   - `login` / `refresh` → pose `sct_access` + `sct_refresh` en httpOnly
+ *   - `logout` → supprime les cookies et renvoie vers /login
+ *   - `me` → relais avec le JWT du cookie
+ *
+ * Pas d'inscription ni de réinitialisation de mot de passe : les comptes sont
+ * créés par un administrateur.
  *
  * Le navigateur ne voit jamais les tokens : ils sont posés en `HttpOnly`, et
  * retirés du corps renvoyé (seuls `user` et `expiresAt` sont relayés). Le
@@ -28,15 +31,7 @@ const API_BASE = process.env.API_BASE_URL ?? "http://127.0.0.1:5000";
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 // Les segments de route qui existent côté API .NET.
-const ALLOWED_SEGMENTS = new Set([
-  "login",
-  "register",
-  "refresh",
-  "logout",
-  "me",
-  "forgot-password",
-  "reset-password",
-]);
+const ALLOWED_SEGMENTS = new Set(["login", "refresh", "logout", "me"]);
 
 function proxyHeaders(req: NextRequest): HeadersInit {
   const h: Record<string, string> = {
@@ -113,14 +108,13 @@ async function handle(
   let responseBody = text;
   let auth: AuthResponse | null = null;
 
-  // Post login/register/refresh — extraire AuthResponse pour poser les cookies.
+  // Post login/refresh — extraire AuthResponse pour poser les cookies.
   if (
     upstream.ok &&
-    (segment === "login" || segment === "refresh" || segment === "register")
+    (segment === "login" || segment === "refresh")
   ) {
     try {
       const parsed = JSON.parse(text) as AuthResponse;
-      // `register` renvoie UserDto, pas AuthResponse — skip si pas de token.
       if (parsed?.accessToken && parsed?.refreshToken && parsed?.expiresAt) {
         auth = parsed;
         responseBody = JSON.stringify({

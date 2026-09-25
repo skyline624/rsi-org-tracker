@@ -208,35 +208,6 @@ public class AuthService
     public async Task<ApiUser?> GetMeAsync(long userId, CancellationToken ct = default) =>
         await _db.ApiUsers.FindAsync([userId], ct);
 
-    public async Task ForgotPasswordAsync(string email, CancellationToken ct = default)
-    {
-        var user = await _db.ApiUsers.FirstOrDefaultAsync(u => u.Email == email, ct);
-        if (user is null) return; // Don't leak user existence
-
-        user.PasswordResetToken = _tokenService.GenerateResetToken();
-        user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);
-        user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct);
-
-        // SECURITY: never log the reset token itself. A separate delivery channel (email)
-        // must carry the token out-of-band. We only log that a reset was requested.
-        _logger.LogInformation("Password reset token generated for user {Username}", user.Username);
-    }
-
-    public async Task ResetPasswordAsync(string token, string newPassword, CancellationToken ct = default)
-    {
-        var user = await _db.ApiUsers.FirstOrDefaultAsync(
-            u => u.PasswordResetToken == token && u.PasswordResetTokenExpiry > DateTime.UtcNow, ct)
-            ?? throw new ValidationException("Invalid or expired reset token");
-
-        user.PasswordHash = _passwords.Hash(newPassword);
-        user.PasswordResetToken = null;
-        user.PasswordResetTokenExpiry = null;
-        user.UpdatedAt = DateTime.UtcNow;
-
-        await RevokeAllSessionsAsync(user.Id, "password_reset", ct);
-    }
-
     private async Task RevokeAllSessionsAsync(long userId, string reason, CancellationToken ct)
     {
         var now = DateTime.UtcNow;

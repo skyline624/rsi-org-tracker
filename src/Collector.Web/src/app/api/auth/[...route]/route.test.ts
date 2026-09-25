@@ -73,6 +73,18 @@ describe("BFF /api/auth", () => {
     expect(res.headers.get("set-cookie")).toMatch(/sct_refresh=;/);
   });
 
+  it.each(["register", "forgot-password", "reset-password"])(
+    "no longer relays the removed %s flow",
+    async (segment) => {
+      stubUpstream(200, {});
+
+      const res = await call(segment, "{}");
+
+      expect(res.status).toBe(404);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+
   it("marks every auth response as non-cacheable", async () => {
     stubUpstream(401, { title: "Invalid credentials" });
 

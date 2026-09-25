@@ -101,6 +101,10 @@ public class MembershipsController : ControllerBase
         var existing = await _memberships.GetByEntityAndOrgAsync(entityId, sid, ct);
         if (existing is not null)
         {
+            // Same rule as delete: only the author (or an admin) may rewrite a link.
+            if (existing.AuthorApiUserId != _currentUser.UserId && !_currentUser.IsAdmin)
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    new { message = "Only the author of this membership or an admin can change it." });
             existing.Rank = rank;
             existing.Via = via;
             existing.SinceDate = since;

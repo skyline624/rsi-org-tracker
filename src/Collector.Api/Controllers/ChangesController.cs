@@ -62,7 +62,6 @@ public class ChangesController : ControllerBase
     }
 
     [HttpGet("organizations/{sid}")]
-    [AllowAnonymous]
     public async Task<ActionResult<IReadOnlyList<ChangeEventDto>>> GetByOrg(
         string sid,
         [FromQuery] int limit = 100,
@@ -73,7 +72,6 @@ public class ChangesController : ControllerBase
     }
 
     [HttpGet("types/{changeType}")]
-    [AllowAnonymous]
     public async Task<ActionResult<IReadOnlyList<ChangeEventDto>>> GetByType(
         string changeType,
         [FromQuery] int limit = 100,

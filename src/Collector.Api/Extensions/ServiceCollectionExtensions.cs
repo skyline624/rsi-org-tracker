@@ -70,6 +70,9 @@ public static class ServiceCollectionExtensions
             opts.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder("Smart")
                 .RequireAuthenticatedUser()
                 .Build();
+            // Private site: an endpoint without [Authorize] is still authenticated;
+            // anonymous ones opt out explicitly with [AllowAnonymous].
+            opts.FallbackPolicy = opts.DefaultPolicy;
             opts.AddPolicy("AdminOnly",
                 policy => policy
                     .AddAuthenticationSchemes("Smart")

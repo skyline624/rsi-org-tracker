@@ -30,7 +30,7 @@ export interface AuthDeps {
 }
 
 // Seules ces routes sont accessibles sans compte.
-const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password"];
+const PUBLIC_PREFIXES = ["/login"];
 
 /** En dessous, l'access token est renouvelé avant d'être utilisé. */
 const REFRESH_MARGIN_SECONDS = 60;

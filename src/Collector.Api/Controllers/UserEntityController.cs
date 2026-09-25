@@ -1,3 +1,4 @@
+using Collector.Api.Auth;
 using Collector.Api.Dtos.Admin;
 using Collector.Data.Repositories;
 using Collector.Models;
@@ -19,12 +20,15 @@ public class UserEntityController : ControllerBase
     private readonly IEntityResolver _resolver;
     private readonly ITrackedEntityRepository _entities;
     private readonly IUserRepository _users;
+    private readonly CurrentUserAccessor _currentUser;
 
-    public UserEntityController(IEntityResolver resolver, ITrackedEntityRepository entities, IUserRepository users)
+    public UserEntityController(
+        IEntityResolver resolver, ITrackedEntityRepository entities, IUserRepository users, CurrentUserAccessor currentUser)
     {
         _resolver = resolver;
         _entities = entities;
         _users = users;
+        _currentUser = currentUser;
     }
 
     /// <summary>Current internal entity for a handle (null if none exists yet).</summary>
@@ -47,6 +51,12 @@ public class UserEntityController : ControllerBase
         var entityId = await _resolver.ResolveOrCreateAsync(user?.CitizenId, handle, user?.DisplayName, ct);
         var entity = await _entities.GetByIdAsync(entityId, ct);
         if (entity is null) return NotFound();
+
+        // Anyone signed in may fill a missing citizen id; correcting one already set is
+        // reserved to admins, so a member cannot silently re-attribute someone's identity.
+        if (entity.CitizenId is { } current && current != req.CitizenId && !_currentUser.IsAdmin)
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new { message = "Seul un administrateur peut modifier un citizen id déjà attribué." });
 
         if (holder is not null && holder.Id != entity.Id)
             return Conflict(new { message = $"Le citizen id {req.CitizenId} est déjà attribué à une autre personne." });

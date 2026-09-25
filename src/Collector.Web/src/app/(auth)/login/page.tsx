@@ -1,6 +1,5 @@
 "use client";
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { HudPanel } from "@/components/hud/HudPanel";
@@ -78,12 +77,6 @@ export default function LoginPage() {
             <HudButton type="submit" disabled={loading}>
               {loading ? "AUTHENTICATING…" : "CONNECT"}
             </HudButton>
-            <Link
-              href="/forgot-password"
-              className="font-mono text-[11px] uppercase tracking-[0.15em] text-hud-text-dim hover:text-hud-cyan"
-            >
-              FORGOT?
-            </Link>
           </div>
         </form>
       </HudPanel>

@@ -38,6 +38,12 @@ describe("authenticateRequest", () => {
     expect(passedThrough(res)).toBe(true);
   });
 
+  it("treats the removed password-reset pages like any private page", async () => {
+    const res = await authenticateRequest(request("/forgot-password"), deps({}));
+
+    expect(res.status).toBe(307);
+  });
+
   it("redirects to the public /login URL when there is no session", async () => {
     const res = await authenticateRequest(request("/orgs/OPPF"), deps({}));
 
