@@ -4,8 +4,7 @@ Frontend Next.js 15 au-dessus de `Collector.Api`. Thème cockpit HUD cyan/orange
 
 ## Prérequis
 
-- Node 20+ (testé sur 25)
-- pnpm 10+
+- Node 22, pnpm 10.27 via corepack
 - Backend `Collector.Api` démarré sur `http://127.0.0.1:5000`
 
 ## Dev
@@ -26,29 +25,30 @@ pnpm dev
 - `src/components/hud/` — Atomes HUD réutilisables (`HudPanel`, `HudButton`, `HudStatTile`, `HudDataGrid`…).
 - `src/lib/api/` — Client fetch typé, types miroirs des DTOs C#, parsing ProblemDetails.
 - `src/app/api/auth/[...route]/route.ts` — BFF proxy qui pose les cookies httpOnly.
-- `src/middleware.ts` — Guard des routes authentifiées.
+- `src/middleware.ts` — Vérifie la signature du JWT à chaque page (hors `/login`), renouvelle la session, pose la CSP.
 
-## Pages (v1)
+## Pages
+
+Toutes demandent un compte (créé par un administrateur), sauf `/login`.
 
 | Route | Description |
 |---|---|
-| `/` | Landing "Citizen Intel" avec stats live |
-| `/orgs` | Catalogue organisations (filtres, pagination) |
-| `/orgs/[sid]` | Fiche organisation (members, growth, changes) |
-| `/users` | Recherche utilisateurs |
-| `/users/[handle]` | Profil utilisateur (historique handles, orgs, changes) |
-| `/stats` | Dashboard global (timeline, archetypes, top orgs, activity) |
-| `/changes` | Flux changelog type terminal (polling 30 s) |
-| `/login`, `/register`, `/forgot-password` | Auth |
-| `/dashboard` | Tuiles favoris + derniers changes (auth) |
-| `/favorites` | Gestion locale des favoris (auth) |
-| `/settings` | Profil, API keys, mot de passe (auth) |
+| `/` | Accueil avec chiffres clés |
+| `/orgs` | Catalogue organisations (filtres, tri et pagination côté API) |
+| `/orgs/[sid]` | Fiche organisation : membres actuels et anciens paginés, croissance, activité, notes |
+| `/users` | Recherche de citoyens (2 caractères minimum) |
+| `/users/[handle]` | Profil : organisations, historique des handles, changements, annotations |
+| `/stats` | Tableau de bord global (graphiques chargés à la demande) |
+| `/changes` | Flux des changements, rafraîchi toutes les 30 s |
+| `/dashboard`, `/favorites` | Favoris et derniers changements |
+| `/settings` | Mot de passe, jeton Discord |
+| `/accounts`, `/admin` | Comptes et ajouts manuels (administrateurs pour les comptes) |
 
 ## Tests
 
 ```bash
-pnpm test:e2e        # Playwright headless
-pnpm test:e2e:ui     # Playwright mode UI
+pnpm typecheck && pnpm test   # TypeScript + vitest
+pnpm test:e2e                 # smoke Playwright (voir le README racine : E2E_BASE_URL, E2E_USERNAME, E2E_PASSWORD)
 ```
 
 ## Build prod
@@ -60,4 +60,4 @@ pnpm build && pnpm start
 ## Dépannage
 
 - **Redirection vers /login en boucle** : la session a expiré ou le JWT est refusé (le front vérifie la signature avec `GET /api/auth/jwks` ; côté API, vérifier `Api:Jwt:PrivateKeyPath`).
-- **CORS error** : vérifier `http://localhost:3000` dans `Collector.Api/appsettings.json` → `Api:Cors:AllowedOrigins`.
+- **Page d'erreur « Something failed »** : l'API ne répond pas ; le « REF » affiché se retrouve dans les journaux du serveur Next.
