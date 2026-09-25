@@ -22,7 +22,7 @@ let remoteKeySet: JWTVerifyGetKey | undefined;
 /** JWKS de l'API, mis en cache (et rechargé si un `kid` inconnu apparaît). */
 function apiKeySet(): JWTVerifyGetKey {
   remoteKeySet ??= createRemoteJWKSet(
-    new URL("/api/auth/jwks", process.env.API_BASE_URL ?? "https://localhost:5001"),
+    new URL("/api/auth/jwks", process.env.API_BASE_URL ?? "http://127.0.0.1:5000"),
     { cacheMaxAge: 10 * 60_000, cooldownDuration: 30_000 },
   );
   return remoteKeySet;

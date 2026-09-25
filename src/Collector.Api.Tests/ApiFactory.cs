@@ -41,10 +41,6 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__JwtSecret", LegacyJwtSecret);
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__Jwt__PrivateKeyPath", keyPath);
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__AdminApiKey", AdminApiKey);
-
-        // Talk HTTPS directly: UseHttpsRedirection answers plain-HTTP calls with a 307,
-        // and HttpClient drops the Authorization header when it follows the redirect.
-        ClientOptions.BaseAddress = new Uri("https://localhost");
     }
 
     /// <summary>Logs in and returns the raw auth response body.</summary>

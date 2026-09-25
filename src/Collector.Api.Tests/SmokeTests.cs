@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
 namespace Collector.Api.Tests;
@@ -12,6 +13,22 @@ public class SmokeTests(ApiFactory factory)
     public async Task Health_IsAnonymous()
     {
         var response = await factory.CreateClient().GetAsync("/api/health");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task PlainHttpOnLoopback_IsServedWithoutRedirect()
+    {
+        // The API only listens on 127.0.0.1 behind the web front: no HTTPS hop, so the
+        // front no longer needs NODE_TLS_REJECT_UNAUTHORIZED=0.
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("http://localhost"),
+            AllowAutoRedirect = false,
+        });
+
+        var response = await client.GetAsync("/api/health");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }

@@ -6,8 +6,7 @@ Frontend Next.js 15 au-dessus de `Collector.Api`. Thème cockpit HUD cyan/orange
 
 - Node 20+ (testé sur 25)
 - pnpm 10+
-- Backend `Collector.Api` démarré sur `https://localhost:5001`
-- Certificat de dev trusté : `dotnet dev-certs https --trust`
+- Backend `Collector.Api` démarré sur `http://127.0.0.1:5000`
 
 ## Dev
 
@@ -60,6 +59,5 @@ pnpm build && pnpm start
 
 ## Dépannage
 
-- **Erreur TLS au fetch de l'API en RSC** : vérifier `NODE_TLS_REJECT_UNAUTHORIZED=0` dans `.env.local` (dev only).
-- **Redirection vers /login en boucle** : la session a expiré ou le JWT est refusé par l'API (vérifier `Api:JwtSecret` côté backend).
+- **Redirection vers /login en boucle** : la session a expiré ou le JWT est refusé (le front vérifie la signature avec `GET /api/auth/jwks` ; côté API, vérifier `Api:Jwt:PrivateKeyPath`).
 - **CORS error** : vérifier `http://localhost:3000` dans `Collector.Api/appsettings.json` → `Api:Cors:AllowedOrigins`.

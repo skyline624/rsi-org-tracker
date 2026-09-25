@@ -21,7 +21,7 @@ import type { AuthResponse } from "@/lib/api/types";
  * automatiquement pour les appels au même host.
  */
 
-const API_BASE = process.env.API_BASE_URL ?? "https://localhost:5001";
+const API_BASE = process.env.API_BASE_URL ?? "http://127.0.0.1:5000";
 
 // Les réponses d'auth ne doivent jamais être mises en cache (proxy, navigateur).
 const NO_STORE = { "Cache-Control": "no-store" } as const;

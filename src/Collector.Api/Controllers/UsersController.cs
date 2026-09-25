@@ -1,3 +1,4 @@
+using Collector.Api.Errors;
 using Collector.Api.Dtos.Common;
 using Collector.Api.Dtos.Users;
 using Collector.Api.Dtos.Changes;
@@ -137,7 +138,7 @@ public class UsersController : ControllerBase
     public async Task<ActionResult<UserProfileDto>> GetByHandle(string handle, CancellationToken ct)
     {
         var user = await _userRepo.GetByHandleAsync(handle, ct)
-            ?? throw new KeyNotFoundException($"User '{handle}' not found");
+            ?? throw new NotFoundException($"User '{handle}' not found");
         return Ok(user.ToProfileDto());
     }
 
@@ -145,7 +146,7 @@ public class UsersController : ControllerBase
     public async Task<ActionResult<UserProfileDto>> GetByCitizenId(int id, CancellationToken ct)
     {
         var user = await _userRepo.GetByCitizenIdAsync(id, ct)
-            ?? throw new KeyNotFoundException($"User with citizen ID {id} not found");
+            ?? throw new NotFoundException($"User with citizen ID {id} not found");
         return Ok(user.ToProfileDto());
     }
 
@@ -166,11 +167,11 @@ public class UsersController : ControllerBase
         // Fallback: look in handle history
         var history = await _handleHistoryRepo.GetByHandleAsync(handle, ct);
         if (history is null)
-            throw new KeyNotFoundException($"Handle '{handle}' not found");
+            throw new NotFoundException($"Handle '{handle}' not found");
 
         var currentUser = await _userRepo.GetByCitizenIdAsync(history.CitizenId, ct);
         if (currentUser is null)
-            throw new KeyNotFoundException($"Handle '{handle}' not found");
+            throw new NotFoundException($"Handle '{handle}' not found");
 
         return Ok(new UserResolveDto
         {
@@ -237,7 +238,7 @@ public class UsersController : ControllerBase
         }
 
         if (citizenId is null)
-            throw new KeyNotFoundException($"User '{handle}' not found");
+            throw new NotFoundException($"User '{handle}' not found");
 
         var history = await _handleHistoryRepo.GetByCitizenIdAsync(citizenId.Value, ct);
         return Ok(history.Select(h => h.ToDto()).ToList());

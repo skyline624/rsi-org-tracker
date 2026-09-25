@@ -1,3 +1,4 @@
+using Collector.Api.Errors;
 using Collector.Api.Data;
 using Collector.Api.Dtos.Admin;
 using Collector.Api.Dtos.Auth;
@@ -70,7 +71,7 @@ public class AdminController : ControllerBase
         var user = await _db.ApiUsers
             .Include(u => u.ApiKeys)
             .FirstOrDefaultAsync(u => u.Id == id, ct)
-            ?? throw new KeyNotFoundException($"User {id} not found");
+            ?? throw new NotFoundException($"User {id} not found");
 
         return Ok(new AdminUserDto
         {
@@ -89,7 +90,7 @@ public class AdminController : ControllerBase
     public async Task<ActionResult<AdminUserDto>> UpdateUser(long id, [FromBody] UpdateUserRequest request, CancellationToken ct)
     {
         var user = await _db.ApiUsers.Include(u => u.ApiKeys).FirstOrDefaultAsync(u => u.Id == id, ct)
-            ?? throw new KeyNotFoundException($"User {id} not found");
+            ?? throw new NotFoundException($"User {id} not found");
 
         if (request.IsAdmin.HasValue) user.IsAdmin = request.IsAdmin.Value;
         if (request.IsBanned.HasValue) user.IsBanned = request.IsBanned.Value;
@@ -114,7 +115,7 @@ public class AdminController : ControllerBase
     public async Task<IActionResult> DeleteUser(long id, CancellationToken ct)
     {
         var user = await _db.ApiUsers.FindAsync([id], ct)
-            ?? throw new KeyNotFoundException($"User {id} not found");
+            ?? throw new NotFoundException($"User {id} not found");
 
         // activity_logs has a NO ACTION FK to api_users; detach them (keep the audit
         // trail) so deleting a user who has logged in doesn't violate the constraint.

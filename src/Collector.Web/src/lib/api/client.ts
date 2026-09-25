@@ -18,7 +18,7 @@ import { ApiError } from "./errors";
  *   - 4xx/5xx → ApiError avec ProblemDetails parsé.
  */
 
-const API_BASE = process.env.API_BASE_URL ?? "https://localhost:5001";
+const API_BASE = process.env.API_BASE_URL ?? "http://127.0.0.1:5000";
 
 export interface FetchOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";

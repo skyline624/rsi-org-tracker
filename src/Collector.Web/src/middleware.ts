@@ -10,7 +10,7 @@ import { authenticateRequest, type RefreshedTokens } from "@/lib/auth/request-au
  * sont renouvelés avec le refresh token ; voir `authenticateRequest`.
  */
 
-const API_BASE = process.env.API_BASE_URL ?? "https://localhost:5001";
+const API_BASE = process.env.API_BASE_URL ?? "http://127.0.0.1:5000";
 
 async function refreshWithApi(refreshToken: string): Promise<RefreshedTokens | null> {
   const res = await fetch(`${API_BASE}/api/auth/refresh`, {

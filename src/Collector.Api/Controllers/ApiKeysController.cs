@@ -1,3 +1,4 @@
+using Collector.Api.Errors;
 using Collector.Api.Auth;
 using Collector.Api.Dtos.ApiKeys;
 using Collector.Api.Services;
@@ -23,23 +24,23 @@ public class ApiKeysController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ApiKeyDto>>> List(CancellationToken ct)
     {
-        var userId = _currentUser.UserId ?? throw new UnauthorizedAccessException();
+        var userId = _currentUser.UserId ?? throw new AuthenticationFailedException("Authentication required");
         return Ok(await _apiKeyService.ListAsync(userId, ct));
     }
 
     [HttpGet("{id:long}")]
     public async Task<ActionResult<ApiKeyDto>> Get(long id, CancellationToken ct)
     {
-        var userId = _currentUser.UserId ?? throw new UnauthorizedAccessException();
+        var userId = _currentUser.UserId ?? throw new AuthenticationFailedException("Authentication required");
         var key = await _apiKeyService.GetAsync(id, userId, ct)
-            ?? throw new KeyNotFoundException("API key not found");
+            ?? throw new NotFoundException("API key not found");
         return Ok(key);
     }
 
     [HttpPost]
     public async Task<ActionResult<CreatedApiKeyDto>> Create([FromBody] CreateApiKeyRequest request, CancellationToken ct)
     {
-        var userId = _currentUser.UserId ?? throw new UnauthorizedAccessException();
+        var userId = _currentUser.UserId ?? throw new AuthenticationFailedException("Authentication required");
         var (rawKey, dto) = await _apiKeyService.CreateAsync(userId, request, ct);
 
         var result = new CreatedApiKeyDto
@@ -58,9 +59,9 @@ public class ApiKeysController : ControllerBase
     [HttpDelete("{id:long}")]
     public async Task<IActionResult> Revoke(long id, CancellationToken ct)
     {
-        var userId = _currentUser.UserId ?? throw new UnauthorizedAccessException();
+        var userId = _currentUser.UserId ?? throw new AuthenticationFailedException("Authentication required");
         var ok = await _apiKeyService.RevokeAsync(id, userId, ct);
-        if (!ok) throw new KeyNotFoundException("API key not found");
+        if (!ok) throw new NotFoundException("API key not found");
         return NoContent();
     }
 }

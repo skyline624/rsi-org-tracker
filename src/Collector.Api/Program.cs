@@ -16,11 +16,8 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     ContentRootPath = AppContext.BaseDirectory,
 });
 
-// Secrets are layered: appsettings (empty placeholders) → user-secrets (dev-only, never
-// deployed) → COLLECTOR_API_* env vars (prod). AddUserSecrets is always attempted with
-// optional:true so the dev path works without manually setting ASPNETCORE_ENVIRONMENT;
-// in production the store simply doesn't exist and is silently skipped.
-builder.Configuration.AddUserSecrets<Program>(optional: true);
+// Secrets are layered: appsettings (empty placeholders) → user-secrets (Development only,
+// added by CreateBuilder) → COLLECTOR_API_* env vars (production, /etc/sc-tracker/api.env).
 builder.Configuration.AddEnvironmentVariables(prefix: "COLLECTOR_API_");
 
 Log.Logger = new LoggerConfiguration()
@@ -88,13 +85,6 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-// Strict transport security (prod) — only emits the header when HTTPS is actually used.
-builder.Services.AddHsts(options =>
-{
-    options.Preload = true;
-    options.IncludeSubDomains = true;
-    options.MaxAge = TimeSpan.FromDays(365);
-});
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -165,11 +155,8 @@ app.UseMiddleware<RequestCorrelationMiddleware>();
 app.UseSerilogRequestLogging();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-if (!app.Environment.IsDevelopment())
-{
-    app.UseHsts();
-}
-app.UseHttpsRedirection();
+// No HTTPS redirection / HSTS: the API only listens on 127.0.0.1 and is reached by the
+// web front over plain HTTP; browsers never talk to it (TLS terminates at nginx).
 
 // Swagger is off by default; enable explicitly through Api:Swagger:Enabled (or Development env).
 var swaggerEnabled = app.Environment.IsDevelopment()

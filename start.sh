@@ -4,7 +4,7 @@
 #
 #   ┌─────────────────────┬──────────────────────┐
 #   │  Collector (main)   │   Collector.Api      │
-#   │  src/Collector      │   :5001 HTTPS        │
+#   │  src/Collector      │   :5000 HTTP (local) │
 #   ├─────────────────────┴──────────────────────┤
 #   │         Collector.Web (Next.js)            │
 #   │              :3000 HTTP                    │
@@ -96,7 +96,7 @@ tmux set-option -t "$SESSION" pane-border-format " #T " 2>/dev/null || true
 echo
 echo "✓ Session tmux '$SESSION' créée avec 3 panes :"
 echo "    • collector  (src/Collector)"
-echo "    • api        (src/Collector.Api → https://localhost:5001)"
+echo "    • api        (src/Collector.Api → http://127.0.0.1:5000)"
 echo "    • web        (src/Collector.Web → http://localhost:3000)"
 echo
 echo "Commandes utiles :"

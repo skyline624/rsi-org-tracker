@@ -1,3 +1,4 @@
+using Collector.Api.Errors;
 using Collector.Api.Dtos.Organizations;
 using Collector.Api.Dtos.Common;
 using Collector.Api.Extensions;
@@ -118,7 +119,7 @@ public class OrganizationsController : ControllerBase
             .Where(o => o.Sid == sid)
             .OrderByDescending(o => o.Timestamp)
             .FirstOrDefaultAsync(ct)
-            ?? throw new KeyNotFoundException($"Organization '{sid}' not found");
+            ?? throw new NotFoundException($"Organization '{sid}' not found");
 
         // Override the stale Phase 1 MembersCount with the real Phase 3 headcount.
         // Some orgs have MembersCount=0 from the RSI search API even though they

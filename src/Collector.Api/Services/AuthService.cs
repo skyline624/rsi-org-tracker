@@ -1,3 +1,4 @@
+using Collector.Api.Errors;
 using Collector.Api.Data;
 using Collector.Api.Dtos.Auth;
 using Collector.Api.Models;
@@ -31,9 +32,9 @@ public class AuthService
     public async Task<ApiUser> RegisterAsync(RegisterRequest request, CancellationToken ct = default)
     {
         if (await _db.ApiUsers.AnyAsync(u => u.Username == request.Username, ct))
-            throw new InvalidOperationException("Username already taken");
+            throw new ConflictException("Username already taken");
         if (await _db.ApiUsers.AnyAsync(u => u.Email == request.Email, ct))
-            throw new InvalidOperationException("Email already registered");
+            throw new ConflictException("Email already registered");
 
         var user = new ApiUser
         {
@@ -51,13 +52,13 @@ public class AuthService
     public async Task<AuthResponse> LoginAsync(LoginRequest request, CancellationToken ct = default)
     {
         var user = await _db.ApiUsers.FirstOrDefaultAsync(u => u.Username == request.Username, ct)
-            ?? throw new UnauthorizedAccessException("Invalid username or password");
+            ?? throw new AuthenticationFailedException("Invalid username or password");
 
         if (user.IsBanned)
-            throw new UnauthorizedAccessException("Account is banned");
+            throw new AuthenticationFailedException("Account is banned");
 
         if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
-            throw new UnauthorizedAccessException("Invalid username or password");
+            throw new AuthenticationFailedException("Invalid username or password");
 
         user.LastLoginAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
@@ -72,7 +73,7 @@ public class AuthService
         var stored = await _db.RefreshTokens
             .Include(t => t.ApiUser)
             .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct)
-            ?? throw new UnauthorizedAccessException("Invalid refresh token");
+            ?? throw new AuthenticationFailedException("Invalid refresh token");
 
         if (stored.IsRevoked)
         {
@@ -87,15 +88,15 @@ public class AuthService
                     "Refresh token reuse detected for user {UserId} (family {FamilyId}); revoking the session",
                     stored.ApiUserId, stored.FamilyId);
                 await RevokeFamilyAsync(stored, "reuse_detected", now, ct);
-                throw new UnauthorizedAccessException("Refresh token expired or revoked");
+                throw new AuthenticationFailedException("Refresh token expired or revoked");
             }
         }
 
         if (stored.ExpiresAt < now)
-            throw new UnauthorizedAccessException("Refresh token expired or revoked");
+            throw new AuthenticationFailedException("Refresh token expired or revoked");
 
         if (stored.ApiUser.IsBanned)
-            throw new UnauthorizedAccessException("Account is banned");
+            throw new AuthenticationFailedException("Account is banned");
 
         // Tokens issued before families existed start one on their first rotation.
         stored.FamilyId ??= NewFamilyId();
@@ -161,7 +162,7 @@ public class AuthService
     {
         var user = await _db.ApiUsers.FirstOrDefaultAsync(
             u => u.PasswordResetToken == token && u.PasswordResetTokenExpiry > DateTime.UtcNow, ct)
-            ?? throw new ArgumentException("Invalid or expired reset token");
+            ?? throw new ValidationException("Invalid or expired reset token");
 
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
         user.PasswordResetToken = null;
@@ -219,10 +220,10 @@ public class AuthService
     public async Task<AuthResponse> ChangePasswordAsync(long userId, string currentPassword, string newPassword, CancellationToken ct = default)
     {
         var user = await _db.ApiUsers.FirstOrDefaultAsync(u => u.Id == userId, ct)
-            ?? throw new UnauthorizedAccessException("User not found");
+            ?? throw new AuthenticationFailedException("User not found");
 
         if (!BCrypt.Net.BCrypt.Verify(currentPassword, user.PasswordHash))
-            throw new UnauthorizedAccessException("Current password is incorrect");
+            throw new AuthenticationFailedException("Current password is incorrect");
 
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
         user.UpdatedAt = DateTime.UtcNow;

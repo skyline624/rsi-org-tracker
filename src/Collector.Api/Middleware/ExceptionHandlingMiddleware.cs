@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Collector.Api.Errors;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Collector.Api.Middleware;
@@ -41,31 +42,35 @@ public class ExceptionHandlingMiddleware
         {
             // Client disconnected — do not log as an error.
         }
+        catch (DomainException ex)
+        {
+            // Expected client-side failure (bad credentials, unknown id…): no stack trace.
+            _logger.LogInformation(
+                "{Status} {Title} for {Method} {Path}: {Message} CorrelationId={CorrelationId}",
+                ex.StatusCode, ex.Title, context.Request.Method, context.Request.Path, ex.Message,
+                context.TraceIdentifier);
+            await WriteProblemAsync(context, ex.StatusCode, ex.Title, ex.Message, null);
+        }
         catch (Exception ex)
         {
-            var correlationId = context.TraceIdentifier;
             _logger.LogError(ex,
                 "Unhandled exception for {Method} {Path} CorrelationId={CorrelationId}",
-                context.Request.Method, context.Request.Path, correlationId);
-            await WriteProblemAsync(context, ex, correlationId);
+                context.Request.Method, context.Request.Path, context.TraceIdentifier);
+
+            // Only developer mode surfaces the exception message and type — never in production.
+            var dev = _env.IsDevelopment();
+            await WriteProblemAsync(context, (int)HttpStatusCode.InternalServerError, "Internal Server Error",
+                dev ? ex.Message : null, dev ? ex.GetType().FullName : null);
         }
     }
 
-    private async Task WriteProblemAsync(HttpContext context, Exception ex, string correlationId)
+    private async Task WriteProblemAsync(
+        HttpContext context, int status, string title, string? detail, string? exceptionType)
     {
         if (context.Response.HasStarted)
         {
             return;
         }
-
-        var (status, title) = ex switch
-        {
-            UnauthorizedAccessException => ((int)HttpStatusCode.Unauthorized, "Unauthorized"),
-            KeyNotFoundException => ((int)HttpStatusCode.NotFound, "Not Found"),
-            ArgumentException => ((int)HttpStatusCode.BadRequest, "Bad Request"),
-            InvalidOperationException => ((int)HttpStatusCode.Conflict, "Conflict"),
-            _ => ((int)HttpStatusCode.InternalServerError, "Internal Server Error"),
-        };
 
         var problem = new ProblemDetails
         {
@@ -73,14 +78,13 @@ public class ExceptionHandlingMiddleware
             Title = title,
             Status = status,
             Instance = context.Request.Path,
+            Detail = detail,
         };
-
-        // Only developer mode surfaces the exception message and type — never in production.
-        if (_env.IsDevelopment())
+        if (exceptionType is not null)
         {
-            problem.Detail = ex.Message;
-            problem.Extensions["exceptionType"] = ex.GetType().FullName;
+            problem.Extensions["exceptionType"] = exceptionType;
         }
+        var correlationId = context.TraceIdentifier;
 
         problem.Extensions["correlationId"] = correlationId;
 

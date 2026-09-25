@@ -17,7 +17,7 @@ for arg in "$@"; do
   esac
 done
 
-API_URL="${API_BASE_URL:-https://localhost:5001}"
+API_URL="${API_BASE_URL:-http://127.0.0.1:5000}"
 HEALTH="${API_URL}/api/health"
 MAX_WAIT=120   # seconds
 INTERVAL=2     # seconds between retries

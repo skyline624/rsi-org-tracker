@@ -1,3 +1,4 @@
+using Collector.Api.Errors;
 using Collector.Api.Auth;
 using Collector.Api.Dtos.Auth;
 using Collector.Api.Services;
@@ -66,9 +67,9 @@ public class AuthController : ControllerBase
     [Authorize]
     public async Task<ActionResult<UserDto>> Me(CancellationToken ct)
     {
-        var userId = _currentUser.UserId ?? throw new UnauthorizedAccessException();
+        var userId = _currentUser.UserId ?? throw new AuthenticationFailedException("Authentication required");
         var user = await _authService.GetMeAsync(userId, ct)
-            ?? throw new KeyNotFoundException("User not found");
+            ?? throw new NotFoundException("User not found");
         return Ok(AuthService.MapUser(user));
     }
 
@@ -91,7 +92,7 @@ public class AuthController : ControllerBase
     [HttpPost("change-password")]
     public async Task<ActionResult<AuthResponse>> ChangePassword([FromBody] ChangePasswordRequest request, CancellationToken ct)
     {
-        var userId = _currentUser.UserId ?? throw new UnauthorizedAccessException();
+        var userId = _currentUser.UserId ?? throw new AuthenticationFailedException("Authentication required");
         var result = await _authService.ChangePasswordAsync(userId, request.CurrentPassword, request.NewPassword, ct);
         await _activityLog.LogAsync("change_password", userId, "user", userId.ToString(), _currentUser.IpAddress, ct);
         return Ok(result);

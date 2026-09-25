@@ -11,8 +11,8 @@ WEB_HEALTH_URL=${SC_WEB_HEALTH_URL:-http://127.0.0.1:3000/login}
 log() { printf '[%s %s] %s\n' "${0##*/}" "$(date +%H:%M:%S)" "$*"; }
 die() { log "ERROR: $*"; exit 1; }
 
-# Waits up to ~60 s for $1 to answer 200. -L follows the API's http→https
-# redirect while it still listens on both (until lot 6); -k accepts its dev cert.
+# Waits up to ~60 s for $1 to answer 200 (-L/-k kept so older releases, which still
+# redirected the API to HTTPS with a dev cert, can be rolled back to).
 wait_http_200() {
     local url=$1 code
     for _ in $(seq 1 30); do
