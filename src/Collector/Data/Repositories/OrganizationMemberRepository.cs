@@ -47,10 +47,11 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
             .ToListAsync(ct);
     }
 
-    public async Task<IReadOnlyList<string>> GetOrgSidsForHandleAsync(string userHandle, CancellationToken ct = default)
+    public async Task<IReadOnlyList<string>> GetOrgSidsForHandleAsync(
+        string userHandle, bool activeOnly, CancellationToken ct = default)
     {
         return await DbSet
-            .Where(m => m.UserHandle == userHandle)
+            .Where(m => m.UserHandle == userHandle && (!activeOnly || m.IsActive))
             .Select(m => m.OrgSid)
             .Distinct()
             .ToListAsync(ct);

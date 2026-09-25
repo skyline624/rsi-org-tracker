@@ -44,7 +44,7 @@ public sealed class MemberReadsTests : IAsyncLifetime
     {
         var db = NewDb();
 
-        var sids = await new OrganizationMemberRepository(db).GetOrgSidsForHandleAsync("pilot");
+        var sids = await new OrganizationMemberRepository(db).GetOrgSidsForHandleAsync("pilot", activeOnly: false);
 
         sids.Should().BeEquivalentTo(["ALPHA", "BETA"]);
         db.ChangeTracker.Entries().Should().BeEmpty();

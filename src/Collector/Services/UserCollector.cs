@@ -304,7 +304,7 @@ public class UserCollector : IUserCollector
 
                 if (isNewHandle)
                 {
-                    foreach (var orgSid in await _memberRepo.GetOrgSidsForHandleAsync(handle, ct))
+                    foreach (var orgSid in await _memberRepo.GetOrgSidsForHandleAsync(handle, activeOnly: true, ct))
                     {
                         changeEvents.Add(new ChangeEvent
                         {
@@ -330,7 +330,7 @@ public class UserCollector : IUserCollector
                 // reuse of the handle by another (soon-to-be-updated) user.
                 var oldHandle = existingByCitizenId.UserHandle;
 
-                foreach (var orgSid in await _memberRepo.GetOrgSidsForHandleAsync(handle, ct))
+                foreach (var orgSid in await _memberRepo.GetOrgSidsForHandleAsync(handle, activeOnly: false, ct))
                 {
                     changeEvents.Add(new ChangeEvent
                     {

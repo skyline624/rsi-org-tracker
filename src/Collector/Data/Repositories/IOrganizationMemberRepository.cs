@@ -5,8 +5,8 @@ namespace Collector.Data.Repositories;
 public interface IOrganizationMemberRepository : IRepository<OrganizationMember>
 {
     Task<IReadOnlyList<OrganizationMember>> GetByOrgSidAsync(string orgSid, DateTime? asOf = null, CancellationToken ct = default);
-    /// <summary>Distinct organizations a handle has ever appeared in.</summary>
-    Task<IReadOnlyList<string>> GetOrgSidsForHandleAsync(string userHandle, CancellationToken ct = default);
+    /// <summary>Distinct organizations a handle appears in: currently, or ever when <paramref name="activeOnly"/> is false.</summary>
+    Task<IReadOnlyList<string>> GetOrgSidsForHandleAsync(string userHandle, bool activeOnly, CancellationToken ct = default);
     Task UpdateCitizenIdByHandleAsync(string handle, int citizenId, CancellationToken ct = default);
     /// <summary>
     /// Marks every active row of the org whose <see cref="OrganizationMember.Timestamp"/>
