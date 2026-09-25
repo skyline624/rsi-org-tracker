@@ -50,8 +50,8 @@ public class MembershipsController : ControllerBase
         var rows = await _memberships.GetByEntityIdAsync(entity.Id, ct);
         if (rows.Count == 0) return Ok(Array.Empty<MembershipDto>());
 
-        var names = await _orgs.GetLatestBySidsAsync(rows.Select(r => r.OrgSid).Distinct().ToList(), ct);
-        return Ok(rows.Select(r => ToDto(r, names.TryGetValue(r.OrgSid, out var o) ? o.Name : null)).ToList());
+        var names = await _orgs.GetLatestNamesBySidsAsync(rows.Select(r => r.OrgSid).Distinct().ToList(), ct);
+        return Ok(rows.Select(r => ToDto(r, names.GetValueOrDefault(r.OrgSid))).ToList());
     }
 
     [HttpGet("organizations/{sid}/manual-members")]
@@ -60,11 +60,11 @@ public class MembershipsController : ControllerBase
         var rows = await _memberships.GetByOrgSidAsync(sid, ct);
         if (rows.Count == 0) return Ok(Array.Empty<OrgMemberDto>());
 
+        var people = await _entities.GetByIdsAsync(rows.Select(r => r.TrackedEntityId).Distinct().ToList(), ct);
         var result = new List<OrgMemberDto>(rows.Count);
         foreach (var r in rows)
         {
-            var e = await _entities.GetByIdAsync(r.TrackedEntityId, ct);
-            if (e?.CurrentHandle is null) continue;
+            if (!people.TryGetValue(r.TrackedEntityId, out var e) || e.CurrentHandle is null) continue;
             result.Add(new OrgMemberDto
             {
                 Handle = e.CurrentHandle,

@@ -11,6 +11,9 @@ public interface IOrganizationRepository : IRepository<Organization>
     Task<Dictionary<string, Organization>> GetLatestContentBySidsAsync(IEnumerable<string> sids, CancellationToken ct = default);
     Task<Dictionary<string, Organization>> GetLatestBySidsAsync(IEnumerable<string> sids, CancellationToken ct = default);
 
+    /// <summary>Latest name of each SID, without reading anything else of the snapshots.</summary>
+    Task<Dictionary<string, string>> GetLatestNamesBySidsAsync(IReadOnlyCollection<string> sids, CancellationToken ct = default);
+
     /// <summary>
     /// Updates the most-recent Organization snapshot's MembersCount to the authoritative
     /// value collected by Phase 3. Phase 1's MembersCount comes from the RSI search API

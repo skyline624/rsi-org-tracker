@@ -15,4 +15,9 @@ public class TrackedEntityRepository : Repository<TrackedEntity>, ITrackedEntity
         // person is resolved (and not duplicated) whether accessed as "zeno1" or "Zeno1".
         => await DbSet.FirstOrDefaultAsync(
             e => e.CurrentHandle != null && e.CurrentHandle.ToLower() == handle.ToLower(), ct);
+
+    public async Task<Dictionary<long, TrackedEntity>> GetByIdsAsync(IReadOnlyCollection<long> ids, CancellationToken ct = default)
+        => ids.Count == 0
+            ? new Dictionary<long, TrackedEntity>()
+            : await DbSet.AsNoTracking().Where(e => ids.Contains(e.Id)).ToDictionaryAsync(e => e.Id, ct);
 }

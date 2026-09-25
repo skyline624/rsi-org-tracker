@@ -47,6 +47,22 @@ public class OrganizationRepository : Repository<Organization>, IOrganizationRep
         return orgs.ToDictionary(o => o.Sid, StringComparer.OrdinalIgnoreCase);
     }
 
+    public async Task<Dictionary<string, string>> GetLatestNamesBySidsAsync(
+        IReadOnlyCollection<string> sids, CancellationToken ct = default)
+    {
+        if (sids.Count == 0) return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var latest = DbSet
+            .Where(o => sids.Contains(o.Sid))
+            .GroupBy(o => o.Sid)
+            .Select(g => new { Sid = g.Key, Timestamp = g.Max(o => o.Timestamp) });
+        var names = await DbSet
+            .AsNoTracking()
+            .Join(latest, o => new { o.Sid, o.Timestamp }, l => new { l.Sid, l.Timestamp }, (o, _) => new { o.Sid, o.Name })
+            .ToListAsync(ct);
+        return names.ToDictionary(n => n.Sid, n => n.Name, StringComparer.OrdinalIgnoreCase);
+    }
+
     public async Task<Dictionary<string, Organization>> GetLatestContentBySidsAsync(IEnumerable<string> sids, CancellationToken ct = default)
     {
         var sidList = sids.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
