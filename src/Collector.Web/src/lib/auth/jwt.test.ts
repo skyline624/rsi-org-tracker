@@ -1,6 +1,14 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { SignJWT, UnsecuredJWT, generateKeyPair, type CryptoKey } from "jose";
-import { JWT_AUDIENCE, JWT_ISSUER, verifyAccessToken } from "./jwt";
+import {
+  SignJWT,
+  UnsecuredJWT,
+  createRemoteJWKSet,
+  customFetch,
+  exportJWK,
+  generateKeyPair,
+  type CryptoKey,
+} from "jose";
+import { JWT_AUDIENCE, JWT_ISSUER, keepingLastKeys, verifyAccessToken } from "./jwt";
 
 let privateKey: CryptoKey;
 let publicKey: CryptoKey;
@@ -76,5 +84,28 @@ describe("verifyAccessToken", () => {
 
   it("rejects garbage", async () => {
     expect(await verifyAccessToken("x", publicKey)).toBeNull();
+  });
+});
+
+describe("keepingLastKeys", () => {
+  it("keeps verifying with the last keys served while the API cannot be reached", async () => {
+    const jwk = { ...(await exportJWK(publicKey)), alg: "RS256", kid: "k1" };
+    let apiUp = true;
+    const remote = createRemoteJWKSet(new URL("http://api.invalid/api/auth/jwks"), {
+      cacheMaxAge: 0, // every verification wants fresh keys
+      [customFetch]: async () => {
+        if (!apiUp) throw new TypeError("fetch failed");
+        return new Response(JSON.stringify({ keys: [jwk] }));
+      },
+    });
+    const keys = keepingLastKeys(remote);
+    const jwt = await token().sign(privateKey);
+    expect(await verifyAccessToken(jwt, keys)).not.toBeNull();
+
+    apiUp = false;
+
+    expect((await verifyAccessToken(jwt, keys))?.sub).toBe("42");
+    const other = await generateKeyPair("RS256");
+    expect(await verifyAccessToken(await token().sign(other.privateKey), keys)).toBeNull();
   });
 });

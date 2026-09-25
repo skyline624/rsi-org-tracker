@@ -43,7 +43,7 @@ public class AuthController : ControllerBase
         return Ok(result);
     }
 
-    [EnableRateLimiting(RateLimitingExtensions.LoginPolicy)]
+    [EnableRateLimiting(RateLimitingExtensions.RefreshPolicy)]
     [AllowAnonymous]
     [HttpPost("refresh")]
     public async Task<ActionResult<AuthResponse>> Refresh([FromBody] RefreshRequest request, CancellationToken ct)

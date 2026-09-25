@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import type { JWTPayload } from "jose";
-import { authenticateRequest, type AuthDeps } from "./request-auth";
+import {
+  authenticateRequest,
+  type AuthDeps,
+  type RefreshOutcome,
+  type RefreshedTokens,
+} from "./request-auth";
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -20,11 +25,13 @@ function request(path: string, cookies: Record<string, string> = {}) {
 
 function deps(
   tokens: Record<string, JWTPayload>,
-  refreshed: { accessToken: string; refreshToken: string; expiresAt: string } | null = null,
+  refreshed: RefreshedTokens | "rejected" | "unavailable" = "rejected",
 ): AuthDeps & { refresh: ReturnType<typeof vi.fn> } {
+  const outcome: RefreshOutcome =
+    typeof refreshed === "string" ? { status: refreshed } : { status: "ok", tokens: refreshed };
   return {
     verify: vi.fn(async (t: string) => tokens[t] ?? null),
-    refresh: vi.fn(async () => refreshed),
+    refresh: vi.fn(async () => outcome),
   };
 }
 
@@ -134,7 +141,7 @@ describe("authenticateRequest", () => {
   });
 
   it("forwards the client IP with the refresh call", async () => {
-    const d = deps({}, null);
+    const d = deps({});
     const req = request("/orgs", { sct_refresh: "rt-ip" });
     req.headers.set("x-forwarded-for", "203.0.113.7");
 
@@ -158,11 +165,41 @@ describe("authenticateRequest", () => {
   it("redirects and clears cookies when the refresh is refused", async () => {
     const res = await authenticateRequest(
       request("/orgs", { sct_access: "expired", sct_refresh: "revoked" }),
-      deps({}, null),
+      deps({}, "rejected"),
     );
 
     expect(res.status).toBe(307);
     expect(setCookie(res)).toMatch(/sct_refresh=;/);
+  });
+
+  it("keeps the session and answers 503 when the API cannot renew it (restart, deploy)", async () => {
+    const res = await authenticateRequest(
+      request("/orgs", { sct_access: "expired", sct_refresh: "rt-down" }),
+      deps({}, "unavailable"),
+    );
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBeTruthy();
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(setCookie(res)).toBe("");
+  });
+
+  it("still lets a token valid a few more seconds through when the API is unavailable", async () => {
+    const res = await authenticateRequest(
+      request("/orgs", { sct_access: "soon", sct_refresh: "rt-down-2" }),
+      deps({ soon: { sub: "1", exp: nowSec() + 20 } }, "unavailable"),
+    );
+
+    expect(passedThrough(res)).toBe(true);
+  });
+
+  it("treats a refresh call that throws as the API being unavailable", async () => {
+    const d = deps({});
+    d.refresh.mockRejectedValue(new TypeError("fetch failed"));
+
+    const res = await authenticateRequest(request("/orgs", { sct_refresh: "rt-throws" }), d);
+
+    expect(res.status).toBe(503);
   });
 
   it("refreshes a given refresh token only once for concurrent requests", async () => {
@@ -173,9 +210,12 @@ describe("authenticateRequest", () => {
         new Promise((resolve) => {
           release = () =>
             resolve({
-              accessToken: "a",
-              refreshToken: "r",
-              expiresAt: new Date(Date.now() + 900_000).toISOString(),
+              status: "ok",
+              tokens: {
+                accessToken: "a",
+                refreshToken: "r",
+                expiresAt: new Date(Date.now() + 900_000).toISOString(),
+              },
             });
         }),
     );

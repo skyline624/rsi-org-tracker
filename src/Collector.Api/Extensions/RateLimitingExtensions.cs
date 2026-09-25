@@ -8,8 +8,14 @@ namespace Collector.Api.Extensions;
 
 public static class RateLimitingExtensions
 {
-    /// <summary>Stricter per-IP budget for login and refresh (credential stuffing).</summary>
+    /// <summary>Stricter per-IP budget for login (credential stuffing).</summary>
     public const string LoginPolicy = "login";
+
+    /// <summary>
+    /// The same budget for refresh, counted apart: failed logins from an address must
+    /// not stop the sessions of everyone else behind it from being renewed.
+    /// </summary>
+    public const string RefreshPolicy = "refresh";
 
     /// <summary>
     /// Budgets per signed-in user and per anonymous client IP, plus the login policy.
@@ -41,6 +47,12 @@ public static class RateLimitingExtensions
             {
                 var login = Settings(ctx).Login;
                 return FixedWindow($"login:{ClientIp(ctx)}", login.PermitLimit, TimeSpan.FromSeconds(login.WindowSeconds));
+            });
+
+            options.AddPolicy(RefreshPolicy, ctx =>
+            {
+                var login = Settings(ctx).Login;
+                return FixedWindow($"refresh:{ClientIp(ctx)}", login.PermitLimit, TimeSpan.FromSeconds(login.WindowSeconds));
             });
         });
     }

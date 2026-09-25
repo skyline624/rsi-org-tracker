@@ -97,6 +97,30 @@ public class ClientIpAndRateLimitTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task FailedLogins_DoNotUseUpTheRefreshBudget()
+    {
+        // Behind one address (an office, a family), someone mistyping a password must not
+        // stop the others' sessions from being renewed.
+        await factory.CreateAccountAsync("ip-refresh-budget", Password);
+        var session = await factory.LoginAsync("ip-refresh-budget", Password);
+        using var app = From("127.0.0.1", s => s.Login.PermitLimit = 2);
+        var client = app.CreateClient();
+        for (var i = 0; i < 2; i++)
+        {
+            await client.SendAsync(Login("nobody", "wrong", "203.0.113.40"));
+        }
+        (await client.SendAsync(Login("nobody", "wrong", "203.0.113.40")))
+            .StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+
+        var refresh = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh")
+        {
+            Content = JsonContent.Create(new { refreshToken = session.RefreshToken }),
+            Headers = { { "X-Forwarded-For", "203.0.113.40" } },
+        };
+        (await client.SendAsync(refresh)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
     public async Task AnonymousRequests_AreLimitedPerIp_ButHealthChecksNeverAre()
     {
         using var app = From("127.0.0.1", s => s.AnonymousPermitLimit = 2);

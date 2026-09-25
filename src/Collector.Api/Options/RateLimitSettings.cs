@@ -14,7 +14,7 @@ public sealed class RateLimitSettings
     /// <summary>Budget of an anonymous client (partitioned by IP).</summary>
     public int AnonymousPermitLimit { get; set; } = 60;
 
-    /// <summary>Extra budget on login and refresh, per client IP (brute force).</summary>
+    /// <summary>Extra budget on login and on refresh, each counted apart, per client IP (brute force).</summary>
     public LoginLimit Login { get; set; } = new();
 
     public sealed class LoginLimit

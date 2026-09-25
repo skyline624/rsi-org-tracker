@@ -5,7 +5,9 @@
  * signature (RS256) est vérifiée. S'il manque, a expiré ou expire dans la minute,
  * on le renouvelle avec le refresh token ; les nouveaux cookies sont posés sur la
  * réponse ET réinjectés dans la requête, pour que la page serveur voie déjà le
- * nouveau token. Sinon : redirection vers /login et suppression des cookies.
+ * nouveau token. Si l'API refuse le refresh token : redirection vers /login et
+ * suppression des cookies. Si elle ne peut pas répondre (redémarrage, déploiement) :
+ * page 503 qui se recharge seule, et la session est conservée.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -24,9 +26,15 @@ export interface RefreshedTokens {
   expiresAt: string;
 }
 
+/** Refusé : la session est finie. Indisponible : l'API n'a pas pu répondre, la session reste. */
+export type RefreshOutcome =
+  | { status: "ok"; tokens: RefreshedTokens }
+  | { status: "rejected" }
+  | { status: "unavailable" };
+
 export interface AuthDeps {
   verify: (token: string) => Promise<JWTPayload | null>;
-  refresh: (refreshToken: string, clientIp?: string) => Promise<RefreshedTokens | null>;
+  refresh: (refreshToken: string, clientIp?: string) => Promise<RefreshOutcome>;
 }
 
 // Seules ces routes sont accessibles sans compte.
@@ -37,7 +45,7 @@ const REFRESH_MARGIN_SECONDS = 60;
 /** Durée pendant laquelle un refresh en cours est partagé entre requêtes concurrentes. */
 const REFRESH_DEDUPE_MS = 10_000;
 
-const inFlight = new Map<string, Promise<RefreshedTokens | null>>();
+const inFlight = new Map<string, Promise<RefreshOutcome>>();
 
 /**
  * Plusieurs requêtes d'une même page arrivent en parallèle avec le même refresh
@@ -46,7 +54,9 @@ const inFlight = new Map<string, Promise<RefreshedTokens | null>>();
 function refreshOnce(refreshToken: string, clientIp: string | undefined, deps: AuthDeps) {
   let pending = inFlight.get(refreshToken);
   if (!pending) {
-    pending = deps.refresh(refreshToken, clientIp).catch(() => null);
+    pending = deps
+      .refresh(refreshToken, clientIp)
+      .catch((): RefreshOutcome => ({ status: "unavailable" }));
     inFlight.set(refreshToken, pending);
     setTimeout(() => inFlight.delete(refreshToken), REFRESH_DEDUPE_MS).unref?.();
   }
@@ -72,6 +82,28 @@ function loginRedirect(req: NextRequest) {
   res.cookies.delete(COOKIE_ACCESS);
   res.cookies.delete(COOKIE_REFRESH);
   return res;
+}
+
+const UNAVAILABLE_RETRY_SECONDS = 10;
+
+/**
+ * L'API ne peut pas renouveler la session pour l'instant : on garde les cookies et on
+ * affiche une page qui se recharge seule.
+ */
+function unavailable() {
+  const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="${UNAVAILABLE_RETRY_SECONDS}">
+<title>Service momentanément indisponible</title></head>
+<body style="font-family:sans-serif;padding:2rem">
+<p>Le service redémarre. La page se recharge dans quelques secondes.</p></body></html>`;
+  return new NextResponse(html, {
+    status: 503,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "retry-after": String(UNAVAILABLE_RETRY_SECONDS),
+    },
+  });
 }
 
 /** Extra headers handed to the page with the request (e.g. the CSP carrying the nonce). */
@@ -120,13 +152,15 @@ export async function authenticateRequest(
   const secondsLeft = payload?.exp ? payload.exp - Math.floor(Date.now() / 1000) : 0;
   if (payload && secondsLeft > REFRESH_MARGIN_SECONDS) return pass(req, extra);
 
+  let apiUnavailable = false;
   if (refresh) {
     const clientIp = firstForwardedIp(req.headers.get("x-forwarded-for"));
-    const tokens = await refreshOnce(refresh, clientIp, deps);
-    if (tokens) return withTokens(req, tokens, extra);
+    const outcome = await refreshOnce(refresh, clientIp, deps);
+    if (outcome.status === "ok") return withTokens(req, outcome.tokens, extra);
+    apiUnavailable = outcome.status === "unavailable";
   }
 
   // Refresh impossible : un token encore valide quelques secondes reste utilisable.
   if (payload && secondsLeft > 0) return pass(req, extra);
-  return loginRedirect(req);
+  return apiUnavailable ? unavailable() : loginRedirect(req);
 }
