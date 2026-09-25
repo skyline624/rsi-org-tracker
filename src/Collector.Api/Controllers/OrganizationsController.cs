@@ -152,11 +152,20 @@ public class OrganizationsController : ControllerBase
         return Ok(MapOrg(org));
     }
 
+    /// <summary>
+    /// With <c>status</c> (active | former | all): one page of members, their latest row,
+    /// by handle. Without it, the full list as before (at_time / include_inactive), kept
+    /// until the web front pages the roster itself.
+    /// </summary>
     [HttpGet("{sid}/members")]
-    public async Task<ActionResult<IReadOnlyList<OrganizationMemberDto>>> GetMembers(
+    [ProducesResponseType(typeof(PaginatedResponse<OrganizationMemberDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetMembers(
         string sid,
         [FromQuery] DateTime? at_time,
         [FromQuery] bool include_inactive = false,
+        [FromQuery] string? status = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
     {
         sid = sid.ToUpperInvariant();
@@ -169,6 +178,22 @@ public class OrganizationsController : ControllerBase
             .Select(o => o.Name)
             .FirstOrDefaultAsync(ct);
 
+        if (status != null)
+        {
+            bool? active = status.ToLowerInvariant() switch
+            {
+                "active" => true,
+                "former" => false,
+                "all" => null,
+                _ => throw new ValidationException("status must be active, former or all"),
+            };
+            page = Paging.Page(page);
+            pageSize = Paging.PageSize(pageSize);
+            var (items, total) = await _memberRepo.GetLatestPageAsync(sid, active, page, pageSize, ct);
+            return Ok(PaginatedResponse<OrganizationMemberDto>.Create(
+                items.Select(m => m.ToDto(orgName)).ToList(), page, pageSize, total));
+        }
+
         if (at_time.HasValue)
         {
             var members = await _memberRepo.GetByOrgSidAsync(sid, at_time.Value.ToUniversalTime(), ct);
@@ -177,10 +202,11 @@ public class OrganizationsController : ControllerBase
 
         if (!include_inactive)
         {
-            var active = await _db.OrganizationMembers
+            var current = await _db.OrganizationMembers
+                .AsNoTracking()
                 .Where(m => m.OrgSid == sid && m.IsActive)
                 .ToListAsync(ct);
-            return Ok(active.Select(m => m.ToDto(orgName)).ToList());
+            return Ok(current.Select(m => m.ToDto(orgName)).ToList());
         }
 
         // include_inactive=true: latest snapshot per member (active or former)
