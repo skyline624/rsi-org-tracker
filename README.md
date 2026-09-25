@@ -83,6 +83,14 @@ scripts/dev-stop.sh         # arrête cette session
 Les deux scripts refusent de tourner là où les services de production sont actifs.
 Le front lit `src/Collector.Web/.env.local` (modèle : `.env.local.example`).
 
+Le collector tourne en environnement Production par défaut (l'API, lancée par
+`dotnet run`, prend le profil Development de son `launchSettings.json`). La Production
+exige un `tracker.db` existant dans le dossier de données (`bin/data` sans `COLLECTOR_DATA_DIR`) :
+pointer `COLLECTOR_DATA_DIR` sur une copie de la base, ou créer un fichier `tracker.db`
+vide pour en démarrer une nouvelle. `DOTNET_ENVIRONMENT=Development` lève cette exigence
+mais applique `appsettings.Development.json`, qui interroge RSI plus vite (0,5 s entre
+requêtes, un cycle toutes les 5 min).
+
 Modes ponctuels du collector (`dotnet run --project src/Collector -- <mode>`) :
 
 | Mode | Effet |

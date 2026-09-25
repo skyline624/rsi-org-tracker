@@ -34,7 +34,7 @@ public static class DataDirectory
         {
             throw new InvalidOperationException(
                 $"No tracker.db in {dataDir}. Set {EnvironmentVariable} to the data directory; " +
-                "Production never creates a new database.");
+                "Production never creates a new database (create an empty tracker.db file to start one).");
         }
     }
 
