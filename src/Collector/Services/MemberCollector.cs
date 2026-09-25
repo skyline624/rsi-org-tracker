@@ -163,7 +163,10 @@ public class MemberCollector : IMemberCollector
 
             // A truncated roster would turn every unread member into a false departure.
             case RosterStatus.Partial:
-                await ReconcileMembersCountAsync(orgSid, collection.TotalRows, ct);
+                if (collection.TotalRows > 0)
+                {
+                    await ReconcileMembersCountAsync(orgSid, collection.TotalRows, ct);
+                }
                 _logger.LogWarning(
                     "Roster of {Sid} not written ({Status}: {Raw}/{Total} rows read); keeping prior roster",
                     orgSid, collection.Status, collection.RawRows, collection.TotalRows);
@@ -383,7 +386,8 @@ public class MemberCollector : IMemberCollector
     /// </summary>
     private async Task RecordCountersAsync(string orgSid, MemberCollectionResult roster, CancellationToken ct)
     {
-        if (roster.Status is RosterStatus.Unreachable or RosterStatus.OrgGone) return;
+        // RSI answering 0 rows is a glitch, not a count: only ErrInvalidOrganization empties an org.
+        if (roster.Status is RosterStatus.Unreachable or RosterStatus.OrgGone || roster.TotalRows <= 0) return;
 
         var complete = roster.Status == RosterStatus.Complete;
         var now = DateTime.UtcNow;

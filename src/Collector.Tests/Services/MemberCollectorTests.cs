@@ -292,6 +292,26 @@ public sealed class MemberCollectorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ARosterReportingNoRows_ChangesNeitherTheCountersNorMembersCount()
+    {
+        var (_, seed) = Create();
+        seed.Organizations.Add(new Organization { Sid = "BLANK", Name = "Blank", Timestamp = DateTime.UtcNow.AddDays(-1), MembersCount = 2 });
+        await seed.SaveChangesAsync();
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "bravo");
+        await CollectAsync("BLANK");
+
+        // A one-off RSI glitch: only ErrInvalidOrganization means the org is empty.
+        _roster = _ => Roster(RosterStatus.Partial, 0);
+        await CollectAsync("BLANK");
+
+        (await CountersAsync("BLANK")).Should().Equal((2, 2, 0, 0));
+        (await EventTypesAsync()).Should().NotContain("member_count_changed");
+        var (_, db) = Create();
+        (await db.Organizations.AsNoTracking().Where(o => o.Sid == "BLANK").Select(o => o.MembersCount).SingleAsync())
+            .Should().Be(2);
+    }
+
+    [Fact]
     public async Task AKnownCitizen_NewToTheOrg_IsAnnouncedInPhase3()
     {
         await SeedUserAsync("charlie", 777);
