@@ -82,48 +82,30 @@ public class UserProfileHtmlParser
         return new ProfileParseResult(null, ProfileParseOutcome.Unparseable);
     }
 
-    private int? ExtractCitizenId(HtmlDocument doc)
+    /// <summary>
+    /// The value of the "UEE Citizen Record" entry ("#390065"), and nothing else:
+    /// the page carries other '#' values earlier on (CSS colours, org texts).
+    /// </summary>
+    private static int? ExtractCitizenId(HtmlDocument doc)
     {
-        // Try data attribute
-        var citizenIdNode = doc.DocumentNode.SelectSingleNode("//*[@data-citizen-id]");
-        var citizenIdStr = citizenIdNode?.GetAttributeValue("data-citizen-id", "");
-
-        if (!string.IsNullOrEmpty(citizenIdStr) && int.TryParse(citizenIdStr, out var citizenId))
+        var label = doc.DocumentNode.Descendants()
+            .FirstOrDefault(n => n.HasClass("label")
+                && HtmlEntity.DeEntitize(n.InnerText).Trim() == "UEE Citizen Record");
+        var value = label?.ParentNode.Descendants("strong").FirstOrDefault(n => n.HasClass("value"));
+        if (value == null)
         {
-            return citizenId;
+            return null;
         }
 
-        // Try text content like "#123456"
-        var text = doc.DocumentNode.InnerText ?? string.Empty;
-        var hashIndex = text.IndexOf('#');
-        if (hashIndex >= 0)
-        {
-            var numberPart = text.Substring(hashIndex + 1).Split(' ')[0];
-            if (int.TryParse(numberPart, out citizenId))
-            {
-                return citizenId;
-            }
-        }
-
-        // Try citizen record number
-        var recordNode = doc.DocumentNode.SelectSingleNode("//*[contains(text(), 'UEE Citizen Record')]");
-        if (recordNode != null)
-        {
-            var recordText = recordNode.InnerText ?? string.Empty;
-            var match = System.Text.RegularExpressions.Regex.Match(recordText, @"#?(\d+)");
-            if (match.Success && int.TryParse(match.Groups[1].Value, out citizenId))
-            {
-                return citizenId;
-            }
-        }
-
-        return null;
+        var match = CitizenNumber.Match(HtmlEntity.DeEntitize(value.InnerText).Trim());
+        return match.Success && int.TryParse(match.Groups[1].Value, out var citizenId) ? citizenId : null;
     }
 
     // RSI handles are URL-safe: alphanumerics, underscore, dash. Anything else
     // means we picked up a label ("CITIZEN DOSSIER", "UEE Citizen Record") by
     // mistake — better to return nothing than poison the users row.
     private static readonly Regex HandleShape = new(@"^[A-Za-z0-9_-]{3,50}$", RegexOptions.Compiled);
+    private static readonly Regex CitizenNumber = new(@"^#?(\d+)$", RegexOptions.Compiled);
 
     private string? ExtractHandle(HtmlDocument doc)
     {
