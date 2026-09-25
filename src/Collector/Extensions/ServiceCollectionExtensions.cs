@@ -99,6 +99,7 @@ public static class ServiceCollectionExtensions
         // Services
         services.AddScoped<IOrganizationCollector, OrganizationCollector>();
         services.AddScoped<IMemberCollector, MemberCollector>();
+        services.AddSingleton<RosterCarryOver>(); // outlives the per-phase scopes
         services.AddScoped<IUserCollector, UserCollector>();
         services.AddScoped<IChangeDetector, ChangeDetector>();
         services.AddScoped<IUserChangeDetector, UserChangeDetector>();

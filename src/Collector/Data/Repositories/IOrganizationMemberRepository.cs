@@ -6,6 +6,9 @@ public interface IOrganizationMemberRepository : IRepository<OrganizationMember>
 {
     Task<IReadOnlyList<OrganizationMember>> GetByOrgSidAsync(string orgSid, DateTime? asOf = null, CancellationToken ct = default);
 
+    /// <summary>The org's current members: one active row each, read through the (OrgSid, IsActive) index.</summary>
+    Task<IReadOnlyList<OrganizationMember>> GetActiveByOrgSidAsync(string orgSid, CancellationToken ct = default);
+
     /// <summary>
     /// One page of an org's members (their latest row), by handle regardless of case:
     /// current members (<paramref name="active"/> true), former ones (false) or both (null).

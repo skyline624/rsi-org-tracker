@@ -129,15 +129,44 @@ public sealed class RosterPaginationTests
     }
 
     [Fact]
-    public async Task RowsSeenTwiceWhileTheRosterShifts_AreKeptOnce()
+    public async Task ARepeatedPage_IsPartial()
     {
+        // A shifted roster, or a cached answer served for another page number.
         _rsi.Serve(1, "members-visible-hidden.json", totalRows: 64, pagePrefix: "same");
         _rsi.Serve(2, "members-visible-hidden.json", totalRows: 64, pagePrefix: "same");
 
         var roster = await Client().GetAllOrganizationMembersAsync("FIXTURE");
 
-        roster.Members.Should().HaveCount(30);
+        roster.Status.Should().Be(RosterStatus.Partial, "page 2 brought no member that page 1 had not");
+    }
+
+    [Fact]
+    public async Task RowsSeenTwiceWhileTheRosterShifts_AreKeptOnce_AndDoNotCountTowardsCompleteness()
+    {
+        _rsi.Serve(1, "members-visible-hidden.json", totalRows: 68, pagePrefix: "p1");   // 30 V + 2 H
+        _rsi.ServeRows(2, totalRows: 68, ("members-roles.json", "p1"), ("members-roles.json", "p2")); // 2 seen + 2 V
+        _rsi.Serve(3, "members-redacted.json", totalRows: 68, pagePrefix: "p3");         // 29 V + 1 R + 2 H
+
+        var roster = await Client().GetAllOrganizationMembersAsync("FIXTURE");
+
+        roster.RawRows.Should().Be(68);
+        roster.Members.Should().HaveCount(61);
         roster.Members.Select(m => m.Handle).Should().OnlyHaveUniqueItems();
+        roster.Status.Should().Be(RosterStatus.Partial, "66 distinct rows of 68 is below 98%");
+    }
+
+    [Fact]
+    public async Task ReadingAlmostEveryRow_IsShort_NotComplete()
+    {
+        // 66 of 67 rows: enough to write, not enough to tell a departure from a skipped row.
+        _rsi.Serve(1, "members-visible-hidden.json", totalRows: 67);
+        _rsi.Serve(2, "members-redacted.json", totalRows: 67);
+        _rsi.Serve(3, "members-roles.json", totalRows: 67);
+
+        var roster = await Client().GetAllOrganizationMembersAsync("FIXTURE");
+
+        roster.Status.Should().Be(RosterStatus.Short);
+        roster.Members.Should().HaveCount(61);
     }
 
     /// <summary>getOrgMembers answers keyed by page; handles made unique per page.</summary>
@@ -149,6 +178,23 @@ public sealed class RosterPaginationTests
 
         public void Serve(int page, string fixture, int? totalRows = null, string? pagePrefix = null)
             => _pages[page] = () => Answer(fixture, totalRows, pagePrefix ?? $"p{page}");
+
+        /// <summary>One page made of several fixtures' rows, each with its own handle prefix.</summary>
+        public void ServeRows(int page, int totalRows, params (string Fixture, string Prefix)[] parts)
+            => _pages[page] = () =>
+            {
+                var html = string.Concat(parts.Select(p =>
+                    RsiFixtures.MembersHtml(p.Fixture).Replace("pilot-", $"{p.Prefix}-pilot-")));
+                var json = new JsonObject
+                {
+                    ["success"] = 1,
+                    ["data"] = new JsonObject { ["totalrows"] = totalRows, ["html"] = html },
+                };
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json.ToJsonString(), Encoding.UTF8, "application/json"),
+                };
+            };
 
         public void ServeEveryPage(string fixture, int totalRows)
             => _everyPage = page => page <= 400

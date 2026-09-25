@@ -42,6 +42,7 @@ public class MemberCollector : IMemberCollector
     private readonly IOrgMemberCountRepository _countRepo;
     private readonly IChangeDetector _changeDetector;
     private readonly IUserRepository _userRepo;
+    private readonly RosterCarryOver _carryOver;
     private readonly ILogger<MemberCollector> _logger;
     private readonly CollectorOptions _options;
 
@@ -59,9 +60,11 @@ public class MemberCollector : IMemberCollector
         IOrgMemberCountRepository countRepo,
         IChangeDetector changeDetector,
         IUserRepository userRepo,
+        RosterCarryOver carryOver,
         ILogger<MemberCollector> logger,
         IOptions<CollectorOptions> options)
     {
+        _carryOver = carryOver;
         _apiClient = apiClient;
         _orgRepo = orgRepo;
         _memberRepo = memberRepo;
@@ -177,9 +180,16 @@ public class MemberCollector : IMemberCollector
             return 0;
         }
 
-        var members = collection.Status == RosterStatus.Capped
-            ? await WithMembersBeyondTheWindowAsync(orgSid, collection.Members, ct)
-            : collection.Members;
+        IReadOnlySet<string> carried = new HashSet<string>();
+        IReadOnlyList<MemberData> members = collection.Members;
+        if (collection.Status == RosterStatus.Capped)
+        {
+            members = await WithMembersBeyondTheWindowAsync(orgSid, collection.Members, ct);
+        }
+        else if (collection.Status == RosterStatus.Short)
+        {
+            (members, carried) = await WithMembersSkippedByAShortReadAsync(orgSid, collection, ct);
+        }
 
         var previousLog = await _logRepo.GetLatestAsync(orgSid, ct);
         var previousSnapshots = previousLog != null
@@ -332,6 +342,12 @@ public class MemberCollector : IMemberCollector
             }
         }
 
+        // Only once the roster is written, so a failed write does not hasten a departure.
+        if (collection.Status is RosterStatus.Complete or RosterStatus.Short)
+        {
+            _carryOver.Record(orgSid, carried);
+        }
+
         // ── STEP 3 — best-effort queue insert OUTSIDE the transaction. Duplicates
         //             against the partial unique index are silently ignored by
         //             INSERT OR IGNORE, so a duplicate never tears down Step 2. ──
@@ -413,9 +429,39 @@ public class MemberCollector : IMemberCollector
     private async Task<IReadOnlyList<MemberData>> WithMembersBeyondTheWindowAsync(
         string orgSid, IReadOnlyList<MemberData> window, CancellationToken ct)
     {
-        var seen = window.Select(m => m.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var beyond = (await _memberRepo.GetByOrgSidAsync(orgSid, null, ct))
-            .Where(m => m.IsActive && !seen.Contains(m.UserHandle))
+        var beyond = await ActiveMembersNotReadAsync(orgSid, window, ct);
+
+        _logger.LogInformation(
+            "Roster of {Sid} exceeds RSI's {Pages}-page window: {Window} members read, {Beyond} kept from the last snapshot",
+            orgSid, RsiApiClient.MaxRosterPages, window.Count, beyond.Count);
+        return [.. window, .. beyond];
+    }
+
+    /// <summary>
+    /// A short read (see <see cref="RosterStatus.Short"/>) may have skipped a row where
+    /// the roster shifted: a member it missed is kept with its last known values once;
+    /// missed by the next short read too, it is left out and counts as a departure.
+    /// </summary>
+    private async Task<(IReadOnlyList<MemberData> Members, IReadOnlySet<string> Carried)> WithMembersSkippedByAShortReadAsync(
+        string orgSid, MemberCollectionResult roster, CancellationToken ct)
+    {
+        var missing = await ActiveMembersNotReadAsync(orgSid, roster.Members, ct);
+        var carried = _carryOver.ToCarry(orgSid, missing.Select(m => m.Handle));
+
+        _logger.LogInformation(
+            "Short roster read of {Sid} ({Read} of {Total} rows): {Carried} missing members carried over, {Left} missing twice",
+            orgSid, roster.Members.Count + roster.RedactedRows + roster.HiddenRows, roster.TotalRows,
+            carried.Count, missing.Count - carried.Count);
+        return ([.. roster.Members, .. missing.Where(m => carried.Contains(m.Handle))], carried);
+    }
+
+    /// <summary>Active members of our last snapshot that the read did not see, with their last known values.</summary>
+    private async Task<List<MemberData>> ActiveMembersNotReadAsync(
+        string orgSid, IReadOnlyList<MemberData> read, CancellationToken ct)
+    {
+        var seen = read.Select(m => m.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return (await _memberRepo.GetActiveByOrgSidAsync(orgSid, ct))
+            .Where(m => !seen.Contains(m.UserHandle))
             .Select(m => new MemberData
             {
                 OrgSid = orgSid,
@@ -428,11 +474,6 @@ public class MemberCollector : IMemberCollector
                 UrlImage = m.UrlImage,
             })
             .ToList();
-
-        _logger.LogInformation(
-            "Roster of {Sid} exceeds RSI's {Pages}-page window: {Window} members read, {Beyond} kept from the last snapshot",
-            orgSid, RsiApiClient.MaxRosterPages, window.Count, beyond.Count);
-        return [.. window, .. beyond];
     }
 
     /// <summary>

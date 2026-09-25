@@ -47,6 +47,9 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<OrganizationMember>> GetActiveByOrgSidAsync(string orgSid, CancellationToken ct = default)
+        => await DbSet.AsNoTracking().Where(m => m.OrgSid == orgSid && m.IsActive).ToListAsync(ct);
+
     public async Task<(IReadOnlyList<OrganizationMember> Items, int Total)> GetLatestPageAsync(
         string orgSid, bool? active, int page, int pageSize, CancellationToken ct = default)
     {

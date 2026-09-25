@@ -23,6 +23,7 @@ public sealed class MemberCollectorTests : IAsyncLifetime
     private readonly Mock<IRsiApiClient> _rsi = new();
     private ServiceProvider _provider = null!;
     private readonly List<string> _requestedSids = [];
+    private readonly RosterCarryOver _carryOver = new();
 
     /// <summary>What RSI answers for an org; by default one visible pilot.</summary>
     private Func<string, MemberCollectionResult> _roster = sid => Roster(RosterStatus.Complete, 1, $"{sid.ToLowerInvariant()}-pilot");
@@ -64,6 +65,7 @@ public sealed class MemberCollectorTests : IAsyncLifetime
             new OrgMemberCountRepository(db),
             new ChangeDetector(NullLogger<ChangeDetector>.Instance),
             new UserRepository(db),
+            _carryOver,
             NullLogger<MemberCollector>.Instance,
             Microsoft.Extensions.Options.Options.Create(new CollectorOptions()));
         return (collector, db);
@@ -207,6 +209,39 @@ public sealed class MemberCollectorTests : IAsyncLifetime
 
         (await ActiveHandlesAsync("HUGE")).Should().Equal("alpha", "bravo", "charlie");
         (await EventTypesAsync()).Should().NotContain("member_left");
+    }
+
+    [Fact]
+    public async Task AShortRead_CarriesAMissingMemberOverOnce_ThenCountsItAsLeft()
+    {
+        _roster = _ => Roster(RosterStatus.Complete, 3, "alpha", "bravo", "charlie");
+        await CollectAsync("SHIFT");
+
+        _roster = _ => Roster(RosterStatus.Short, 3, "alpha", "charlie");
+        await CollectAsync("SHIFT");
+        (await ActiveHandlesAsync("SHIFT")).Should().Equal("alpha", "bravo", "charlie");
+        (await EventTypesAsync()).Should().NotContain("member_left", "a skipped row is not a departure");
+
+        await CollectAsync("SHIFT");
+        (await ActiveHandlesAsync("SHIFT")).Should().Equal("alpha", "charlie");
+        (await EventTypesAsync()).Should().ContainSingle(e => e == "member_left");
+    }
+
+    [Fact]
+    public async Task AReadThatSeesTheMemberAgain_EndsItsCarryOver()
+    {
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "bravo");
+        await CollectAsync("BACK");
+        _roster = _ => Roster(RosterStatus.Short, 2, "alpha");
+        await CollectAsync("BACK");
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "bravo");
+        await CollectAsync("BACK");
+
+        _roster = _ => Roster(RosterStatus.Short, 2, "alpha");
+        await CollectAsync("BACK");
+
+        (await ActiveHandlesAsync("BACK")).Should().Equal("alpha", "bravo");
+        (await EventTypesAsync()).Should().NotContain(["member_left", "member_joined"]);
     }
 
     [Fact]
