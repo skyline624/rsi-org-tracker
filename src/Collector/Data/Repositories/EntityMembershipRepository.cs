@@ -13,16 +13,22 @@ public class EntityMembershipRepository : Repository<EntityMembership>, IEntityM
             .OrderByDescending(m => m.SinceDate)
             .ToListAsync(ct);
 
+    // SIDs are stored in upper case: the requested SID (any capitalisation, e.g. from
+    // an org page URL) is normalized and compared as-is, so the OrgSid indexes are used.
     public async Task<IReadOnlyList<EntityMembership>> GetByOrgSidAsync(string orgSid, CancellationToken ct = default)
-        // Case-insensitive on the SID: the org page may be reached under any capitalisation.
-        => await DbSet.AsNoTracking()
-            .Where(m => m.OrgSid.ToLower() == orgSid.ToLower())
+    {
+        var sid = orgSid.Trim().ToUpperInvariant();
+        return await DbSet.AsNoTracking()
+            .Where(m => m.OrgSid == sid)
             .OrderByDescending(m => m.SinceDate)
             .ToListAsync(ct);
+    }
 
     public async Task<EntityMembership?> GetByEntityAndOrgAsync(long entityId, string orgSid, CancellationToken ct = default)
-        => await DbSet.FirstOrDefaultAsync(
-            m => m.TrackedEntityId == entityId && m.OrgSid.ToLower() == orgSid.ToLower(), ct);
+    {
+        var sid = orgSid.Trim().ToUpperInvariant();
+        return await DbSet.FirstOrDefaultAsync(m => m.TrackedEntityId == entityId && m.OrgSid == sid, ct);
+    }
 
     public void Remove(EntityMembership membership) => DbSet.Remove(membership);
 }
