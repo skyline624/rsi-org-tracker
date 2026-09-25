@@ -14,8 +14,6 @@ public class MemberCollectionLogConfiguration : IEntityTypeConfiguration<MemberC
 
         // Index for querying logs by org and time
         builder.HasIndex(m => new { m.OrgSid, m.CollectionTime });
-        builder.HasIndex(m => m.CitizenId);
-        builder.HasIndex(m => m.UserHandle);
 
         builder.Property(m => m.OrgSid)
             .IsRequired()

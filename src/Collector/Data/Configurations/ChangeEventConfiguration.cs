@@ -14,7 +14,14 @@ public class ChangeEventConfiguration : IEntityTypeConfiguration<ChangeEvent>
 
         // Index for querying by org and time
         builder.HasIndex(c => new { c.OrgSid, c.Timestamp });
+        // WHERE ChangeType = ? ORDER BY Id DESC reads this index in rowid order.
         builder.HasIndex(c => c.ChangeType);
+        // The /changes summary (Timestamp range, GROUP BY ChangeType) skip-scans it as a
+        // covering index; created by hand in production first, hence IF NOT EXISTS in
+        // the migration.
+        builder.HasIndex(c => new { c.ChangeType, c.Timestamp })
+            .IsDescending(false, true)
+            .HasDatabaseName("IX_change_events_ChangeType_Timestamp");
         builder.HasIndex(c => c.UserHandle);
 
         builder.Property(c => c.EntityType)

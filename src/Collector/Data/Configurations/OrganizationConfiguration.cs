@@ -16,7 +16,6 @@ public class OrganizationConfiguration : IEntityTypeConfiguration<Organization>
         builder.HasIndex(o => new { o.Sid, o.Timestamp }).IsUnique();
 
         // Query indexes
-        builder.HasIndex(o => o.Sid);
         builder.HasIndex(o => o.Timestamp);
         builder.HasIndex(o => o.Name);
 
