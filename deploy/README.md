@@ -32,6 +32,15 @@ releases sont conservées.
 Redémarrer le collector interrompt la collecte des membres en cours : ne passer
 `--collector` que si le collector ou le schéma de tracker.db a changé.
 
+Avec `--collector`, le collector redémarre **en premier** : son `ExecStartPre`
+(`Collector.dll --migrate`) applique les migrations de tracker.db, et
+`systemctl restart` ne rend la main qu'une fois la base migrée (ou échoue avec la
+migration, ce qui déclenche le retour arrière). L'API et le web redémarrent
+ensuite. L'ancien code sait lire un schéma migré (les migrations sont additives),
+le nouveau code ne sait pas lire l'ancien : tant qu'une migration est en attente,
+`/api/health/ready` répond 503, donc une release déployée sans `--collector` alors
+qu'elle en avait besoin est annulée automatiquement.
+
 ## Revenir en arrière
 
 ```bash

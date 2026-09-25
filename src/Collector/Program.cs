@@ -24,7 +24,8 @@ try
     var backfillQueue = args.Contains("--backfill-enrichment-queue");
     var repairCorrupted = args.Contains("--repair-corrupted-handles");
     var maintenance = args.Contains("--maintenance");
-    var continuousMode = !singleRun && !integrityCheck && !backfillQueue && !repairCorrupted && !maintenance;
+    var migrateOnly = args.Contains("--migrate");
+    var continuousMode = !singleRun && !integrityCheck && !backfillQueue && !repairCorrupted && !maintenance && !migrateOnly;
 
     // Build host
     var builder = Host.CreateDefaultBuilder(args)
@@ -64,6 +65,10 @@ try
     await host.Services.EnsureDatabaseAsync(dataDir);
 
     Console.WriteLine("Database initialized");
+
+    // The unit's ExecStartPre: `systemctl restart sc-collector` returns once tracker.db is
+    // migrated (or fails with the migration), before deploy.sh restarts the API on it.
+    if (migrateOnly) return;
 
     var options = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<CollectorOptions>>().Value;
     var logger = host.Services.GetRequiredService<ILogger<Program>>();

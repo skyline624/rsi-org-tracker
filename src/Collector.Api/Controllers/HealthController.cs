@@ -56,8 +56,22 @@ public class HealthController : ControllerBase
     [HttpGet("api/health/ready")]
     public async Task<IActionResult> Ready(CancellationToken ct)
     {
-        if (await TryPingAsync(_trackerDb, "tracker", ct))
-            return Ok(new { status = "ready" });
+        if (!await TryPingAsync(_trackerDb, "tracker", ct))
+            return StatusCode(503, new { status = "not ready" });
+
+        // The collector migrates tracker.db. Until it has, this release's queries hit
+        // missing columns: deploy.sh rolls back on this answer.
+        try
+        {
+            var pending = (await _trackerDb.Database.GetPendingMigrationsAsync(ct)).ToList();
+            if (pending.Count == 0) return Ok(new { status = "ready" });
+            _logger.LogWarning("tracker.db has pending migrations (restart the collector): {Migrations}",
+                string.Join(", ", pending));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not read the tracker.db migration history");
+        }
         return StatusCode(503, new { status = "not ready" });
     }
 

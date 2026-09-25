@@ -2,8 +2,10 @@
 # Builds a release from a commit of the server repository and switches production to it.
 #
 # Usage: deploy.sh <commit-ish> [--collector]
-#   --collector  also restart the collector (it applies tracker.db migrations on start;
-#                a restart interrupts the current member-collection pass).
+#   --collector  also restart the collector, first: it applies the tracker.db migrations
+#                before the API and web restart (a restart interrupts the current
+#                member-collection pass). Needed when the release changes the schema:
+#                otherwise the API is not ready and the deploy is rolled back.
 #
 # Layout: $ROOT/releases/<sha12>/{api,collector,web}, $ROOT/current -> active release,
 # $ROOT/previous -> last one (used by rollback.sh). Data stays in COLLECTOR_DATA_DIR.

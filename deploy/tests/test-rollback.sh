@@ -8,7 +8,13 @@ trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/bin" "$tmp/root/releases/r1" "$tmp/root/releases/r2"
 printf '#!/usr/bin/env bash\n[[ $1 == -n ]] && shift\nexec "$@"\n' > "$tmp/bin/sudo"
-printf '#!/usr/bin/env bash\necho "systemctl $*" >> "$SC_TEST_LOG"\n' > "$tmp/bin/systemctl"
+cat > "$tmp/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+echo "systemctl $*" >> "$SC_TEST_LOG"
+# SC_TEST_FAIL_UNIT=<unit>: restarting that unit fails (e.g. its migration failed).
+[[ $1 == restart && -n ${SC_TEST_FAIL_UNIT:-} && " $* " == *" $SC_TEST_FAIL_UNIT "* ]] && exit 1
+exit 0
+EOF
 printf '#!/usr/bin/env bash\nprintf 200\n' > "$tmp/bin/curl"
 chmod +x "$tmp/bin/"*
 export PATH="$tmp/bin:$PATH" SC_ROOT="$tmp/root" SC_TEST_LOG="$tmp/calls.log"
@@ -32,7 +38,17 @@ echo "PASS rollback returns to the previous release and restarts api+web only"
 "$here/../rollback.sh" --collector "$r2" >/dev/null
 [[ $(readlink -f "$tmp/root/current") == "$r2" ]] || fail "current should point at r2"
 grep -q "restart sc-collector" "$tmp/calls.log" || fail "collector was not restarted"
-echo "PASS rollback --collector <release> switches to it and restarts the collector"
+[[ $(head -n 1 "$tmp/calls.log") == "systemctl restart sc-collector" ]] \
+    || fail "the collector (which migrates tracker.db) must restart before api and web"
+echo "PASS rollback --collector <release> switches to it and restarts the collector first"
+
+# a collector that fails to start (its migration failed) stops before api and web
+: > "$tmp/calls.log"
+if SC_TEST_FAIL_UNIT=sc-collector "$here/../rollback.sh" --collector "$r1" >/dev/null 2>&1; then
+    fail "a failed collector restart must fail the rollback"
+fi
+grep -q "restart sc-api" "$tmp/calls.log" && fail "api and web restarted on an unmigrated schema"
+echo "PASS a collector that fails to start leaves api and web alone"
 
 # nothing to roll back to
 rm "$tmp/root/previous"

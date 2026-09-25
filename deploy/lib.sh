@@ -38,12 +38,17 @@ switch_current() {
 }
 
 # Restarts the services running from $ROOT/current and checks they answer.
+# The collector goes first: its ExecStartPre (Collector --migrate) applies the tracker.db
+# migrations, so `systemctl restart` returns once the schema is ready, or fails with the
+# migration. Old code reads a migrated schema (migrations are additive), new code cannot
+# read an old one: the API's readiness fails while migrations are pending, so a release
+# deployed without --collector that needed it is rolled back.
 restart_and_check() {
     local with_collector=$1
-    sudo -n systemctl restart sc-api sc-web
     if (( with_collector )); then
-        sudo -n systemctl restart sc-collector
+        sudo -n systemctl restart sc-collector || { log "sc-collector failed to start (migration?)"; return 1; }
     fi
+    sudo -n systemctl restart sc-api sc-web
     wait_http_200 "$API_HEALTH_URL" || return 1
     wait_http_200 "$WEB_HEALTH_URL" || return 1
     if (( with_collector )); then
