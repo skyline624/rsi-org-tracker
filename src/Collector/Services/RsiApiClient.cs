@@ -270,6 +270,7 @@ public class RsiApiClient : IRsiApiClient
                 continue;
             }
 
+            _gate.ReportSuccess();
             return data;
         }
 
@@ -491,6 +492,7 @@ public class RsiApiClient : IRsiApiClient
             }
 
             response.EnsureSuccessStatusCode();
+            _gate.ReportSuccess();
             return (await response.Content.ReadAsStringAsync(ct), System.Net.HttpStatusCode.OK);
         }
 

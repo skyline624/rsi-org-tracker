@@ -166,6 +166,34 @@ public sealed class RsiRateGateTests
         _rsi.Calls.Should().Be(2);
     }
 
+    [Fact]
+    public async Task ErrApiThrottled_AgainAfterThePause_DoublesIt()
+    {
+        // RSI sends ErrApiThrottled with HTTP 200: that 200 is no success.
+        var gate = Gate(spacingSeconds: 0);
+        _rsi.Responses.Enqueue(() => Json("""{"success":0,"code":"ErrApiThrottled"}"""));
+        _rsi.Responses.Enqueue(() => Json("""{"success":0,"code":"ErrApiThrottled"}"""));
+        _rsi.Responses.Enqueue(() => Json("""{"success":1,"code":"OK","data":{"totalrows":0,"html":""}}"""));
+        var client = new RsiApiClient(Client(gate), NullLogger<RsiApiClient>.Instance,
+            Microsoft.Extensions.Options.Options.Create(new CollectorOptions()),
+            new OrganizationHtmlParser(NullLogger<OrganizationHtmlParser>.Instance),
+            new MemberHtmlParser(NullLogger<MemberHtmlParser>.Instance),
+            gate);
+
+        var pending = client.GetAllOrganizationMembersAsync("SLOW");
+        await Settle();
+        gate.PausedFor.Should().Be(TimeSpan.FromSeconds(30));
+
+        _time.Advance(TimeSpan.FromSeconds(30));
+        await Settle();
+        _rsi.Calls.Should().Be(2);
+        gate.PausedFor.Should().Be(TimeSpan.FromSeconds(60));
+
+        _time.Advance(TimeSpan.FromSeconds(60));
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        _rsi.Calls.Should().Be(3);
+    }
+
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),

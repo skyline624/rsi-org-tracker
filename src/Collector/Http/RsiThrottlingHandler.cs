@@ -49,10 +49,10 @@ public sealed class RsiThrottlingHandler : DelegatingHandler
             throw;
         }
 
+        // Success is reported by RsiApiClient once it has read the body: RSI's
+        // ErrApiThrottled comes with HTTP 200, and must not reset the pause escalation.
         if (IsThrottle(response.StatusCode))
             _gate.ReportThrottled(RetryAfter(response));
-        else if (response.IsSuccessStatusCode)
-            _gate.ReportSuccess();
 
         return response;
     }
