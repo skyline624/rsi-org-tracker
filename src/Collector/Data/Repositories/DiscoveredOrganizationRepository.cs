@@ -16,18 +16,19 @@ public class DiscoveredOrganizationRepository : Repository<DiscoveredOrganizatio
 
     public async Task<IReadOnlyList<DiscoveredOrganization>> GetStaleAsync(DateTime since, CancellationToken ct = default)
     {
-        // Orgs whose latest organizations row is older than `since` (or have none with ContentCollected=true).
-        // Tombstoned orgs (DeadAt IS NOT NULL) are excluded — they 404'd consistently and aren't worth retrying.
-        var freshSids = Context.Organizations
-            .Where(o => o.Timestamp >= since && o.ContentCollected)
-            .Select(o => o.Sid)
-            .Distinct();
-
+        // Orgs whose page was not read since `since`. Tombstoned orgs (DeadAt IS NOT
+        // NULL) are excluded — they 404'd consistently and aren't worth retrying.
         return await DbSet
             .AsNoTracking()
-            .Where(d => d.DeadAt == null && !freshSids.Contains(d.Sid))
+            .Where(d => d.DeadAt == null && (d.ContentCheckedAt == null || d.ContentCheckedAt < since))
             .ToListAsync(ct);
     }
+
+    public Task MarkContentCheckedAsync(IReadOnlyCollection<string> sids, DateTime when, CancellationToken ct = default)
+        => sids.Count == 0
+            ? Task.CompletedTask
+            : DbSet.Where(d => sids.Contains(d.Sid))
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.ContentCheckedAt, when), ct);
 
     public async Task<bool> MarkNotFoundAsync(string sid, int deadThreshold, DateTime now, CancellationToken ct = default)
     {

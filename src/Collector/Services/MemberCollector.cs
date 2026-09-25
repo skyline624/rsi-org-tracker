@@ -370,17 +370,34 @@ public class MemberCollector : IMemberCollector
         if (roster.Status is RosterStatus.Unreachable or RosterStatus.OrgGone) return;
 
         var complete = roster.Status == RosterStatus.Complete;
+        var now = DateTime.UtcNow;
         try
         {
-            await _countRepo.RecordIfChangedAsync(new OrgMemberCount
+            var (written, previous) = await _countRepo.RecordIfChangedAsync(new OrgMemberCount
             {
                 OrgSid = orgSid,
-                CollectedAt = DateTime.UtcNow,
+                CollectedAt = now,
                 TotalRows = roster.TotalRows,
                 VisibleCount = complete ? roster.RawRows - roster.RedactedRows - roster.HiddenRows : null,
                 RedactedCount = complete ? roster.RedactedRows : null,
                 HiddenCount = complete ? roster.HiddenRows : null,
             }, ct);
+
+            // RSI's totalrows is the member count; Phase 1's listing only has a cached copy.
+            if (written && previous != null && previous.TotalRows != roster.TotalRows)
+            {
+                await _changeEventRepo.AddRangeAsync([new ChangeEvent
+                {
+                    Timestamp = now,
+                    EntityType = "organization",
+                    EntityId = orgSid,
+                    ChangeType = "member_count_changed",
+                    OldValue = previous.TotalRows.ToString(),
+                    NewValue = roster.TotalRows.ToString(),
+                    OrgSid = orgSid,
+                }], ct);
+                await _changeEventRepo.SaveChangesAsync(ct);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

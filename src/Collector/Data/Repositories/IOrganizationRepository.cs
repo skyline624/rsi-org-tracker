@@ -6,6 +6,9 @@ public interface IOrganizationRepository : IRepository<Organization>
 {
     Task<Organization?> GetLatestBySidAsync(string sid, CancellationToken ct = default);
     Task<IReadOnlyList<OrganizationListing>> GetLatestListingsAsync(CancellationToken ct = default);
+
+    /// <summary>Latest snapshot carrying page content (ContentCollected) of each SID.</summary>
+    Task<Dictionary<string, Organization>> GetLatestContentBySidsAsync(IEnumerable<string> sids, CancellationToken ct = default);
     Task<Dictionary<string, Organization>> GetLatestBySidsAsync(IEnumerable<string> sids, CancellationToken ct = default);
 
     /// <summary>

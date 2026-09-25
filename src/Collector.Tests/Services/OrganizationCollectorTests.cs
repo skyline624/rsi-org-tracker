@@ -106,6 +106,121 @@ public sealed class OrganizationCollectorTests : IAsyncLifetime
         _logger.Messages.Should().Contain(m => m.StartsWith("Phase 2 complete") && m.Contains("1 content changes"));
     }
 
+    private void ListOnPageOne(params OrganizationData[] orgs)
+        => _rsi.Setup(r => r.GetOrganizationsAsync(It.IsAny<int>(), "", "active", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int page, string _, string _, int _, CancellationToken _) => page == 1 ? orgs : []);
+
+    private void ServePage(string sid, string description)
+        => _rsi.Setup(r => r.GetOrgPageHtmlAsync(sid, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OrgPageFetchResult(
+                $"""<div class="content join-us"><div class="body markitup-text">{description}</div></div>""",
+                OrgPageFetchOutcome.Ok));
+
+    private async Task<List<Organization>> SnapshotsAsync(string sid)
+        => await NewDb().Organizations.AsNoTracking().Where(o => o.Sid == sid).OrderBy(o => o.Timestamp).ToListAsync();
+
+    private async Task<List<ChangeEvent>> EventsAsync()
+        => await NewDb().ChangeEvents.AsNoTracking().OrderBy(e => e.Id).ToListAsync();
+
+    [Fact]
+    public async Task Phase1_AnUnchangedListing_WritesNothing()
+    {
+        await SeedAsync("SAME", "Same", "Text", DateTime.UtcNow.AddDays(-2));
+        ListOnPageOne(new OrganizationData { Sid = "SAME", Name = "Same", MembersCount = 10 });
+
+        await Create(NewDb()).DiscoverOrganizationsAsync();
+
+        (await SnapshotsAsync("SAME")).Should().HaveCount(1);
+        (await EventsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Phase1_AMemberCountDrift_IsNotAListingChange()
+    {
+        await SeedAsync("DRIFT", "Drift", "Text", DateTime.UtcNow.AddDays(-2));
+        ListOnPageOne(new OrganizationData { Sid = "DRIFT", Name = "Drift", MembersCount = 9 });
+
+        await Create(NewDb()).DiscoverOrganizationsAsync();
+
+        (await SnapshotsAsync("DRIFT")).Should().HaveCount(1, "Phase 3 owns the member count (RSI's totalrows)");
+        (await EventsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Phase1_AChangedListing_IsSnapshotted_KeepingTheKnownMemberCount()
+    {
+        await SeedAsync("RENAMED", "Old name", "Text", DateTime.UtcNow.AddDays(-2));
+        ListOnPageOne(new OrganizationData { Sid = "RENAMED", Name = "New name", MembersCount = 7 });
+
+        await Create(NewDb()).DiscoverOrganizationsAsync();
+
+        var snapshots = await SnapshotsAsync("RENAMED");
+        snapshots.Should().HaveCount(2);
+        snapshots[^1].Name.Should().Be("New name");
+        snapshots[^1].MembersCount.Should().Be(10);
+        (await EventsAsync()).Select(e => e.ChangeType).Should().Equal("name_changed");
+    }
+
+    [Fact]
+    public async Task Phase2_UnchangedContent_WritesNoSnapshot_ButRecordsTheCheck()
+    {
+        await SeedAsync("STILL", "Still", "Same text", DateTime.UtcNow.AddDays(-30));
+        ServePage("STILL", "Same text");
+
+        await Create(NewDb()).CollectOrganizationMetadataAsync();
+
+        (await SnapshotsAsync("STILL")).Should().HaveCount(1);
+        (await EventsAsync()).Should().BeEmpty();
+        var checkedAt = await NewDb().DiscoveredOrganizations.Where(d => d.Sid == "STILL").Select(d => d.ContentCheckedAt).SingleAsync();
+        checkedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public async Task Phase2_ComparesWithTheLastContentSnapshot_NotTheLatestListingOne()
+    {
+        await SeedAsync("TEXTS", "Texts", "Before", DateTime.UtcNow.AddDays(-30));
+        var db = NewDb();
+        db.Organizations.Add(new Organization
+        {
+            Sid = "TEXTS", Name = "Texts renamed", Timestamp = DateTime.UtcNow.AddDays(-1), MembersCount = 12,
+            ContentCollected = false,
+        });
+        await db.SaveChangesAsync();
+        ServePage("TEXTS", "After");
+
+        await Create(NewDb()).CollectOrganizationMetadataAsync();
+
+        var events = await EventsAsync();
+        events.Select(e => (e.ChangeType, e.OldValue, e.NewValue)).Should().Equal(("description_changed", "Before", "After"));
+        var latest = (await SnapshotsAsync("TEXTS"))[^1];
+        latest.Should().Match<Organization>(o => o.ContentCollected && o.Description == "After"
+            && o.Name == "Texts renamed" && o.MembersCount == 12);
+    }
+
+    [Fact]
+    public async Task Phase2_TheFirstContentRead_IsNotAChange()
+    {
+        await SeedAsync("FRESH", "Fresh", description: null, DateTime.UtcNow.AddDays(-1));
+        ServePage("FRESH", "First text");
+
+        await Create(NewDb()).CollectOrganizationMetadataAsync();
+
+        (await SnapshotsAsync("FRESH"))[^1].Description.Should().Be("First text");
+        (await EventsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Phase2_RecentlyCheckedOrgs_AreNotRead()
+    {
+        await SeedAsync("CHECKED", "Checked", "Text", DateTime.UtcNow.AddDays(-30));
+        var db = NewDb();
+        (await db.DiscoveredOrganizations.SingleAsync(d => d.Sid == "CHECKED")).ContentCheckedAt = DateTime.UtcNow.AddHours(-1);
+        await db.SaveChangesAsync();
+
+        (await Create(NewDb()).CollectOrganizationMetadataAsync()).Should().Be(0);
+        _rsi.Verify(r => r.GetOrgPageHtmlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     public async Task DisposeAsync()
     {
         await _provider.DisposeAsync();

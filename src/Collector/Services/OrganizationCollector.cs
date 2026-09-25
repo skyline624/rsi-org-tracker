@@ -74,6 +74,7 @@ public class OrganizationCollector : IOrganizationCollector
         var savedOrgSids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var totalNew = 0;
+        var snapshotsWritten = 0;
         var changesWritten = 0;
         var timestamp = DateTime.UtcNow;
         var changeEvents = new List<ChangeEvent>();
@@ -118,10 +119,17 @@ public class OrganizationCollector : IOrganizationCollector
                         totalNew++;
                     }
 
-                    // Save basic metadata to organizations table (once per cycle per SID)
-                    if (!savedOrgSids.Contains(orgData.Sid))
+                    // Save the listing to organizations (once per cycle per SID), and only
+                    // when it changed: an unchanged org used to get a new row every cycle.
+                    if (savedOrgSids.Add(orgData.Sid))
                     {
-                        var org = new Organization
+                        existingBySid.TryGetValue(orgData.Sid, out var prev);
+                        if (prev != null && !ListingChanged(prev, orgData))
+                        {
+                            continue;
+                        }
+
+                        await _orgRepo.AddAsync(new Organization
                         {
                             Sid          = orgData.Sid,
                             Name         = orgData.Name,
@@ -132,15 +140,14 @@ public class OrganizationCollector : IOrganizationCollector
                             Commitment   = orgData.Commitment,
                             Recruiting   = orgData.Recruiting,
                             Roleplay     = orgData.Roleplay,
-                            MembersCount = orgData.MembersCount,
+                            // Phase 3 owns the count (RSI's totalrows); the listing's is a cached copy.
+                            MembersCount = prev?.MembersCount ?? orgData.MembersCount,
                             Timestamp    = timestamp,
                             ContentCollected = false
-                        };
-                        await _orgRepo.AddAsync(org, ct);
-                        savedOrgSids.Add(orgData.Sid);
+                        }, ct);
+                        snapshotsWritten++;
 
-                        // Detect changes vs previous snapshot
-                        if (existingBySid.TryGetValue(orgData.Sid, out var prev))
+                        if (prev != null)
                         {
                             var prevSnap = new OrganizationSnapshot
                             {
@@ -148,11 +155,11 @@ public class OrganizationCollector : IOrganizationCollector
                                 Commitment = prev.Commitment, Recruiting = prev.Recruiting,
                                 Roleplay = prev.Roleplay, Lang = prev.Lang, Members = prev.MembersCount
                             };
-                            var currSnap = new OrganizationSnapshot
+                            var currSnap = prevSnap with
                             {
-                                Sid = orgData.Sid, Name = orgData.Name, Archetype = orgData.Archetype,
+                                Name = orgData.Name, Archetype = orgData.Archetype,
                                 Commitment = orgData.Commitment, Recruiting = orgData.Recruiting,
-                                Roleplay = orgData.Roleplay, Lang = orgData.Lang, Members = orgData.MembersCount
+                                Roleplay = orgData.Roleplay, Lang = orgData.Lang
                             };
                             changeEvents.AddRange(_changeDetector.DetectOrganizationChanges(prevSnap, currSnap, orgData.Sid));
                         }
@@ -168,8 +175,8 @@ public class OrganizationCollector : IOrganizationCollector
                     changesWritten += await SaveDiscoveryAsync(changeEvents, ct);
                     pagesSinceLastSave = 0;
                     _logger.LogInformation(
-                        "Discovery progress: page {Page}, {Total} orgs known ({New} new), {Saved} metadata saved",
-                        page - 1, existingSidSet.Count, totalNew, savedOrgSids.Count);
+                        "Discovery progress: page {Page}, {Total} orgs known ({New} new), {Saved} listings changed",
+                        page - 1, existingSidSet.Count, totalNew, snapshotsWritten);
                 }
             }
 
@@ -181,11 +188,22 @@ public class OrganizationCollector : IOrganizationCollector
         }
 
         _logger.LogInformation(
-            "Discovery complete: {Total} orgs known, {New} new, {Saved} metadata snapshots saved, {Changes} changes",
-            existingSidSet.Count, totalNew, savedOrgSids.Count, changesWritten);
+            "Discovery complete: {Total} orgs known, {New} new, {Saved} listing snapshots saved, {Changes} changes",
+            existingSidSet.Count, totalNew, snapshotsWritten, changesWritten);
 
         return existingSidSet.Count;
     }
+
+    /// <summary>Listing fields stored on organizations, the member count aside.</summary>
+    private static bool ListingChanged(OrganizationListing previous, OrganizationData current)
+        => previous.Name != current.Name
+            || previous.Archetype != current.Archetype
+            || previous.Lang != current.Lang
+            || previous.Commitment != current.Commitment
+            || previous.Recruiting != current.Recruiting
+            || previous.Roleplay != current.Roleplay
+            || previous.UrlImage != current.UrlImage
+            || previous.UrlCorpo != current.UrlCorpo;
 
     /// <summary>
     /// Persists the pending discovery rows and change events, then detaches them so
@@ -241,6 +259,7 @@ public class OrganizationCollector : IOrganizationCollector
             total, _options.MetadataRefreshIntervalHours);
 
         var processedCount = 0;
+        var unchangedCount = 0;
         var skippedCount = 0;
         var changesWritten = 0;
         var changeEvents = new List<ChangeEvent>();
@@ -259,6 +278,8 @@ public class OrganizationCollector : IOrganizationCollector
             // Latest snapshots of this batch only: loading them for every stale org
             // up front would hold all their texts in memory for the whole phase.
             var latestOrgs = await _orgRepo.GetLatestBySidsAsync(batch.Select(d => d.Sid), ct);
+            var latestContent = await _orgRepo.GetLatestContentBySidsAsync(batch.Select(d => d.Sid), ct);
+            var checkedSids = new List<string>();
 
             // ── Fetch pages concurrently ──────────────────────────────────
             // The shared RsiRateGate caps concurrency (MaxConcurrentRequests) and pacing
@@ -302,36 +323,54 @@ public class OrganizationCollector : IOrganizationCollector
                 // Page reachable AND parsed — clear any prior tombstone state.
                 await _discoveredRepo.ResetNotFoundAsync(discoveredOrg.Sid, ct);
 
-                if (latestOrgs.TryGetValue(discoveredOrg.Sid, out var existing))
+                // No listing snapshot yet: Phase 1 has not stored the org, retry next cycle.
+                if (!latestOrgs.TryGetValue(discoveredOrg.Sid, out var existing))
                 {
-                    changeEvents.AddRange(DetectContentChanges(existing, pageData, timestamp));
-
-                    await _orgRepo.AddAsync(new Organization
-                    {
-                        Sid              = existing.Sid,
-                        Name             = existing.Name,
-                        UrlImage         = existing.UrlImage,
-                        UrlCorpo         = existing.UrlCorpo,
-                        Archetype        = existing.Archetype,
-                        Lang             = existing.Lang,
-                        Commitment       = existing.Commitment,
-                        Recruiting       = existing.Recruiting,
-                        Roleplay         = existing.Roleplay,
-                        MembersCount     = existing.MembersCount,
-                        Timestamp        = timestamp,
-                        ContentCollected = true,
-                        Description      = pageData.Description,
-                        History          = pageData.History,
-                        Manifesto        = pageData.Manifesto,
-                        Charter          = pageData.Charter,
-                        FocusPrimaryName    = pageData.FocusPrimaryName,
-                        FocusPrimaryImage   = pageData.FocusPrimaryImage,
-                        FocusSecondaryName  = pageData.FocusSecondaryName,
-                        FocusSecondaryImage = pageData.FocusSecondaryImage
-                    }, ct);
+                    skippedCount++;
+                    continue;
                 }
 
+                checkedSids.Add(discoveredOrg.Sid);
                 processedCount++;
+
+                // Compared with the last snapshot that carries content: the latest one is
+                // often a listing-only row whose texts are NULL (every text looked changed).
+                latestContent.TryGetValue(discoveredOrg.Sid, out var lastContent);
+                if (lastContent != null && SameContent(lastContent, pageData))
+                {
+                    unchangedCount++;
+                    continue;
+                }
+
+                // The first content read of an org is a reference, not a change.
+                if (lastContent != null)
+                {
+                    changeEvents.AddRange(DetectContentChanges(lastContent, pageData, timestamp));
+                }
+
+                await _orgRepo.AddAsync(new Organization
+                {
+                    Sid              = existing.Sid,
+                    Name             = existing.Name,
+                    UrlImage         = existing.UrlImage,
+                    UrlCorpo         = existing.UrlCorpo,
+                    Archetype        = existing.Archetype,
+                    Lang             = existing.Lang,
+                    Commitment       = existing.Commitment,
+                    Recruiting       = existing.Recruiting,
+                    Roleplay         = existing.Roleplay,
+                    MembersCount     = existing.MembersCount,
+                    Timestamp        = timestamp,
+                    ContentCollected = true,
+                    Description      = pageData.Description,
+                    History          = pageData.History,
+                    Manifesto        = pageData.Manifesto,
+                    Charter          = pageData.Charter,
+                    FocusPrimaryName    = pageData.FocusPrimaryName,
+                    FocusPrimaryImage   = pageData.FocusPrimaryImage,
+                    FocusSecondaryName  = pageData.FocusSecondaryName,
+                    FocusSecondaryImage = pageData.FocusSecondaryImage
+                }, ct);
             }
 
             // Atomically persist: all member snapshots of the batch AND their change
@@ -347,6 +386,7 @@ public class OrganizationCollector : IOrganizationCollector
                         await _changeEventRepo.AddRangeAsync(changeEvents, ct);
                     }
                     await _orgRepo.SaveChangesAsync(ct);
+                    await _discoveredRepo.MarkContentCheckedAsync(checkedSids, timestamp, ct);
                     await batchTx.CommitAsync(ct);
                     changesWritten += changeEvents.Count;
                     changeEvents.Clear();
@@ -365,13 +405,13 @@ public class OrganizationCollector : IOrganizationCollector
             }
 
             _logger.LogInformation(
-                "Phase 2 progress: {Processed}/{Total} enriched, {Skipped} skipped",
-                processedCount, total, skippedCount);
+                "Phase 2 progress: {Processed}/{Total} read ({Unchanged} unchanged), {Skipped} skipped",
+                processedCount, total, unchangedCount, skippedCount);
         }
 
         _logger.LogInformation(
-            "Phase 2 complete: {Count}/{Total} organizations enriched, {Skipped} skipped, {Changes} content changes",
-            processedCount, total, skippedCount, changesWritten);
+            "Phase 2 complete: {Count}/{Total} organizations read ({Unchanged} unchanged), {Skipped} skipped, {Changes} content changes",
+            processedCount, total, unchangedCount, skippedCount, changesWritten);
 
         return processedCount;
     }
@@ -396,6 +436,19 @@ public class OrganizationCollector : IOrganizationCollector
             _logger.LogError(ex, "Unexpected error fetching org page for {Sid}", sid);
             return new OrgPageFetchResult(null, OrgPageFetchOutcome.Failed);
         }
+    }
+
+    private static bool SameContent(Organization previous, OrgPageData current)
+    {
+        static bool Same(string? a, string? b) => a == b || (string.IsNullOrEmpty(a) && string.IsNullOrEmpty(b));
+        return Same(previous.Description, current.Description)
+            && Same(previous.History, current.History)
+            && Same(previous.Manifesto, current.Manifesto)
+            && Same(previous.Charter, current.Charter)
+            && Same(previous.FocusPrimaryName, current.FocusPrimaryName)
+            && Same(previous.FocusPrimaryImage, current.FocusPrimaryImage)
+            && Same(previous.FocusSecondaryName, current.FocusSecondaryName)
+            && Same(previous.FocusSecondaryImage, current.FocusSecondaryImage);
     }
 
     private static IEnumerable<ChangeEvent> DetectContentChanges(

@@ -13,4 +13,6 @@ public sealed record OrganizationListing(
     bool? Recruiting,
     bool? Roleplay,
     int MembersCount,
-    DateTime Timestamp);
+    DateTime Timestamp,
+    string? UrlImage = null,
+    string? UrlCorpo = null);

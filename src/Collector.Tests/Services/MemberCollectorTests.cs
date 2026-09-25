@@ -233,6 +233,20 @@ public sealed class MemberCollectorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AChangeOfRsisTotal_IsAMemberCountEvent()
+    {
+        _roster = _ => Roster(RosterStatus.Complete, 3, "alpha");
+        await CollectAsync("GROWS");
+        _roster = _ => Roster(RosterStatus.Complete, 4, "alpha", "bravo");
+        await CollectAsync("GROWS");
+
+        var (_, db) = Create();
+        (await db.ChangeEvents.AsNoTracking().Where(e => e.ChangeType == "member_count_changed")
+                .Select(e => new { e.OrgSid, e.OldValue, e.NewValue }).ToListAsync())
+            .Should().ContainSingle().Which.Should().Be(new { OrgSid = (string?)"GROWS", OldValue = (string?)"3", NewValue = (string?)"4" });
+    }
+
+    [Fact]
     public async Task Counters_OfAnIncompleteRead_KeepOnlyTheTotal()
     {
         _roster = _ => Roster(RosterStatus.Partial, 5, "alpha");

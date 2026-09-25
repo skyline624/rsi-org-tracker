@@ -30,7 +30,7 @@ public class OrganizationRepository : Repository<Organization>, IOrganizationRep
                 l => new { l.Sid, l.Timestamp },
                 (o, _) => new OrganizationListing(
                     o.Sid, o.Name, o.Archetype, o.Lang, o.Commitment,
-                    o.Recruiting, o.Roleplay, o.MembersCount, o.Timestamp))
+                    o.Recruiting, o.Roleplay, o.MembersCount, o.Timestamp, o.UrlImage, o.UrlCorpo))
             .ToListAsync(ct);
     }
 
@@ -40,6 +40,19 @@ public class OrganizationRepository : Repository<Organization>, IOrganizationRep
         var orgs = await DbSet
             .AsNoTracking()
             .Where(o => sidList.Contains(o.Sid))
+            .GroupBy(o => o.Sid)
+            .Select(g => g.OrderByDescending(o => o.Timestamp).First())
+            .ToListAsync(ct);
+
+        return orgs.ToDictionary(o => o.Sid, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task<Dictionary<string, Organization>> GetLatestContentBySidsAsync(IEnumerable<string> sids, CancellationToken ct = default)
+    {
+        var sidList = sids.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var orgs = await DbSet
+            .AsNoTracking()
+            .Where(o => o.ContentCollected && sidList.Contains(o.Sid))
             .GroupBy(o => o.Sid)
             .Select(g => g.OrderByDescending(o => o.Timestamp).First())
             .ToListAsync(ct);

@@ -12,6 +12,9 @@ public interface IDiscoveredOrganizationRepository : IRepository<DiscoveredOrgan
     Task<IReadOnlyList<string>> GetMemberCollectionTargetsAsync(CancellationToken ct = default);
 
     /// <summary>Records that Phase 3 just collected this organization.</summary>
+    /// <summary>Records that Phase 2 read these orgs' pages (their content may be unchanged).</summary>
+    Task MarkContentCheckedAsync(IReadOnlyCollection<string> sids, DateTime when, CancellationToken ct = default);
+
     Task MarkMembersCollectedAsync(string sid, DateTime when, CancellationToken ct = default);
     /// <summary>
     /// Atomically increments ConsecutiveNotFoundCount and sets DeadAt when the

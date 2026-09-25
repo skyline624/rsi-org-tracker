@@ -7,7 +7,8 @@ public class OrgMemberCountRepository : Repository<OrgMemberCount>, IOrgMemberCo
 {
     public OrgMemberCountRepository(TrackerDbContext context) : base(context) { }
 
-    public async Task<bool> RecordIfChangedAsync(OrgMemberCount counts, CancellationToken ct = default)
+    public async Task<(bool Written, OrgMemberCount? Previous)> RecordIfChangedAsync(
+        OrgMemberCount counts, CancellationToken ct = default)
     {
         var latest = await DbSet.AsNoTracking()
             .Where(c => c.OrgSid == counts.OrgSid)
@@ -19,11 +20,11 @@ public class OrgMemberCountRepository : Repository<OrgMemberCount>, IOrgMemberCo
                 || (latest.VisibleCount == counts.VisibleCount
                     && latest.RedactedCount == counts.RedactedCount
                     && latest.HiddenCount == counts.HiddenCount));
-        if (unchanged) return false;
+        if (unchanged) return (false, latest);
 
         DbSet.Add(counts);
         await Context.SaveChangesAsync(ct);
         Context.Entry(counts).State = EntityState.Detached;
-        return true;
+        return (true, latest);
     }
 }

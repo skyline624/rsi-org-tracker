@@ -7,7 +7,7 @@ public interface IOrgMemberCountRepository : IRepository<OrgMemberCount>
     /// <summary>
     /// Stores the counters unless they equal the organization's latest row. With null
     /// breakdown counts (incomplete read), only <see cref="OrgMemberCount.TotalRows"/> is compared.
-    /// Returns whether a row was written.
+    /// Returns whether a row was written, and the organization's previous row.
     /// </summary>
-    Task<bool> RecordIfChangedAsync(OrgMemberCount counts, CancellationToken ct = default);
+    Task<(bool Written, OrgMemberCount? Previous)> RecordIfChangedAsync(OrgMemberCount counts, CancellationToken ct = default);
 }
