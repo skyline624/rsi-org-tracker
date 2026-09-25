@@ -12,4 +12,5 @@ public class MemberData
     public string? Rank { get; set; }
     public string[]? Roles { get; set; }
     public string? UrlImage { get; set; }
+    public int? Stars { get; set; }
 }

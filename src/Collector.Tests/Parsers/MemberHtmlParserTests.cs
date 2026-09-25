@@ -1,59 +1,97 @@
+using System.Text.RegularExpressions;
 using Collector.Parsers;
+using Collector.Tests.TestSupport;
 using FluentAssertions;
-using Microsoft.Extensions.Logging;
-using Moq;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Collector.Tests.Parsers;
 
+/// <summary>Roster pages as RSI serves them (anonymized captures).</summary>
 public class MemberHtmlParserTests
 {
-    private readonly MemberHtmlParser _parser;
+    private readonly MemberHtmlParser _parser = new(NullLogger<MemberHtmlParser>.Instance);
 
-    public MemberHtmlParserTests()
+    [Fact]
+    public void EmptyHtml_HasNoRows()
     {
-        var logger = new Mock<ILogger<MemberHtmlParser>>();
-        _parser = new MemberHtmlParser(logger.Object);
+        var page = _parser.ParsePage("", "FIXTURE");
+
+        page.Visible.Should().BeEmpty();
+        page.RawRows.Should().Be(0);
     }
 
     [Fact]
-    public void ParseMembers_EmptyHtml_ReturnsEmptyList()
+    public void HiddenRows_AreCounted_ButDoNotBecomeMembers()
     {
-        // Arrange
-        var html = "<html><body></body></html>";
+        var page = _parser.ParsePage(RsiFixtures.MembersHtml("members-visible-hidden.json"), "FIXTURE");
 
-        // Act
-        var result = _parser.ParseMembers(html, "TEST");
-
-        // Assert
-        result.Should().BeEmpty();
+        page.RawRows.Should().Be(32);
+        page.HiddenRows.Should().Be(2);
+        page.RedactedRows.Should().Be(0);
+        page.Visible.Should().HaveCount(30);
     }
 
-    [Fact(Skip = "Fixture uses <tr> rows the parser never selects (it reads li.member-item); rewritten in lot 9 with real anonymised RSI fixtures.")]
-    public void ParseMembers_ValidHtml_ReturnsMembers()
+    [Fact]
+    public void RedactedRows_AreCountedApartFromHiddenOnes()
     {
-        // Arrange
-        var html = @"
-        <html>
-        <body>
-            <table>
-                <tr class='member-item'>
-                    <td><a href='/citizens/TestHandle'>TestHandle</a></td>
-                    <td class='rank'>Member</td>
-                    <td><img src='https://example.com/avatar.png' /></td>
-                </tr>
-            </table>
-        </body>
-        </html>";
+        var page = _parser.ParsePage(RsiFixtures.MembersHtml("members-redacted.json"), "FIXTURE");
 
-        // Act
-        var result = _parser.ParseMembers(html, "TEST");
+        page.RawRows.Should().Be(32);
+        page.RedactedRows.Should().Be(1);
+        page.HiddenRows.Should().Be(2);
+        page.Visible.Should().HaveCount(29);
+    }
 
-        // Assert
-        result.Should().NotBeEmpty();
-        result.Should().HaveCount(1);
-        result[0].OrgSid.Should().Be("TEST");
-        result[0].Handle.Should().Be("TestHandle");
-        result[0].Rank.Should().Be("Member");
+    [Fact]
+    public void VisibleRow_FieldsComeFromTheirOwnElements()
+    {
+        var page = _parser.ParsePage(RsiFixtures.MembersHtml("members-visible-hidden.json"), "FIXTURE");
+
+        var first = page.Visible[0];
+        first.OrgSid.Should().Be("FIXTURE");
+        first.Handle.Should().Be("pilot-001");
+        first.DisplayName.Should().Be("Display 001");
+        first.Rank.Should().Be("Cadet", "the 'Roles' / 'Affiliate' overlay title is not the rank");
+        first.Stars.Should().Be(0);
+        first.Roles.Should().BeNull();
+        first.UrlImage.Should().Be("https://robertsspaceindustries.com/media/fixture/avatar-001.jpg");
+        first.CitizenId.Should().BeNull("roster rows carry no citizen number");
+        page.Visible.Should().OnlyContain(m => m.Rank == "Cadet");
+    }
+
+    [Fact]
+    public void RankStarsAndRoles_OfSeniorMembers()
+    {
+        var page = _parser.ParsePage(RsiFixtures.MembersHtml("members-roles.json"), "FIXTURE");
+
+        page.Visible.Should().HaveCount(2);
+        var founder = page.Visible[0];
+        founder.Rank.Should().Be("Admiral");
+        founder.Stars.Should().Be(5);
+        founder.Roles.Should().Equal("Role 001", "Role 002", "Role 003", "Role 004");
+    }
+
+    [Fact]
+    public void FullyMaskedPage_HasRowsButNoMembers()
+    {
+        var page = _parser.ParsePage(RsiFixtures.MembersHtml("members-all-masked.json"), "FIXTURE");
+
+        page.Visible.Should().BeEmpty();
+        page.RawRows.Should().Be(5);
+        (page.RedactedRows + page.HiddenRows).Should().Be(5);
+    }
+
+    [Fact]
+    public void RenumberedDataClasses_DoNotChangeTheResult()
+    {
+        var html = RsiFixtures.MembersHtml("members-roles.json") + RsiFixtures.MembersHtml("members-redacted.json");
+        var shuffled = Regex.Replace(html, @"\bdata(\d)\b", m => $"data{(int.Parse(m.Groups[1].Value) * 7 + 3) % 10}");
+
+        var expected = _parser.ParsePage(html, "FIXTURE");
+        var actual = _parser.ParsePage(shuffled, "FIXTURE");
+
+        shuffled.Should().NotBe(html);
+        actual.Should().BeEquivalentTo(expected);
     }
 }

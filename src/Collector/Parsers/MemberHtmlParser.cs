@@ -1,14 +1,33 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using Collector.Dtos;
 using Microsoft.Extensions.Logging;
 
 namespace Collector.Parsers;
 
+/// <summary>One roster page: the visible members, and how many rows RSI masked.</summary>
+public sealed record MemberPage(IReadOnlyList<MemberData> Visible, int RawRows, int RedactedRows, int HiddenRows);
+
 /// <summary>
-/// Parses member list HTML from RSI API responses.
+/// Parses the roster HTML returned by <c>orgs/getOrgMembers</c>. Every row is an
+/// <c>li.member-item</c> whose <c>org-visibility-*</c> token tells what it shows:
+/// V visible, R redacted (the member hides their memberships), H hidden affiliation.
+/// R and H rows carry no handle: they are counted, never turned into members.
+/// Fields are read from their semantic class tokens (nick, name, rank, stars,
+/// rolelist); the <c>dataN</c> classes vary from page to page and are never used.
 /// </summary>
 public class MemberHtmlParser
 {
+    /// <summary>
+    /// Recorded with each member collection. Version 1 was the heuristic parser whose
+    /// ranks were the "Roles"/"Affiliate" overlay titles.
+    /// </summary>
+    public const int Version = 2;
+
+    private static readonly Regex HandleShape = new(@"^[A-Za-z0-9_-]{1,50}$", RegexOptions.Compiled);
+    private static readonly Regex StarsWidth = new(@"width:\s*(\d+(?:\.\d+)?)\s*%", RegexOptions.Compiled);
+
     private readonly ILogger<MemberHtmlParser> _logger;
 
     public MemberHtmlParser(ILogger<MemberHtmlParser> logger)
@@ -16,172 +35,121 @@ public class MemberHtmlParser
         _logger = logger;
     }
 
-    /// <summary>
-    /// Parses member list HTML into MemberData objects.
-    /// </summary>
-    public IReadOnlyList<MemberData> ParseMembers(string html, string orgSid)
+    public MemberPage ParsePage(string html, string orgSid)
     {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new MemberPage([], 0, 0, 0);
+        }
+
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
 
-        var rows = doc.DocumentNode.SelectNodes("//li[contains(@class, 'member-item')]");
-        if (rows == null || rows.Count == 0)
-        {
-            // Try alternative: any list item with a citizen link
-            rows = doc.DocumentNode.SelectNodes("//li[.//a[contains(@href, '/citizens/')]]");
-        }
-
-        if (rows == null || rows.Count == 0)
-        {
-            _logger.LogWarning("No member rows found in HTML for org {OrgSid}", orgSid);
-            return Array.Empty<MemberData>();
-        }
-
-        var members = new List<MemberData>();
+        var rows = doc.DocumentNode.Descendants("li").Where(li => li.HasClass("member-item")).ToList();
+        var visible = new List<MemberData>(rows.Count);
+        var redacted = 0;
+        var hidden = 0;
 
         foreach (var row in rows)
         {
-            try
+            switch (Visibility(row))
             {
-                var member = ParseMemberRow(row, orgSid);
-                if (member != null)
-                {
-                    members.Add(member);
-                }
+                case 'R':
+                    redacted++;
+                    continue;
+                case 'H':
+                    hidden++;
+                    continue;
             }
-            catch (Exception ex)
+
+            var member = ParseVisibleRow(row, orgSid);
+            if (member != null)
             {
-                _logger.LogError(ex, "Error parsing member row for org {OrgSid}", orgSid);
+                visible.Add(member);
+            }
+            else
+            {
+                _logger.LogWarning("Visible roster row without a readable handle in org {OrgSid}", orgSid);
             }
         }
 
-        return members;
+        return new MemberPage(visible, rows.Count, redacted, hidden);
     }
 
-    private MemberData? ParseMemberRow(HtmlNode row, string orgSid)
+    /// <summary>V, R or H; a row without a visibility token is treated as visible.</summary>
+    private static char Visibility(HtmlNode row)
     {
-        // Extract handle from link
-        var handle = ExtractHandle(row);
-        if (string.IsNullOrEmpty(handle))
+        const string prefix = "org-visibility-";
+        var token = row.GetClasses().FirstOrDefault(c => c.StartsWith(prefix, StringComparison.Ordinal));
+        return token is { Length: > 15 } ? char.ToUpperInvariant(token[prefix.Length]) : 'V';
+    }
+
+    private static MemberData? ParseVisibleRow(HtmlNode row, string orgSid)
+    {
+        var handle = Handle(row);
+        if (handle == null)
         {
             return null;
         }
-
-        // Extract citizen_id from data attribute or link
-        var citizenId = ExtractCitizenId(row);
-
-        // Extract display name
-        var displayName = ExtractDisplayName(row);
-
-        // Extract rank
-        var rank = ExtractRank(row);
-
-        // Extract roles
-        var roles = ExtractRoles(row);
-
-        // Extract avatar URL
-        var urlImage = ExtractAvatarUrl(row);
 
         return new MemberData
         {
             OrgSid = orgSid,
             Handle = handle,
-            CitizenId = citizenId,
-            DisplayName = displayName,
-            Rank = rank,
-            Roles = roles,
-            UrlImage = urlImage
+            DisplayName = Text(Descendant(row, "name")),
+            Rank = Text(Descendant(row, "rank")),
+            Stars = Stars(row),
+            Roles = Roles(row),
+            UrlImage = Descendant(row, "thumb")?.Descendants("img").FirstOrDefault()
+                ?.GetAttributeValue("src", null),
         };
     }
 
-    private string? ExtractHandle(HtmlNode row)
+    /// <summary>The nick element, else the /citizens/{handle} link.</summary>
+    private static string? Handle(HtmlNode row)
     {
-        // Try citizen link
-        var link = row.SelectSingleNode(".//a[contains(@href, '/citizens/')]");
-        var href = link?.GetAttributeValue("href", "");
+        var nick = Text(Descendant(row, "nick"));
+        if (nick != null && HandleShape.IsMatch(nick))
+        {
+            return nick;
+        }
 
-        if (string.IsNullOrEmpty(href))
+        var href = row.Descendants("a").Select(a => a.GetAttributeValue("href", ""))
+            .FirstOrDefault(h => h.Contains("/citizens/", StringComparison.Ordinal));
+        var fromLink = href?[(href.LastIndexOf('/') + 1)..];
+        return fromLink != null && HandleShape.IsMatch(fromLink) ? fromLink : null;
+    }
+
+    /// <summary>The stars bar is 20% wide per star: 0-100% maps to 0-5.</summary>
+    private static int? Stars(HtmlNode row)
+    {
+        var style = Descendant(row, "stars")?.GetAttributeValue("style", null);
+        var match = style == null ? null : StarsWidth.Match(style);
+        if (match is not { Success: true })
         {
             return null;
         }
 
-        // Extract handle from URL like /citizens/TestHandle
-        var parts = href.Split('/');
-        return parts.Length > 0 ? parts[^1] : null;
+        var percent = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+        return Math.Clamp((int)Math.Round(percent / 20, MidpointRounding.AwayFromZero), 0, 5);
     }
 
-    private int? ExtractCitizenId(HtmlNode row)
+    private static string[]? Roles(HtmlNode row)
     {
-        // Try data-citizen-id attribute
-        var citizenIdStr = row.GetAttributeValue("data-citizen-id", "");
-        if (!string.IsNullOrEmpty(citizenIdStr) && int.TryParse(citizenIdStr, out var citizenId))
-        {
-            return citizenId;
-        }
-
-        // Try citizen link with numeric ID
-        var link = row.SelectSingleNode(".//a[contains(@href, '/citizens/')]");
-        var href = link?.GetAttributeValue("href", "");
-        if (href != null)
-        {
-            // Some links have numeric IDs like /citizens/123456
-            var parts = href.Split('/');
-            var lastPart = parts[^1];
-            if (int.TryParse(lastPart, out citizenId))
-            {
-                return citizenId;
-            }
-        }
-
-        // Try extracting from text content
-        var text = row.InnerText ?? string.Empty;
-        if (!string.IsNullOrEmpty(text))
-        {
-            // Look for patterns like "#123456"
-            var hashIndex = text.IndexOf('#');
-            if (hashIndex >= 0)
-            {
-                var numberPart = text.Substring(hashIndex + 1).Split(' ')[0];
-                if (int.TryParse(numberPart, out citizenId))
-                {
-                    return citizenId;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private string? ExtractDisplayName(HtmlNode row)
-    {
-        var nameNode = row.SelectSingleNode(".//*[contains(@class, 'name')]");
-        return nameNode?.InnerText?.Trim();
-    }
-
-    private string? ExtractRank(HtmlNode row)
-    {
-        var rankNode = row.SelectSingleNode(".//*[contains(@class, 'rank')]|.//*[contains(@class, 'title')]");
-        return rankNode?.InnerText?.Trim();
-    }
-
-    private string[]? ExtractRoles(HtmlNode row)
-    {
-        var rolesNodes = row.SelectNodes(".//*[contains(@class, 'role')]|.//*[contains(@class, 'badge')]");
-        if (rolesNodes == null || rolesNodes.Count == 0)
-        {
-            return null;
-        }
-
-        return rolesNodes
-            .Select(n => n.InnerText?.Trim())
-            .Where(r => !string.IsNullOrEmpty(r))
-            .Select(r => r!)
+        var roles = Descendant(row, "rolelist")?.Descendants("li")
+            .Where(li => li.HasClass("role"))
+            .Select(Text)
+            .OfType<string>()
             .ToArray();
+        return roles is { Length: > 0 } ? roles : null;
     }
 
-    private string? ExtractAvatarUrl(HtmlNode row)
+    private static HtmlNode? Descendant(HtmlNode row, string classToken)
+        => row.Descendants().FirstOrDefault(n => n.HasClass(classToken));
+
+    private static string? Text(HtmlNode? node)
     {
-        var img = row.SelectSingleNode(".//img[contains(@class, 'avatar')]|.//img[contains(@src, 'avatar')]");
-        return img?.GetAttributeValue("src", "");
+        var text = node == null ? null : HtmlEntity.DeEntitize(node.InnerText).Trim();
+        return string.IsNullOrEmpty(text) ? null : text;
     }
 }

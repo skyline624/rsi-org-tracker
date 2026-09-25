@@ -341,7 +341,7 @@ public class RsiApiClient : IRsiApiClient
             return null;
         }
 
-        var members = _memberParser.ParseMembers(html, orgSymbol);
+        var members = _memberParser.ParsePage(html, orgSymbol).Visible;
         return (members, totalRows);
     }
 
