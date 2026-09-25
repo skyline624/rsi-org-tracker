@@ -44,4 +44,10 @@ public class DiscoveredOrganization
     /// Non-null means Phase 2 will skip it from now on.
     /// </summary>
     public DateTime? DeadAt { get; set; }
+
+    /// <summary>
+    /// When Phase 3 last collected this org's members. Phase 3 visits the oldest
+    /// (never collected first), so an interrupted cycle resumes where it stopped.
+    /// </summary>
+    public DateTime? LastMembersCollectedAt { get; set; }
 }

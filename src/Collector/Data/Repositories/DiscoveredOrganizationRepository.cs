@@ -79,4 +79,17 @@ public class DiscoveredOrganizationRepository : Repository<DiscoveredOrganizatio
             new object[] { sid },
             ct);
     }
+
+    public async Task<IReadOnlyList<string>> GetMemberCollectionTargetsAsync(CancellationToken ct = default)
+        => await DbSet.AsNoTracking()
+            .Where(o => o.DeadAt == null)
+            .OrderBy(o => o.LastMembersCollectedAt == null ? 0 : 1)
+            .ThenBy(o => o.LastMembersCollectedAt)
+            .ThenBy(o => o.Sid)
+            .Select(o => o.Sid)
+            .ToListAsync(ct);
+
+    public Task MarkMembersCollectedAsync(string sid, DateTime when, CancellationToken ct = default)
+        => DbSet.Where(o => o.Sid == sid)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.LastMembersCollectedAt, when), ct);
 }

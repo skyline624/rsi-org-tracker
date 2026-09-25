@@ -37,6 +37,7 @@ public class MemberCollector : IMemberCollector
     private readonly IMemberCollectionLogRepository _logRepo;
     private readonly IChangeEventRepository _changeEventRepo;
     private readonly IUserEnrichmentQueueRepository _enrichmentQueueRepo;
+    private readonly IDiscoveredOrganizationRepository _discoveredRepo;
     private readonly IChangeDetector _changeDetector;
     private readonly IUserRepository _userRepo;
     private readonly ILogger<MemberCollector> _logger;
@@ -49,6 +50,7 @@ public class MemberCollector : IMemberCollector
         IMemberCollectionLogRepository logRepo,
         IChangeEventRepository changeEventRepo,
         IUserEnrichmentQueueRepository enrichmentQueueRepo,
+        IDiscoveredOrganizationRepository discoveredRepo,
         IChangeDetector changeDetector,
         IUserRepository userRepo,
         ILogger<MemberCollector> logger,
@@ -60,6 +62,7 @@ public class MemberCollector : IMemberCollector
         _logRepo = logRepo;
         _changeEventRepo = changeEventRepo;
         _enrichmentQueueRepo = enrichmentQueueRepo;
+        _discoveredRepo = discoveredRepo;
         _changeDetector = changeDetector;
         _userRepo = userRepo;
         _logger = logger;
@@ -70,14 +73,16 @@ public class MemberCollector : IMemberCollector
     {
         _logger.LogInformation("Starting member collection (Phase 3)");
 
-        var organizations = await _orgRepo.GetAllLatestAsync(ct);
+        // Live discovered orgs, least recently collected first: a restart resumes where
+        // the previous pass stopped instead of starting over from the same orgs.
+        var sids = await _discoveredRepo.GetMemberCollectionTargetsAsync(ct);
         var totalMembers = 0;
 
-        foreach (var org in organizations)
+        foreach (var sid in sids)
         {
             try
             {
-                var count = await CollectMembersForOrganizationAsync(org.Sid, ct);
+                var count = await CollectMembersForOrganizationAsync(sid, ct);
                 totalMembers += count;
             }
             catch (OperationCanceledException)
@@ -86,14 +91,17 @@ public class MemberCollector : IMemberCollector
             }
             catch (HttpRequestException ex)
             {
-                _logger.LogWarning(ex, "HTTP error collecting members for organization {Sid}", org.Sid);
+                _logger.LogWarning(ex, "HTTP error collecting members for organization {Sid}", sid);
                 // Continue with next organization
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error collecting members for organization {Sid}", org.Sid);
+                _logger.LogError(ex, "Unexpected error collecting members for organization {Sid}", sid);
                 // Continue with next organization rather than aborting the entire Phase 3
             }
+
+            // Also after a failure: a failing org goes to the back of the queue.
+            await _discoveredRepo.MarkMembersCollectedAsync(sid, DateTime.UtcNow, ct);
         }
 
         _logger.LogInformation("Member collection complete: {Count} total members", totalMembers);
@@ -101,6 +109,20 @@ public class MemberCollector : IMemberCollector
     }
 
     public async Task<int> CollectMembersForOrganizationAsync(string orgSid, CancellationToken ct = default)
+    {
+        try
+        {
+            return await CollectOrganizationAsync(orgSid, ct);
+        }
+        finally
+        {
+            // One DbContext serves the whole phase: drop what this organization inserted
+            // so memory stays flat instead of growing with every organization collected.
+            _memberRepo.ClearTrackedEntities();
+        }
+    }
+
+    private async Task<int> CollectOrganizationAsync(string orgSid, CancellationToken ct)
     {
         _logger.LogInformation("Collecting members for organization {Sid}", orgSid);
 

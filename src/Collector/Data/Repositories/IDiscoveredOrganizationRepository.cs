@@ -9,6 +9,12 @@ public interface IDiscoveredOrganizationRepository : IRepository<DiscoveredOrgan
     Task<IReadOnlyList<DiscoveredOrganization>> GetAllUnprocessedAsync(CancellationToken ct = default);
     /// <summary>Returns orgs that have no organizations row with Timestamp >= since (not yet enriched this cycle), excluding tombstoned orgs.</summary>
     Task<IReadOnlyList<DiscoveredOrganization>> GetStaleAsync(DateTime since, CancellationToken ct = default);
+
+    /// <summary>Live organizations for Phase 3, least recently collected first (never collected first).</summary>
+    Task<IReadOnlyList<string>> GetMemberCollectionTargetsAsync(CancellationToken ct = default);
+
+    /// <summary>Records that Phase 3 just collected this organization.</summary>
+    Task MarkMembersCollectedAsync(string sid, DateTime when, CancellationToken ct = default);
     Task MarkProcessedAsync(string sid, CancellationToken ct = default);
 
     /// <summary>
