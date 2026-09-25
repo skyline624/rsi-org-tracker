@@ -54,6 +54,19 @@ describe("apiFetch", () => {
     expect(headers["Content-Type"]).toBeUndefined();
   });
 
+  it.each([
+    "/api/notes/../admin/users/3",
+    "/api/notes/./3",
+    "https://evil.example/steal",
+    "//evil.example/steal",
+    "api/notes/3",
+  ])("refuses to call %s", async (path) => {
+    const fetchMock = stubFetch();
+
+    await expect(apiFetch(path, { bearerToken: "jwt" })).rejects.toThrow(/Invalid API path/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("forwards the caller's bearer token", async () => {
     const fetchMock = stubFetch();
 

@@ -1,5 +1,6 @@
 "use server";
 
+import { INVALID_ARGUMENTS, handleSchema, idSchema, linkProviderSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet, apiPost, apiDelete } from "@/lib/api/client";
 
@@ -24,6 +25,7 @@ export async function createLinkAction(
 ): Promise<LinkResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
+  if (!valid(handleSchema, handle) || !valid(linkProviderSchema, provider) || typeof value !== "string" || value.length > 200) return { ok: false, error: INVALID_ARGUMENTS };
   const v = value.trim();
   if (!v) return { ok: false, error: "Valeur vide." };
   try {
@@ -41,6 +43,7 @@ export async function createLinkAction(
 export async function deleteLinkAction(id: number): Promise<LinkResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
+  if (!valid(idSchema, id)) return { ok: false, error: INVALID_ARGUMENTS };
   try {
     await apiDelete(`/api/links/${id}`, sessionCtx(session));
     return { ok: true };
@@ -59,6 +62,7 @@ export async function autoAddTwitchLinkAction(
 ): Promise<{ added: boolean }> {
   const session = await getSession();
   if (!session) return { added: false };
+  if (!valid(handleSchema, handle) || typeof username !== "string" || username.length > 200) return { added: false };
   const value = username.trim();
   if (!value) return { added: false };
   const opts = sessionCtx(session);

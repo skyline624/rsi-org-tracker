@@ -1,5 +1,6 @@
 "use server";
 
+import { INVALID_ARGUMENTS, handleSchema, idSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPut } from "@/lib/api/client";
 
@@ -22,6 +23,7 @@ export interface SetCitizenIdResult {
 export async function setCitizenIdAction(handle: string, citizenId: number): Promise<SetCitizenIdResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
+  if (!valid(handleSchema, handle) || !valid(idSchema, citizenId)) return { ok: false, error: INVALID_ARGUMENTS };
   if (!Number.isInteger(citizenId) || citizenId < 1)
     return { ok: false, error: "Citizen id invalide (nombre positif attendu)." };
   try {

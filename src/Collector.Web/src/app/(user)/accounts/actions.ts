@@ -1,5 +1,6 @@
 "use server";
 
+import { INVALID_ARGUMENTS, idSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPost, apiPut, apiDelete } from "@/lib/api/client";
 
@@ -47,6 +48,7 @@ export async function createAccountAction(input: {
 export async function deleteAccountAction(id: number): Promise<AccountResult> {
   const session = await requireAdmin();
   if (!session) return { ok: false, error: "Réservé aux administrateurs." };
+  if (!valid(idSchema, id)) return { ok: false, error: INVALID_ARGUMENTS };
   try {
     await apiDelete(`/api/admin/users/${id}`, sessionCtx(session));
     return { ok: true };
@@ -61,6 +63,7 @@ export async function setUserFlagsAction(
 ): Promise<AccountResult> {
   const session = await requireAdmin();
   if (!session) return { ok: false, error: "Réservé aux administrateurs." };
+  if (!valid(idSchema, id)) return { ok: false, error: INVALID_ARGUMENTS };
   try {
     const user = await apiPut<AdminUserDto>(`/api/admin/users/${id}`, flags, sessionCtx(session));
     return { ok: true, user };

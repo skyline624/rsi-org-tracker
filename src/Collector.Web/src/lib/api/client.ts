@@ -40,9 +40,13 @@ export interface FetchOptions {
 }
 
 function buildUrl(path: string, query?: FetchOptions["query"]): string {
-  const url = new URL(
-    path.startsWith("http") ? path : `${API_BASE}${path}`,
-  );
+  // API-relative paths only: never another host (the bearer token would follow),
+  // never "." / ".." segments that would re-target another endpoint.
+  const pathOnly = path.split(/[?#]/)[0] ?? "";
+  if (!path.startsWith("/") || path.startsWith("//") || /(^|\/)\.{1,2}(\/|$)/.test(pathOnly)) {
+    throw new Error(`Invalid API path: ${path}`);
+  }
+  const url = new URL(`${API_BASE}${path}`);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (v === undefined || v === null || v === "") continue;

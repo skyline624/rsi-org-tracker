@@ -1,5 +1,6 @@
 "use server";
 
+import { INVALID_ARGUMENTS, handleSchema, idSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiDelete, apiUpload } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
@@ -25,6 +26,7 @@ export interface AudioActionResult {
 export async function uploadAudioAction(handle: string, formData: FormData): Promise<AudioActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
+  if (!valid(handleSchema, handle)) return { ok: false, error: INVALID_ARGUMENTS };
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Aucun fichier." };
@@ -50,6 +52,7 @@ export async function uploadAudioAction(handle: string, formData: FormData): Pro
 export async function deleteAudioAction(id: number): Promise<AudioActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
+  if (!valid(idSchema, id)) return { ok: false, error: INVALID_ARGUMENTS };
   try {
     await apiDelete(`/api/audio/${id}`, sessionCtx(session));
     return { ok: true };

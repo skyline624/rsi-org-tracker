@@ -1,5 +1,6 @@
 "use server";
 
+import { INVALID_ARGUMENTS, handleSchema, idSchema, sidSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet, apiPost, apiDelete } from "@/lib/api/client";
 
@@ -48,6 +49,7 @@ export async function createMembershipAction(
 ): Promise<MembershipActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
+  if (!valid(handleSchema, handle) || !valid(sidSchema, input?.orgSid)) return { ok: false, error: INVALID_ARGUMENTS };
   if (!input.orgSid.trim()) return { ok: false, error: "SID de l'organisation requis." };
 
   try {
@@ -70,6 +72,7 @@ export async function createMembershipAction(
 export async function deleteMembershipAction(id: number): Promise<MembershipActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
+  if (!valid(idSchema, id)) return { ok: false, error: INVALID_ARGUMENTS };
   try {
     await apiDelete(`/api/memberships/${id}`, sessionCtx(session));
     return { ok: true };
