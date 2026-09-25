@@ -332,8 +332,19 @@ public class UserCollector : IUserCollector
                 // reuse of the handle by another (soon-to-be-updated) user.
                 var oldHandle = existingByCitizenId.UserHandle;
 
-                foreach (var orgSid in await _memberRepo.GetOrgSidsForHandleAsync(handle, activeOnly: false, ct))
+                foreach (var (orgSid, firstSeen) in await _memberRepo.GetFirstSeenByOrgAsync(handle, ct))
                 {
+                    // Phase 3 usually sees the new handle first: to it, the old one had left.
+                    // A departure of the old handle once the new one was in the org is that
+                    // same citizen, still there: the rename replaces it.
+                    var falseDepartures = await _changeEventRepo.DeleteDeparturesSinceAsync(orgSid, oldHandle, firstSeen, ct);
+                    if (falseDepartures > 0)
+                    {
+                        _logger.LogInformation(
+                            "Rename {OldHandle} → {NewHandle}: removed {Count} member_left in {OrgSid}",
+                            oldHandle, handle, falseDepartures, orgSid);
+                    }
+
                     changeEvents.Add(new ChangeEvent
                     {
                         Timestamp = timestamp,

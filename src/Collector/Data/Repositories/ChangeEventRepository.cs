@@ -24,4 +24,10 @@ public class ChangeEventRepository : Repository<ChangeEvent>, IChangeEventReposi
             .Take(limit)
             .ToListAsync(ct);
     }
+
+    // The UserHandle index narrows this to the handle's own events.
+    public Task<int> DeleteDeparturesSinceAsync(string orgSid, string userHandle, DateTime since, CancellationToken ct = default)
+        => DbSet
+            .Where(c => c.UserHandle == userHandle && c.ChangeType == "member_left" && c.OrgSid == orgSid && c.Timestamp >= since)
+            .ExecuteDeleteAsync(ct);
 }

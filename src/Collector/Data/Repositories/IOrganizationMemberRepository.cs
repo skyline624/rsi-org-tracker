@@ -15,6 +15,8 @@ public interface IOrganizationMemberRepository : IRepository<OrganizationMember>
     /// </summary>
     Task<(IReadOnlyList<OrganizationMember> Items, int Total)> GetLatestPageAsync(
         string orgSid, bool? active, int page, int pageSize, CancellationToken ct = default);
+    /// <summary>When a handle first appeared in each organization it was ever seen in.</summary>
+    Task<IReadOnlyDictionary<string, DateTime>> GetFirstSeenByOrgAsync(string userHandle, CancellationToken ct = default);
     /// <summary>Distinct organizations a handle appears in: currently, or ever when <paramref name="activeOnly"/> is false.</summary>
     Task<IReadOnlyList<string>> GetOrgSidsForHandleAsync(string userHandle, bool activeOnly, CancellationToken ct = default);
     Task UpdateCitizenIdByHandleAsync(string handle, int citizenId, CancellationToken ct = default);

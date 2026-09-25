@@ -350,6 +350,58 @@ public sealed class MemberCollectorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ARenameSeenByPhase3BeforePhase4_EndsWithoutAFalseDeparture()
+    {
+        // The realistic order: Phase 3 sees the new handle before Phase 4 has read its profile.
+        await SeedUserAsync("oldname", 100001);
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "oldname");
+        await CollectAsync("RENAMED");
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "fixture-pilot");
+        await CollectAsync("RENAMED");
+
+        await EnrichFixtureProfileAsync(); // citizen 100001, now "fixture-pilot"
+
+        var events = await EventTypesAsync();
+        events.Should().Contain("handle_changed");
+        events.Should().NotContain(["member_left", "member_joined"]);
+    }
+
+    [Fact]
+    public async Task ARename_KeepsADepartureThatCameBeforeTheNewHandleArrived()
+    {
+        await SeedUserAsync("oldname", 100001);
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "oldname");
+        await CollectAsync("RETURNED");
+        _roster = _ => Roster(RosterStatus.Complete, 1, "alpha");
+        await CollectAsync("RETURNED");
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "fixture-pilot");
+        await CollectAsync("RETURNED");
+
+        await EnrichFixtureProfileAsync();
+
+        (await EventTypesAsync()).Should().ContainSingle(e => e == "member_left", "they did leave, and came back renamed");
+    }
+
+    /// <summary>Phase 4 reads the fixture profile: citizen 100001 with handle "fixture-pilot".</summary>
+    private async Task EnrichFixtureProfileAsync()
+    {
+        var db = Create().Db;
+        var phase4 = new UserCollector(
+            _rsi.Object,
+            new UserRepository(db),
+            new UserHandleHistoryRepository(db),
+            new UserEnrichmentQueueRepository(db),
+            new OrganizationMemberRepository(db),
+            new ChangeEventRepository(db),
+            new UserChangeDetector(NullLogger<UserChangeDetector>.Instance),
+            new UserProfileHtmlParser(NullLogger<UserProfileHtmlParser>.Instance),
+            NullLogger<UserCollector>.Instance,
+            Microsoft.Extensions.Options.Options.Create(new CollectorOptions()));
+        (await phase4.EnrichUserAsync("fixture-pilot", isNewHandle: true, TestSupport.RsiFixtures.Text("profile-citizen.html")))
+            .Should().BeTrue();
+    }
+
+    [Fact]
     public async Task TheFirstCollectionAfterV1Rows_IsABaselineWithoutMemberEvents()
     {
         var (_, db) = Create();

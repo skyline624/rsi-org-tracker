@@ -103,6 +103,16 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
         return (pageRows, total);
     }
 
+    public async Task<IReadOnlyDictionary<string, DateTime>> GetFirstSeenByOrgAsync(
+        string userHandle, CancellationToken ct = default)
+    {
+        return await DbSet
+            .Where(m => m.UserHandle == userHandle)
+            .GroupBy(m => m.OrgSid)
+            .Select(g => new { OrgSid = g.Key, FirstSeen = g.Min(m => m.Timestamp) })
+            .ToDictionaryAsync(x => x.OrgSid, x => x.FirstSeen, ct);
+    }
+
     public async Task<IReadOnlyList<string>> GetOrgSidsForHandleAsync(
         string userHandle, bool activeOnly, CancellationToken ct = default)
     {
