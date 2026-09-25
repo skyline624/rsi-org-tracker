@@ -146,23 +146,30 @@ public static class ServiceCollectionExtensions
 
         await Collector.Data.DatabaseBootstrap.MigrateOrAdoptAsync(dbContext, "organizations", logger);
 
-        // One-shot deduplication: remove duplicate pending queue entries keeping the oldest per handle
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            DELETE FROM user_enrichment_queue
-            WHERE Id NOT IN (
-                SELECT MIN(Id) FROM user_enrichment_queue
-                WHERE Enriched = 0
-                GROUP BY UserHandle
-            )
-            AND Enriched = 0;
-        ");
-
-        // Ensure partial unique index exists (legacy databases built before this index was added)
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            CREATE UNIQUE INDEX IF NOT EXISTS IX_user_enrichment_queue_UserHandle_Pending
-            ON user_enrichment_queue (UserHandle)
-            WHERE Enriched = 0;
-        ");
+        // Legacy databases adopted without the partial unique index: drop duplicate
+        // pending entries (keeping the oldest per handle), then create the index.
+        // Once it exists duplicates are impossible, so the full-queue DELETE is skipped.
+        var pendingIndexExists = await dbContext.Database.SqlQueryRaw<int>(
+                "SELECT COUNT(*) AS Value FROM sqlite_master WHERE type = 'index' AND name = {0}",
+                "IX_user_enrichment_queue_UserHandle_Pending")
+            .SingleAsync() > 0;
+        if (!pendingIndexExists)
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(@"
+                DELETE FROM user_enrichment_queue
+                WHERE Id NOT IN (
+                    SELECT MIN(Id) FROM user_enrichment_queue
+                    WHERE Enriched = 0
+                    GROUP BY UserHandle
+                )
+                AND Enriched = 0;
+            ");
+            await dbContext.Database.ExecuteSqlRawAsync(@"
+                CREATE UNIQUE INDEX IX_user_enrichment_queue_UserHandle_Pending
+                ON user_enrichment_queue (UserHandle)
+                WHERE Enriched = 0;
+            ");
+        }
 
         // Case-insensitive index on member handles. The API's user search surfaces
         // roster-only members (no CitizenId, absent from `users`) via a PREFIX match,
