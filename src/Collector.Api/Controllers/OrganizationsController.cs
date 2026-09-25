@@ -30,12 +30,14 @@ public class OrganizationsController : ControllerBase
         _changeRepo = changeRepo;
     }
 
-    // Efficient "latest snapshot per org" using INNER JOIN with MAX(Timestamp)
+    // Efficient "latest snapshot per org" using INNER JOIN with MAX(Timestamp). The
+    // list needs no long text: they are not read (the detail page fetches them).
     private IQueryable<Organization> LatestOrgs() =>
         _db.Organizations.FromSqlRaw("""
             SELECT o.Id, o.Sid, o.Timestamp, o.Name, o.UrlImage, o.UrlCorpo,
                    o.Archetype, o.Lang, o.Commitment, o.Recruiting, o.Roleplay,
-                   o.MembersCount, o.Description, o.History, o.Manifesto, o.Charter,
+                   o.MembersCount, NULL AS Description, NULL AS History,
+                   NULL AS Manifesto, NULL AS Charter,
                    o.FocusPrimaryName, o.FocusPrimaryImage, o.FocusSecondaryName,
                    o.FocusSecondaryImage, o.ContentCollected, o.Source
             FROM organizations AS o
@@ -116,35 +118,36 @@ public class OrganizationsController : ControllerBase
     {
         sid = sid.ToUpperInvariant();
         var org = await _db.Organizations
+            .AsNoTracking()
             .Where(o => o.Sid == sid)
             .OrderByDescending(o => o.Timestamp)
             .FirstOrDefaultAsync(ct)
             ?? throw new NotFoundException($"Organization '{sid}' not found");
 
-        // Override the stale Phase 1 MembersCount with the real Phase 3 headcount.
-        // Some orgs have MembersCount=0 from the RSI search API even though they
-        // have an active roster — the truth is in member_collection_log.
-        var latestCollection = await _db.MemberCollectionLogs
-            .Where(l => l.OrgSid == sid)
-            .OrderByDescending(l => l.CollectionTime)
-            .Select(l => l.CollectionTime)
-            .FirstOrDefaultAsync(ct);
-
-        var dto = MapOrg(org);
-        if (latestCollection != default)
+        // Listing snapshots (Phase 1) carry no page texts: take them from the latest
+        // snapshot that has content. MembersCount is RSI's total, masked members
+        // included, kept up to date on the latest snapshot by Phase 3.
+        if (!org.ContentCollected)
         {
-            var realCount = await _db.MemberCollectionLogs
-                .Where(l => l.OrgSid == sid && l.CollectionTime == latestCollection)
-                .Select(l => l.UserHandle)
-                .Distinct()
-                .CountAsync(ct);
-            if (realCount > 0)
+            var content = await _db.Organizations
+                .AsNoTracking()
+                .Where(o => o.Sid == sid && o.ContentCollected)
+                .OrderByDescending(o => o.Timestamp)
+                .FirstOrDefaultAsync(ct);
+            if (content != null)
             {
-                dto.MembersCount = realCount;
+                org.Description = content.Description;
+                org.History = content.History;
+                org.Manifesto = content.Manifesto;
+                org.Charter = content.Charter;
+                org.FocusPrimaryName = content.FocusPrimaryName;
+                org.FocusPrimaryImage = content.FocusPrimaryImage;
+                org.FocusSecondaryName = content.FocusSecondaryName;
+                org.FocusSecondaryImage = content.FocusSecondaryImage;
             }
         }
 
-        return Ok(dto);
+        return Ok(MapOrg(org));
     }
 
     [HttpGet("{sid}/members")]
