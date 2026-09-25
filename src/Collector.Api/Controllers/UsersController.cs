@@ -44,6 +44,9 @@ public class UsersController : ControllerBase
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
     {
+        page = Paging.Page(page);
+        pageSize = Paging.PageSize(pageSize);
+
         // No search term: list enriched citizens only. A global listing of the ~600k
         // non-enriched roster handles would be huge and meaningless, so we keep the
         // default directory to real profiles (fast: single index-free scan of `users`).
@@ -66,9 +69,6 @@ public class UsersController : ControllerBase
     private async Task<PaginatedResponse<UserProfileDto>> SearchUsersAsync(
         string search, int page, int pageSize, CancellationToken ct)
     {
-        page = page < 1 ? 1 : page;
-        pageSize = pageSize is < 1 or > 500 ? 50 : pageSize;
-
         // Enriched side: substring match (full scan of the smaller `users` table is cheap).
         // Escape %/_ so user input can't pivot into wildcards (requires the ESCAPE clause).
         var escaped = search.Replace("%", "\\%").Replace("_", "\\_");
@@ -250,7 +250,7 @@ public class UsersController : ControllerBase
         [FromQuery] int limit = 100,
         CancellationToken ct = default)
     {
-        var changes = await _changeRepo.GetByUserHandleAsync(handle, limit, ct);
+        var changes = await _changeRepo.GetByUserHandleAsync(handle, Paging.Limit(limit), ct);
         return Ok(changes.Select(c => c.ToDto()).ToList());
     }
 }

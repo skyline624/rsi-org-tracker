@@ -1,3 +1,4 @@
+using Collector.Api.Extensions;
 using Collector.Api.Dtos.Changes;
 using Collector.Data;
 using Collector.Data.Repositories;
@@ -29,7 +30,8 @@ public class ChangesController : ControllerBase
         [FromQuery] int limit = 100,
         CancellationToken ct = default)
     {
-        var query = _db.ChangeEvents.AsQueryable();
+        limit = Paging.Limit(limit);
+        var query = _db.ChangeEvents.AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(changeType))
             query = query.Where(c => c.ChangeType == changeType);
@@ -54,7 +56,7 @@ public class ChangesController : ControllerBase
         [FromQuery] int days = 30,
         CancellationToken ct = default)
     {
-        var since = DateTime.UtcNow.AddDays(-days);
+        var since = DateTime.UtcNow.AddDays(-Paging.Days(days));
         var summary = await _db.ChangeEvents
             .Where(c => c.Timestamp >= since)
             .GroupBy(c => c.ChangeType)
@@ -70,7 +72,7 @@ public class ChangesController : ControllerBase
         [FromQuery] int limit = 100,
         CancellationToken ct = default)
     {
-        var changes = await _changeRepo.GetByOrgSidAsync(sid.ToUpperInvariant(), limit, ct);
+        var changes = await _changeRepo.GetByOrgSidAsync(sid.ToUpperInvariant(), Paging.Limit(limit), ct);
         return Ok(changes.Select(MapChange).ToList());
     }
 
@@ -81,9 +83,10 @@ public class ChangesController : ControllerBase
         CancellationToken ct = default)
     {
         var changes = await _db.ChangeEvents
+            .AsNoTracking()
             .Where(c => c.ChangeType == changeType)
             .OrderByDescending(c => c.Id)
-            .Take(limit)
+            .Take(Paging.Limit(limit))
             .ToListAsync(ct);
         return Ok(changes.Select(MapChange).ToList());
     }

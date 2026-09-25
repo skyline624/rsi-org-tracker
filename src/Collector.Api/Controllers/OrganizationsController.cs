@@ -60,6 +60,8 @@ public class OrganizationsController : ControllerBase
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
     {
+        page = Paging.Page(page);
+        pageSize = Paging.PageSize(pageSize);
         var query = LatestOrgs();
 
         if (!string.IsNullOrWhiteSpace(search))
@@ -192,7 +194,7 @@ public class OrganizationsController : ControllerBase
         [FromQuery] int limit = 100,
         CancellationToken ct = default)
     {
-        var changes = await _changeRepo.GetByOrgSidAsync(sid.ToUpperInvariant(), limit, ct);
+        var changes = await _changeRepo.GetByOrgSidAsync(sid.ToUpperInvariant(), Paging.Limit(limit), ct);
         return Ok(changes.Select(MapChange).ToList());
     }
 

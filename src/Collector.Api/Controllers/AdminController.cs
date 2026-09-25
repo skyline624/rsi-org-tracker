@@ -1,3 +1,4 @@
+using Collector.Api.Extensions;
 using Collector.Api.Errors;
 using Collector.Api.Data;
 using Collector.Api.Dtos.Admin;
@@ -38,6 +39,8 @@ public class AdminController : ControllerBase
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
     {
+        page = Paging.Page(page);
+        pageSize = Paging.PageSize(pageSize);
         var total = await _db.ApiUsers.CountAsync(ct);
         var users = await _db.ApiUsers
             .Include(u => u.ApiKeys)
@@ -135,6 +138,8 @@ public class AdminController : ControllerBase
         [FromQuery] long? userId = null,
         CancellationToken ct = default)
     {
+        page = Paging.Page(page);
+        pageSize = Paging.PageSize(pageSize);
         var (items, total) = await _activityLog.GetLogsAsync(page, pageSize, userId, ct);
         return Ok(new PaginatedResponse<ActivityLogDto>
         {

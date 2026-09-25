@@ -1,3 +1,4 @@
+using Collector.Api.Extensions;
 using Collector.Api.Dtos.Stats;
 using Collector.Api.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -24,12 +25,12 @@ public class StatsController : ControllerBase
     [HttpGet("timeline")]
     public async Task<ActionResult<IReadOnlyList<TimelinePointDto>>> GetTimeline(
         [FromQuery] int days = 30, CancellationToken ct = default) =>
-        Ok(await _statsService.GetTimelineAsync(days, ct));
+        Ok(await _statsService.GetTimelineAsync(Paging.Days(days), ct));
 
     [HttpGet("organizations/top")]
     public async Task<ActionResult<IReadOnlyList<OrganizationTopDto>>> GetTopOrganizations(
         [FromQuery] int limit = 10, CancellationToken ct = default) =>
-        Ok(await _statsService.GetTopOrganizationsAsync(limit, ct));
+        Ok(await _statsService.GetTopOrganizationsAsync(Paging.Limit(limit), ct));
 
     [HttpGet("organizations/archetypes")]
     public async Task<ActionResult<IReadOnlyList<ArchetypeStatsDto>>> GetArchetypes(CancellationToken ct) =>
@@ -38,5 +39,5 @@ public class StatsController : ControllerBase
     [HttpGet("members/activity")]
     public async Task<ActionResult<IReadOnlyList<MemberActivityDto>>> GetMemberActivity(
         [FromQuery] int days = 30, CancellationToken ct = default) =>
-        Ok(await _statsService.GetMemberActivityAsync(days, ct));
+        Ok(await _statsService.GetMemberActivityAsync(Paging.Days(days), ct));
 }

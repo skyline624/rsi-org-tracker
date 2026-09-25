@@ -19,8 +19,8 @@ public static class PaginationExtensions
         Func<TEntity, TDto> projector,
         CancellationToken ct = default)
     {
-        page = page < 1 ? 1 : page;
-        pageSize = pageSize is < 1 or > 500 ? 50 : pageSize;
+        page = Paging.Page(page);
+        pageSize = Paging.PageSize(pageSize);
 
         var total = await query.CountAsync(ct);
         var rows = await query
