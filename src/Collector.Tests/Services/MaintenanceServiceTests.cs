@@ -148,6 +148,12 @@ public sealed class MaintenanceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task QuickCheck_OfAHealthyDatabase_IsOk()
+    {
+        (await Create().QuickCheckAsync()).Should().Be("ok");
+    }
+
+    [Fact]
     public async Task UnknownTarget_IsRejected()
     {
         var act = () => Create().PurgeAsync("everything", dryRun: true, batchSize: 10, Now);

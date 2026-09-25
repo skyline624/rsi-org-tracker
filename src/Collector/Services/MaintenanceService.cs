@@ -224,10 +224,24 @@ public sealed class MaintenanceService
     /// <summary>PRAGMA quick_check: "ok", or the first problems found.</summary>
     public async Task<string> QuickCheckAsync(CancellationToken ct = default)
     {
-        var rows = await _db.Database.SqlQueryRaw<string>("SELECT quick_check AS Value FROM pragma_quick_check(20)").ToListAsync(ct);
-        var result = string.Join("; ", rows);
-        _logger.LogInformation("quick_check: {Result}", result);
-        return result;
+        await _db.Database.OpenConnectionAsync(ct);
+        try
+        {
+            await using var command = _db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "PRAGMA quick_check(20);";
+            var rows = new List<string>();
+            await using (var reader = await command.ExecuteReaderAsync(ct))
+            {
+                while (await reader.ReadAsync(ct)) rows.Add(reader.GetString(0));
+            }
+            var result = string.Join("; ", rows);
+            _logger.LogInformation("quick_check: {Result}", result);
+            return result;
+        }
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
+        }
     }
 
     private static async Task<int> ExecuteAsync(SqliteConnection connection, string sql, DateTime now, CancellationToken ct)
