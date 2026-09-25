@@ -3,3 +3,5 @@
 *.service text eol=lf
 *.env.example text eol=lf
 deploy/nginx/*.conf text eol=lf
+deploy/ssh/* text eol=lf
+deploy/fail2ban/* text eol=lf

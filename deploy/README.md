@@ -65,6 +65,31 @@ front servi par `next start` depuis les sources) à la structure par releases.
 Retour à l'ancienne installation : restaurer les `*.service.bak`, `daemon-reload`,
 redémarrer les trois services (les anciens binaires et `.next` n'ont pas été touchés).
 
+## Durcissement du serveur (lot 2)
+
+À appliquer **avant** de déployer le lot 6 : le front et l'API font confiance à la
+première adresse de `X-Forwarded-For`, que seul le nouveau site nginx écrase.
+
+Garder une session SSH ouverte pendant toute l'opération (et vérifier l'accès de
+secours : Tailscale ou console KVM OVH).
+
+1. **nginx** : `sudo cp deploy/nginx/sc-tracker.conf /etc/nginx/sites-available/sc-tracker`,
+   `sudo nginx -t && sudo systemctl reload nginx`.
+   Retour : l'ancienne version est dans l'historique git (`git show <sha>:deploy/nginx/sc-tracker.conf`).
+2. **SSH** : `sudo cp deploy/ssh/00-hardening.conf /etc/ssh/sshd_config.d/`,
+   `sudo sshd -t && sudo systemctl reload ssh`, puis ouvrir une **nouvelle** connexion
+   par clé avant de fermer l'ancienne. `ssh -o PubkeyAuthentication=no serv_ovh` doit
+   répondre « Permission denied (publickey) ». Retour : supprimer le fichier et recharger.
+3. **Port 5173 (phonurgia)** : Docker contourne ufw. Dans `~/phonurgia`, publier le port
+   sur la boucle locale (`"127.0.0.1:5173:80"`, ou l'IP Tailscale si l'accès passe par là),
+   puis `docker compose up -d`.
+4. **Pare-feu** : `bash deploy/ufw.sh`. Retour : `sudo ufw disable`.
+5. **fail2ban** : `sudo apt-get install -y fail2ban`,
+   `sudo cp deploy/fail2ban/sshd.local /etc/fail2ban/jail.d/`, `sudo systemctl restart fail2ban`,
+   `sudo fail2ban-client status sshd`.
+6. **Vérification** depuis l'extérieur : `nmap -Pn -p 22,80,443,3000,5000,5001,5173 <IP>` —
+   seuls 22, 80 et 443 ouverts ; `curl -skI https://<IP>/ | grep -i x-content-type`.
+
 ## Tests
 
 `deploy/tests/test-rollback.sh` vérifie la bascule et le retour arrière avec
