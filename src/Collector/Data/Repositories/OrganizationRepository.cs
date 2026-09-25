@@ -23,15 +23,23 @@ public class OrganizationRepository : Repository<Organization>, IOrganizationRep
             .ToListAsync(ct);
     }
 
-    public async Task<IReadOnlyList<Organization>> GetAllLatestAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<OrganizationListing>> GetLatestListingsAsync(CancellationToken ct = default)
     {
-        // AsNoTracking — this projection is read-only, we never mutate the results.
-        var latestQuery = DbSet
-            .AsNoTracking()
+        // Latest timestamp per SID, joined back to its row; both sides use the
+        // unique index (Sid, Timestamp).
+        var latest = DbSet
             .GroupBy(o => o.Sid)
-            .Select(g => g.OrderByDescending(o => o.Timestamp).First());
+            .Select(g => new { Sid = g.Key, Timestamp = g.Max(o => o.Timestamp) });
 
-        return await latestQuery.ToListAsync(ct);
+        return await DbSet
+            .AsNoTracking()
+            .Join(latest,
+                o => new { o.Sid, o.Timestamp },
+                l => new { l.Sid, l.Timestamp },
+                (o, _) => new OrganizationListing(
+                    o.Sid, o.Name, o.Archetype, o.Lang, o.Commitment,
+                    o.Recruiting, o.Roleplay, o.MembersCount, o.Timestamp))
+            .ToListAsync(ct);
     }
 
     public async Task<Dictionary<string, Organization>> GetLatestBySidsAsync(IEnumerable<string> sids, CancellationToken ct = default)

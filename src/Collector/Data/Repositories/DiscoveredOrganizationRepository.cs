@@ -35,6 +35,7 @@ public class DiscoveredOrganizationRepository : Repository<DiscoveredOrganizatio
             .Distinct();
 
         return await DbSet
+            .AsNoTracking()
             .Where(d => d.DeadAt == null && !freshSids.Contains(d.Sid))
             .ToListAsync(ct);
     }

@@ -67,13 +67,14 @@ public class OrganizationCollector : IOrganizationCollector
         var existingSidSet = new HashSet<string>(existingSids, StringComparer.OrdinalIgnoreCase);
 
         // Load existing org snapshots for change detection
-        var existingOrgs = await _orgRepo.GetAllLatestAsync(ct);
+        var existingOrgs = await _orgRepo.GetLatestListingsAsync(ct);
         var existingBySid = existingOrgs.ToDictionary(o => o.Sid, StringComparer.OrdinalIgnoreCase);
 
         // Track SIDs already saved to organizations in this run (multiple sort methods can return same org)
         var savedOrgSids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var totalNew = 0;
+        var changesWritten = 0;
         var timestamp = DateTime.UtcNow;
         var changeEvents = new List<ChangeEvent>();
 
@@ -164,13 +165,7 @@ public class OrganizationCollector : IOrganizationCollector
                 // Save every 10 pages
                 if (pagesSinceLastSave >= 10)
                 {
-                    if (changeEvents.Count > 0)
-                    {
-                        await _changeEventRepo.AddRangeAsync(changeEvents, ct);
-                        changeEvents.Clear();
-                    }
-                    await _discoveredRepo.SaveChangesAsync(ct);
-                    await _orgRepo.SaveChangesAsync(ct);
+                    changesWritten += await SaveDiscoveryAsync(changeEvents, ct);
                     pagesSinceLastSave = 0;
                     _logger.LogInformation(
                         "Discovery progress: page {Page}, {Total} orgs known ({New} new), {Saved} metadata saved",
@@ -181,21 +176,35 @@ public class OrganizationCollector : IOrganizationCollector
             // Save remaining
             if (pagesSinceLastSave > 0)
             {
-                if (changeEvents.Count > 0)
-                {
-                    await _changeEventRepo.AddRangeAsync(changeEvents, ct);
-                    changeEvents.Clear();
-                }
-                await _discoveredRepo.SaveChangesAsync(ct);
-                await _orgRepo.SaveChangesAsync(ct);
+                changesWritten += await SaveDiscoveryAsync(changeEvents, ct);
             }
         }
 
         _logger.LogInformation(
             "Discovery complete: {Total} orgs known, {New} new, {Saved} metadata snapshots saved, {Changes} changes",
-            existingSidSet.Count, totalNew, savedOrgSids.Count, changeEvents.Count);
+            existingSidSet.Count, totalNew, savedOrgSids.Count, changesWritten);
 
         return existingSidSet.Count;
+    }
+
+    /// <summary>
+    /// Persists the pending discovery rows and change events, then detaches them so
+    /// the DbContext does not accumulate every snapshot of the cycle.
+    /// Returns the number of change events written.
+    /// </summary>
+    private async Task<int> SaveDiscoveryAsync(List<ChangeEvent> changeEvents, CancellationToken ct)
+    {
+        var written = changeEvents.Count;
+        if (written > 0)
+        {
+            await _changeEventRepo.AddRangeAsync(changeEvents, ct);
+            changeEvents.Clear();
+        }
+        await _discoveredRepo.SaveChangesAsync(ct);
+        await _orgRepo.SaveChangesAsync(ct);
+        _discoveredRepo.ClearTrackedEntities();
+        _orgRepo.ClearTrackedEntities();
+        return written;
     }
 
     public async Task<int> CollectOrganizationMetadataAsync(CancellationToken ct = default)
@@ -231,11 +240,9 @@ public class OrganizationCollector : IOrganizationCollector
             "Phase 2: {Total} organizations need extended content (older than {Hours}h)",
             total, _options.MetadataRefreshIntervalHours);
 
-        // Load latest snapshots to update ContentCollected flag
-        var latestOrgs = await _orgRepo.GetLatestBySidsAsync(stale.Select(d => d.Sid), ct);
-
         var processedCount = 0;
         var skippedCount = 0;
+        var changesWritten = 0;
         var changeEvents = new List<ChangeEvent>();
         var timestamp = DateTime.UtcNow;
 
@@ -248,6 +255,10 @@ public class OrganizationCollector : IOrganizationCollector
             ct.ThrowIfCancellationRequested();
 
             var batch = stale.Skip(batchStart).Take(batchSize).ToList();
+
+            // Latest snapshots of this batch only: loading them for every stale org
+            // up front would hold all their texts in memory for the whole phase.
+            var latestOrgs = await _orgRepo.GetLatestBySidsAsync(batch.Select(d => d.Sid), ct);
 
             // ── Fetch pages concurrently ──────────────────────────────────
             // GetOrgPageHtmlAsync handles its own semaphore (MaxConcurrentRequests slots)
@@ -337,7 +348,9 @@ public class OrganizationCollector : IOrganizationCollector
                     }
                     await _orgRepo.SaveChangesAsync(ct);
                     await batchTx.CommitAsync(ct);
+                    changesWritten += changeEvents.Count;
                     changeEvents.Clear();
+                    _orgRepo.ClearTrackedEntities();
                 }
                 catch (Exception ex)
                 {
@@ -358,7 +371,7 @@ public class OrganizationCollector : IOrganizationCollector
 
         _logger.LogInformation(
             "Phase 2 complete: {Count}/{Total} organizations enriched, {Skipped} skipped, {Changes} content changes",
-            processedCount, total, skippedCount, changeEvents.Count);
+            processedCount, total, skippedCount, changesWritten);
 
         return processedCount;
     }

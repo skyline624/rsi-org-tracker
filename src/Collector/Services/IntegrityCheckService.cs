@@ -68,7 +68,7 @@ public class IntegrityCheckService : IIntegrityCheckService
         _logger.LogInformation("Integrity check starting — sampling {N} organizations", sampleSize);
 
         // Pull all latest snapshots and pick a random sample
-        var allOrgs = await _orgRepo.GetAllLatestAsync(ct);
+        var allOrgs = await _orgRepo.GetLatestListingsAsync(ct);
 
         // Only check orgs that have metadata (archetype populated)
         var candidates = allOrgs.Where(o => o.Archetype != null).ToList();
