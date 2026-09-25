@@ -65,27 +65,39 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
             return (items, await current.CountAsync(ct));
         }
 
-        // Former members, or everyone: latest row per handle (window function, see GetByOrgSidAsync).
-        var status = active == false ? 0 : -1;
-        var latest = $@"
-            SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
-                   Rank, RolesJson, UrlImage, IsActive, Stars
-            FROM (
-                SELECT *,
-                       ROW_NUMBER() OVER (PARTITION BY UserHandle ORDER BY Timestamp DESC) AS _rn
-                FROM organization_members
-                WHERE OrgSid = {{0}}
-            )
-            WHERE _rn = 1 AND ({{1}} = -1 OR IsActive = {{1}})";
+        // Former members, or everyone. Handles come from the (OrgSid, UserHandle) index
+        // alone, former ones being those without an active row; only the page's handles
+        // then have their rows read to find the latest. A window over every row of the
+        // org took 6.7 s for TEST (442 k rows) on the production copy, this ~0.2 s.
+        // NOT IN, not EXCEPT: SQLite 3.53 merges an EXCEPT through the (OrgSid, UserHandle)
+        // index and reads every row to test IsActive (5 s for TEST), while the NOT IN
+        // list is built once from the (OrgSid, IsActive) index (0.1 s).
+        var handles = active == false
+            ? @"SELECT UserHandle FROM organization_members WHERE OrgSid = {0} GROUP BY UserHandle
+                HAVING UserHandle NOT IN (
+                    SELECT UserHandle FROM organization_members WHERE OrgSid = {0} AND IsActive = 1)"
+            : "SELECT UserHandle FROM organization_members WHERE OrgSid = {0} GROUP BY UserHandle";
 
-        var items_ = await DbSet
-            .FromSqlRaw(latest + " ORDER BY UserHandle COLLATE NOCASE LIMIT {2} OFFSET {3}", orgSid, status, pageSize, offset)
+        var pageRows = await DbSet
+            .FromSqlRaw($@"
+                SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
+                       Rank, RolesJson, UrlImage, IsActive, Stars
+                FROM (
+                    SELECT m.*,
+                           ROW_NUMBER() OVER (PARTITION BY m.UserHandle ORDER BY m.Timestamp DESC) AS _rn
+                    FROM organization_members m
+                    WHERE m.OrgSid = {{0}} AND m.UserHandle IN (
+                        SELECT UserHandle FROM ({handles})
+                        ORDER BY UserHandle COLLATE NOCASE LIMIT {{1}} OFFSET {{2}})
+                )
+                WHERE _rn = 1
+                ORDER BY UserHandle COLLATE NOCASE", orgSid, pageSize, offset)
             .AsNoTracking()
             .ToListAsync(ct);
         var total = await Context.Database
-            .SqlQueryRaw<int>($"SELECT COUNT(*) AS Value FROM ({latest})", orgSid, status)
+            .SqlQueryRaw<int>($"SELECT COUNT(*) AS Value FROM ({handles})", orgSid)
             .SingleAsync(ct);
-        return (items_, total);
+        return (pageRows, total);
     }
 
     public async Task<IReadOnlyList<string>> GetOrgSidsForHandleAsync(
