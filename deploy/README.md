@@ -39,7 +39,9 @@ migration, ce qui déclenche le retour arrière). L'API et le web redémarrent
 ensuite. L'ancien code sait lire un schéma migré (les migrations sont additives),
 le nouveau code ne sait pas lire l'ancien : tant qu'une migration est en attente,
 `/api/health/ready` répond 503, donc une release déployée sans `--collector` alors
-qu'elle en avait besoin est annulée automatiquement.
+qu'elle en avait besoin est annulée automatiquement. Une release plus ancienne que ce
+mode (sans `migrate-mode.txt` à côté de `Collector.dll`, par exemple lors d'un retour
+arrière) saute l'`ExecStartPre` et migre au démarrage, comme avant.
 
 ## Revenir en arrière
 

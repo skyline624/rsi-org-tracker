@@ -29,6 +29,14 @@ public sealed class MigrateModeTests : IDisposable
     }
 
     [Fact]
+    public void TheBuildShipsTheMarkerThatEnablesTheUnitsPreStep()
+    {
+        // deploy/systemd/sc-collector.service only runs --migrate when this file is next
+        // to Collector.dll: releases built before the flag existed do not have it.
+        File.Exists(Path.Combine(AppContext.BaseDirectory, "migrate-mode.txt")).Should().BeTrue();
+    }
+
+    [Fact]
     public async Task InProduction_AMissingDatabaseStopsTheCollector_InsteadOfStartingAnEmptyOne()
     {
         var (exited, exitCode, output) = await RunMigrateAsync("Production");

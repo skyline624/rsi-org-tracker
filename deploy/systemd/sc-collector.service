@@ -9,9 +9,11 @@ User=ubuntu
 WorkingDirectory=/home/ubuntu/sc-tracker/current/collector
 EnvironmentFile=/etc/sc-tracker/collector.env
 # Applies the tracker.db migrations and exits: `systemctl restart` returns once the
-# schema is ready (deploy.sh then restarts the API on it). A long migration must not
-# be cut by the default 90 s start timeout.
-ExecStartPre=/home/ubuntu/.dotnet/dotnet /home/ubuntu/sc-tracker/current/collector/Collector.dll --migrate
+# schema is ready (deploy.sh then restarts the API on it). Only for a release that
+# ships migrate-mode.txt: older ones do not know --migrate and would run the whole
+# collection loop here (they migrate when the main process starts, as before). A long
+# migration must not be cut by the default 90 s start timeout.
+ExecStartPre=/bin/sh -c '[ -e /home/ubuntu/sc-tracker/current/collector/migrate-mode.txt ] || exit 0; exec /home/ubuntu/.dotnet/dotnet /home/ubuntu/sc-tracker/current/collector/Collector.dll --migrate'
 TimeoutStartSec=30min
 ExecStart=/home/ubuntu/.dotnet/dotnet /home/ubuntu/sc-tracker/current/collector/Collector.dll
 Restart=always

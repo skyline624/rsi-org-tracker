@@ -1,0 +1,4 @@
+This build knows `Collector.dll --migrate` (apply the tracker.db migrations and exit).
+deploy/systemd/sc-collector.service runs it as ExecStartPre only when this file sits
+next to Collector.dll: releases built before the flag existed do not have it, and
+would otherwise run the whole collection loop inside the pre-step.

@@ -23,10 +23,6 @@ public static class DataDirectory
     }
 
     /// <summary>
-    /// Resolves the data directory for the current process: <see cref="EnvironmentVariable"/>,
-    /// then <paramref name="configured"/>, then the default.
-    /// </summary>
-    /// <summary>
     /// In Production the data directory must already hold tracker.db: a missing or
     /// mistyped <see cref="EnvironmentVariable"/> would otherwise start a new, empty
     /// database and every page would look empty. To create one on purpose, create an
@@ -42,6 +38,10 @@ public static class DataDirectory
         }
     }
 
+    /// <summary>
+    /// Resolves the data directory for the current process: <see cref="EnvironmentVariable"/>,
+    /// then <paramref name="configured"/>, then the default.
+    /// </summary>
     public static string ResolveForCurrentProcess(string? configured = null) =>
         Resolve(Environment.GetEnvironmentVariable(EnvironmentVariable) ?? configured, AppContext.BaseDirectory);
 }

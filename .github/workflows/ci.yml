@@ -97,4 +97,5 @@ jobs:
       - uses: actions/checkout@v4
       - run: for f in deploy/*.sh deploy/tests/*.sh scripts/*.sh scripts/tests/*.sh; do bash -n "$f"; done
       - run: bash deploy/tests/test-rollback.sh
+      - run: bash deploy/tests/test-collector-unit.sh
       - run: bash scripts/tests/test-dev-guard.sh
