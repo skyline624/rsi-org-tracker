@@ -83,12 +83,13 @@ export const getOrg = (sid: string, ctx: Ctx = {}) =>
     ctx,
   );
 
-export const getOrgMembers = (
+/** One page of an org's members (their latest row), by handle. */
+export const getOrgMembersPage = (
   sid: string,
-  opts: { at_time?: string; include_inactive?: boolean } = {},
+  opts: { status: "active" | "former" | "all"; page: number; pageSize: number },
   ctx: Ctx = {},
 ) =>
-  apiGet<OrganizationMemberDto[]>(
+  apiGet<PaginatedResponse<OrganizationMemberDto>>(
     `/api/organizations/${encodeURIComponent(sid)}/members`,
     opts,
     ctx,

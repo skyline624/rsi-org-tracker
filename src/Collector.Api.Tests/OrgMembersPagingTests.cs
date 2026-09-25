@@ -68,14 +68,26 @@ public class OrgMembersPagingTests(ApiFactory factory)
     }
 
     [Fact]
-    public async Task WithoutStatus_TheLegacyListIsStillServed()
+    public async Task WithoutStatus_TheCurrentMembersAreServed()
     {
         var client = await ClientAsync();
 
-        var list = await client.GetFromJsonAsync<JsonElement>("/api/organizations/ROSTER/members?include_inactive=true");
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/organizations/ROSTER/members");
 
-        list.ValueKind.Should().Be(JsonValueKind.Array);
-        list.GetArrayLength().Should().Be(4);
+        Page(body).Handles.Should().Equal("alice", "Bob", "dave");
+    }
+
+    [Fact]
+    public async Task AtATime_TheRosterAsItWasThenIsPaged()
+    {
+        var client = await ClientAsync();
+        var fourDaysAgo = DateTime.UtcNow.AddDays(-4).ToString("o");
+
+        var body = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/organizations/ROSTER/members?status=all&at_time={Uri.EscapeDataString(fourDaysAgo)}");
+
+        // Four days ago: alice (5 days), carol (3 days) not yet, dave (9 days), Bob not yet.
+        Page(body).Handles.Should().Equal("alice", "dave");
     }
 
     [Fact]

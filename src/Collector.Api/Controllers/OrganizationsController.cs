@@ -153,22 +153,30 @@ public class OrganizationsController : ControllerBase
     }
 
     /// <summary>
-    /// With <c>status</c> (active | former | all): one page of members, their latest row,
-    /// by handle. Without it, the full list as before (at_time / include_inactive), kept
-    /// until the web front pages the roster itself.
+    /// One page of an org's members, in handle order: current ones (status=active, the
+    /// default), former ones or all, each by their latest row. With <c>at_time</c>, the
+    /// latest row of each member at that time (status does not apply: a row is only
+    /// marked inactive once a later collection supersedes it).
     /// </summary>
     [HttpGet("{sid}/members")]
-    [ProducesResponseType(typeof(PaginatedResponse<OrganizationMemberDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetMembers(
+    public async Task<ActionResult<PaginatedResponse<OrganizationMemberDto>>> GetMembers(
         string sid,
         [FromQuery] DateTime? at_time,
-        [FromQuery] bool include_inactive = false,
-        [FromQuery] string? status = null,
+        [FromQuery] string status = "active",
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
     {
         sid = sid.ToUpperInvariant();
+        bool? active = status.ToLowerInvariant() switch
+        {
+            "active" => true,
+            "former" => false,
+            "all" => null,
+            _ => throw new ValidationException("status must be active, former or all"),
+        };
+        page = Paging.Page(page);
+        pageSize = Paging.PageSize(pageSize);
 
         // All rows share the same org → one name lookup is enough.
         var orgName = await _db.Organizations
@@ -178,40 +186,17 @@ public class OrganizationsController : ControllerBase
             .Select(o => o.Name)
             .FirstOrDefaultAsync(ct);
 
-        if (status != null)
-        {
-            bool? active = status.ToLowerInvariant() switch
-            {
-                "active" => true,
-                "former" => false,
-                "all" => null,
-                _ => throw new ValidationException("status must be active, former or all"),
-            };
-            page = Paging.Page(page);
-            pageSize = Paging.PageSize(pageSize);
-            var (items, total) = await _memberRepo.GetLatestPageAsync(sid, active, page, pageSize, ct);
-            return Ok(PaginatedResponse<OrganizationMemberDto>.Create(
-                items.Select(m => m.ToDto(orgName)).ToList(), page, pageSize, total));
-        }
-
         if (at_time.HasValue)
         {
-            var members = await _memberRepo.GetByOrgSidAsync(sid, at_time.Value.ToUniversalTime(), ct);
-            return Ok(members.Select(m => m.ToDto(orgName)).ToList());
+            var then = await _memberRepo.GetByOrgSidAsync(sid, at_time.Value.ToUniversalTime(), ct);
+            return Ok(PaginatedResponse<OrganizationMemberDto>.Create(
+                then.OrderBy(m => m.UserHandle, StringComparer.OrdinalIgnoreCase).Select(m => m.ToDto(orgName)),
+                page, pageSize));
         }
 
-        if (!include_inactive)
-        {
-            var current = await _db.OrganizationMembers
-                .AsNoTracking()
-                .Where(m => m.OrgSid == sid && m.IsActive)
-                .ToListAsync(ct);
-            return Ok(current.Select(m => m.ToDto(orgName)).ToList());
-        }
-
-        // include_inactive=true: latest snapshot per member (active or former)
-        var all = await _memberRepo.GetByOrgSidAsync(sid, null, ct);
-        return Ok(all.Select(m => m.ToDto(orgName)).ToList());
+        var (items, total) = await _memberRepo.GetLatestPageAsync(sid, active, page, pageSize, ct);
+        return Ok(PaginatedResponse<OrganizationMemberDto>.Create(
+            items.Select(m => m.ToDto(orgName)).ToList(), page, pageSize, total));
     }
 
     [HttpGet("{sid}/members/changes")]

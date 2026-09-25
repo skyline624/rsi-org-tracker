@@ -7,18 +7,19 @@ import {
 import type { OrganizationMemberDto } from "@/lib/api/types";
 import { formatRelative } from "@/lib/utils/format";
 
+/** One server page of a roster, already in handle order. */
 export function OrgMembersTable({
   rows,
+  empty = "No members.",
 }: {
   rows: OrganizationMemberDto[];
+  empty?: string;
 }) {
   const columns: HudColumn<OrganizationMemberDto>[] = [
     {
       key: "handle",
       header: "HANDLE",
       width: "flex-1",
-      sortable: true,
-      sortValue: (m) => m.userHandle.toLowerCase(),
       render: (m) => (
         <Link
           href={`/users/${m.userHandle}`}
@@ -32,16 +33,12 @@ export function OrgMembersTable({
       key: "name",
       header: "DISPLAY NAME",
       width: "flex-1",
-      sortable: true,
-      sortValue: (m) => (m.displayName ?? "").toLowerCase(),
       render: (m) => m.displayName ?? "—",
     },
     {
       key: "rank",
       header: "RANK",
       width: "w-28",
-      sortable: true,
-      sortValue: (m) => (m.rank ?? "").toLowerCase(),
       render: (m) => m.rank ?? "—",
     },
     {
@@ -49,8 +46,6 @@ export function OrgMembersTable({
       header: "LAST SEEN",
       width: "w-28",
       align: "right",
-      sortable: true,
-      sortValue: (m) => new Date(m.timestamp).getTime(),
       render: (m) => formatRelative(m.timestamp),
     },
   ];
@@ -60,10 +55,7 @@ export function OrgMembersTable({
       columns={columns}
       rows={rows}
       rowKey={(m) => m.userHandle}
-      empty="No active members in snapshot."
-      paginated
-      pageSizeOptions={[10, 25, 50, 100, 0]}
-      defaultPageSize={25}
+      empty={empty}
     />
   );
 }

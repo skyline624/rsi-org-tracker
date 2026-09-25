@@ -9,14 +9,16 @@ import {
   getOrg,
   getOrgGrowth,
   getOrgMemberChanges,
-  getOrgMembers,
+  getOrgMembersPage,
 } from "@/lib/api/endpoints";
 import { ApiError } from "@/lib/api/errors";
-import type { OrganizationMemberDto } from "@/lib/api/types";
+import type { OrganizationMemberDto, PaginatedResponse } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
-import { getSession, sessionCtx } from "@/lib/auth/session";
+import { getSession } from "@/lib/auth/session";
 import { requireAuthCtx, withAuthRedirect } from "@/lib/auth/server-api";
 import { apiGet } from "@/lib/api/client";
+import { Pagination } from "@/components/layout/Pagination";
+import { parsePage } from "@/lib/utils/page-param";
 import { OrgNotesSection } from "./OrgNotesSection";
 import { QuickAddMember } from "./QuickAddMember";
 import { ManualMembersPanel, type OrgManualMember } from "./ManualMembersPanel";
@@ -26,11 +28,25 @@ export const dynamic = "force-dynamic";
 
 interface PageProps {
   params: Promise<{ sid: string }>;
+  searchParams: Promise<{ members?: string; former?: string }>;
 }
 
-export default async function OrgDetailPage({ params }: PageProps) {
-  const { sid } = await params;
+/** Rosters are paginated by the API (TEST has 24 000 members). */
+const MEMBERS_PAGE_SIZE = 50;
+
+const noMembers = (page: number): PaginatedResponse<OrganizationMemberDto> => ({
+  items: [],
+  total: 0,
+  page,
+  pageSize: MEMBERS_PAGE_SIZE,
+  totalPages: 0,
+});
+
+export default async function OrgDetailPage({ params, searchParams }: PageProps) {
+  const [{ sid }, sp] = await Promise.all([params, searchParams]);
   const ctx = await requireAuthCtx();
+  const activePage = parsePage(sp.members);
+  const formerPage = parsePage(sp.former);
 
   let org;
   try {
@@ -40,41 +56,26 @@ export default async function OrgDetailPage({ params }: PageProps) {
     throw err;
   }
 
-  // Fetch the full roster in one shot (active + former) and split client-side.
-  // The API returns the latest snapshot per member with the IsActive flag so we
-  // know whether they're still in the org or have since left.
-  const [allMembers, growth, changes] = await Promise.all([
-    getOrgMembers(sid, { include_inactive: true }, ctx).catch(
-      () => [] as OrganizationMemberDto[],
-    ),
-    getOrgGrowth(sid, ctx).catch(() => []),
-    getOrgMemberChanges(sid, 20, ctx).catch(() => []),
-  ]);
-
-  const members = allMembers.filter((m) => m.isActive);
-  const formerMembers = allMembers.filter((m) => !m.isActive);
+  // Everything else at once: each block degrades to empty rather than failing the page.
+  const orgPath = `/api/organizations/${encodeURIComponent(sid)}`;
+  const [session, members, formerMembers, growth, changes, notes, manualMembers] =
+    await Promise.all([
+      getSession(),
+      getOrgMembersPage(sid, { status: "active", page: activePage, pageSize: MEMBERS_PAGE_SIZE }, ctx)
+        .catch(() => noMembers(activePage)),
+      getOrgMembersPage(sid, { status: "former", page: formerPage, pageSize: MEMBERS_PAGE_SIZE }, ctx)
+        .catch(() => noMembers(formerPage)),
+      getOrgGrowth(sid, ctx).catch(() => []),
+      getOrgMemberChanges(sid, 20, ctx).catch(() => []),
+      apiGet<OrgNoteDto[]>(`${orgPath}/notes`, undefined, ctx).catch(() => [] as OrgNoteDto[]),
+      apiGet<OrgManualMember[]>(`${orgPath}/manual-members`, undefined, ctx)
+        .catch(() => [] as OrgManualMember[]),
+    ]);
 
   const chartData = growth.map((g) => ({
     date: g.date,
     value: g.membersCount,
   }));
-
-  // Notes on this organization (auth required — empty if not logged in).
-  const session = await getSession();
-  const notes = session
-    ? await apiGet<OrgNoteDto[]>(
-        `/api/organizations/${encodeURIComponent(sid)}/notes`,
-        undefined,
-        sessionCtx(session),
-      ).catch(() => [] as OrgNoteDto[])
-    : [];
-  const manualMembers = session
-    ? await apiGet<OrgManualMember[]>(
-        `/api/organizations/${encodeURIComponent(sid)}/manual-members`,
-        undefined,
-        sessionCtx(session),
-      ).catch(() => [] as OrgManualMember[])
-    : [];
 
   return (
     <div className="flex flex-col gap-8">
@@ -161,10 +162,18 @@ export default async function OrgDetailPage({ params }: PageProps) {
       {/* Members + Changes */}
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <HudPanel
-          label={`ACTIVE ROSTER · ${formatNumber(members.length)}`}
+          label={`ACTIVE ROSTER · ${formatNumber(members.total)}`}
           className="xl:col-span-2"
         >
-          <OrgMembersTable rows={members} />
+          <OrgMembersTable rows={members.items} empty="No active members in snapshot." />
+          {members.totalPages > 1 && (
+            <Pagination
+              param="members"
+              page={members.page}
+              totalPages={members.totalPages}
+              total={members.total}
+            />
+          )}
         </HudPanel>
 
         <HudPanel label="RECENT ACTIVITY" accent="orange">
@@ -205,17 +214,25 @@ export default async function OrgDetailPage({ params }: PageProps) {
       {/* Former members — only rendered when some exist. Uses the same
           OrgMembersTable component, with a "red" accent to signal the
           roster is historical (left the org / org was gone last seen). */}
-      {formerMembers.length > 0 && (
+      {formerMembers.total > 0 && (
         <section>
           <HudPanel
-            label={`FORMER MEMBERS · ${formatNumber(formerMembers.length)}`}
+            label={`FORMER MEMBERS · ${formatNumber(formerMembers.total)}`}
             accent="red"
           >
             <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-hud-text-dim">
               — citizens previously tracked in this org who left or were
               purged when the org returned empty —
             </p>
-            <OrgMembersTable rows={formerMembers} />
+            <OrgMembersTable rows={formerMembers.items} />
+            {formerMembers.totalPages > 1 && (
+              <Pagination
+                param="former"
+                page={formerMembers.page}
+                totalPages={formerMembers.totalPages}
+                total={formerMembers.total}
+              />
+            )}
           </HudPanel>
         </section>
       )}

@@ -1,22 +1,24 @@
 "use client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils/cn";
+import { withPage } from "@/lib/utils/page-param";
 
 interface PaginationProps {
   page: number;
   totalPages: number;
   total: number;
+  /** Search param holding the page, for pages with several paginated lists. */
+  param?: string;
 }
 
-export function Pagination({ page, totalPages, total }: PaginationProps) {
+export function Pagination({ page, totalPages, total, param = "page" }: PaginationProps) {
   const router = useRouter();
   const params = useSearchParams();
 
   const goTo = (p: number) => {
     if (p < 1 || p > totalPages) return;
-    const next = new URLSearchParams(params.toString());
-    next.set("page", String(p));
-    router.push(`?${next.toString()}`);
+    // A secondary list (own param) keeps the reader where it is on the page.
+    router.push(`?${withPage(params.toString(), param, p)}`, { scroll: param === "page" });
   };
 
   return (
