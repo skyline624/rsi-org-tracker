@@ -77,9 +77,10 @@ public enum RosterStatus
     Capped,
 
     /// <summary>
-    /// At least 98% of the rows, but not all: rows shift while paging (a member who
-    /// leaves mid-read makes the next page skip one). The roster is written, but a
-    /// member missing from the read is not a departure yet: it is carried over once.
+    /// At least 98% of the rows, but not all, or the total changed between pages: rows
+    /// shift while paging (a member who leaves mid-read makes the next page skip one, one
+    /// who joins pushes a row past the last page). The roster is written, but a member
+    /// missing from the read is not a departure yet: it is carried over once.
     /// </summary>
     Short,
 
@@ -356,9 +357,13 @@ public class RsiApiClient : IRsiApiClient
         Add(first.Page);
         var pages = Math.Min((int)Math.Ceiling(totalRows / (double)pageSize), MaxRosterPages);
         var pageFailed = false;
+        var moved = false;
         for (var page = 2; page <= pages; page++)
         {
             var next = await FetchRosterPageAsync(orgSymbol, page, pageSize, ct);
+            // A total that changes between pages means rows shifted during the read: one
+            // may have been pushed past the last page even if the counts add up.
+            moved |= next.Answer == RosterAnswer.Ok && next.TotalRows != totalRows;
             // A page whose visible members were all read already is a repeat (a cached
             // answer, or the roster shifting a whole page): it says nothing about the rest.
             if (next.Answer != RosterAnswer.Ok || next.Page.RawRows == 0
@@ -377,14 +382,15 @@ public class RsiApiClient : IRsiApiClient
         var status = totalRows <= 0 || pageFailed || distinctRows < CompleteShare * readable
             ? RosterStatus.Partial
             : totalRows > readable ? RosterStatus.Capped
-            : distinctRows < totalRows ? RosterStatus.Short
+            : distinctRows < totalRows || moved ? RosterStatus.Short
             : RosterStatus.Complete;
 
         if (status is RosterStatus.Partial or RosterStatus.Short)
         {
             _logger.LogWarning(
                 "Roster of {OrgSymbol} incomplete: {Distinct}/{Total} distinct rows read ({Raw} rows){Failure}",
-                orgSymbol, distinctRows, totalRows, rawRows, pageFailed ? " (a page failed)" : "");
+                orgSymbol, distinctRows, totalRows, rawRows,
+                pageFailed ? " (a page failed)" : moved ? " (the total changed during the read)" : "");
         }
 
         return new MemberCollectionResult(

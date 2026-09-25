@@ -156,6 +156,20 @@ public sealed class RosterPaginationTests
     }
 
     [Fact]
+    public async Task ARosterThatChangedDuringTheRead_IsShort_NotComplete()
+    {
+        // Someone joined after page 1: a row may have been pushed past the last page read,
+        // while the rows read still add up to page 1's total.
+        _rsi.Serve(1, "members-visible-hidden.json", totalRows: 66);
+        _rsi.Serve(2, "members-redacted.json", totalRows: 67);
+        _rsi.Serve(3, "members-roles.json", totalRows: 67);
+
+        var roster = await Client().GetAllOrganizationMembersAsync("FIXTURE");
+
+        roster.Status.Should().Be(RosterStatus.Short);
+    }
+
+    [Fact]
     public async Task ReadingAlmostEveryRow_IsShort_NotComplete()
     {
         // 66 of 67 rows: enough to write, not enough to tell a departure from a skipped row.

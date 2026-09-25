@@ -268,6 +268,18 @@ public sealed class MemberCollectorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Counters_CountVisibleMembersOnce_EvenWhenARowWasReadTwice()
+    {
+        _roster = _ => new MemberCollectionResult(RosterStatus.Complete,
+            [new MemberData { OrgSid = "", Handle = "alpha", Rank = "Pilot" }],
+            TotalRows: 2, RawRows: 3, RedactedRows: 0, HiddenRows: 1); // alpha read on two pages
+
+        await CollectAsync("TWICE");
+
+        (await CountersAsync("TWICE")).Should().Equal((2, (int?)1, (int?)0, (int?)1));
+    }
+
+    [Fact]
     public async Task AChangeOfRsisTotal_IsAMemberCountEvent()
     {
         _roster = _ => Roster(RosterStatus.Complete, 3, "alpha");

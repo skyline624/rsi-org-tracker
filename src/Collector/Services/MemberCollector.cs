@@ -398,7 +398,8 @@ public class MemberCollector : IMemberCollector
                 OrgSid = orgSid,
                 CollectedAt = now,
                 TotalRows = roster.TotalRows,
-                VisibleCount = complete ? roster.RawRows - roster.RedactedRows - roster.HiddenRows : null,
+                // Distinct members: a row read twice while the roster shifted counts once.
+                VisibleCount = complete ? roster.Members.Count : null,
                 RedactedCount = complete ? roster.RedactedRows : null,
                 HiddenCount = complete ? roster.HiddenRows : null,
             }, ct);
