@@ -1,5 +1,6 @@
 using Collector.Api.Data;
 using Collector.Data;
+using Collector.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -81,11 +82,15 @@ public class HealthController : ControllerBase
     [HttpGet("api/health/cycle")]
     public async Task<IActionResult> CycleStatus(CancellationToken ct)
     {
+        // Pending rows that are due now (an "n/a" profile or a failed fetch waits for
+        // its next attempt), and rows given up after repeated failures in the last day.
+        var now = DateTime.UtcNow;
         var queuePending = await _trackerDb.UserEnrichmentQueue
-            .CountAsync(q => !q.Enriched, ct);
+            .CountAsync(q => !q.Enriched && (q.NextAttemptAt == null || q.NextAttemptAt <= now), ct);
 
+        var abandonedSince = now.AddDays(-1);
         var queueStuck = await _trackerDb.UserEnrichmentQueue
-            .CountAsync(q => !q.Enriched && q.AttemptCount >= 3, ct);
+            .CountAsync(q => q.Outcome == EnrichmentOutcome.Abandoned && q.EnrichedAt >= abandonedSince, ct);
 
         var lastCollection = await _trackerDb.MemberCollectionLogs
             .OrderByDescending(l => l.CollectionTime)
