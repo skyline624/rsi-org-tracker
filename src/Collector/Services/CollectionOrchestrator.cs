@@ -1,4 +1,5 @@
 using Collector.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -12,25 +13,22 @@ namespace Collector.Services;
 /// Phases are declared once as an ordered list of <see cref="Phase"/> delegates so
 /// that each phase keeps its own name + skip predicate without duplicating the
 /// try/catch scaffolding at every call site (DRY).
+///
+/// Each phase runs in its own DI scope, so the DbContext (and every row it
+/// tracked) is released when the phase ends instead of living as long as the process.
 /// </summary>
 public class CollectionOrchestrator
 {
-    private readonly IOrganizationCollector _orgCollector;
-    private readonly IMemberCollector _memberCollector;
-    private readonly IUserCollector _userCollector;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<CollectionOrchestrator> _logger;
     private readonly CollectorOptions _options;
 
     public CollectionOrchestrator(
-        IOrganizationCollector orgCollector,
-        IMemberCollector memberCollector,
-        IUserCollector userCollector,
+        IServiceScopeFactory scopeFactory,
         ILogger<CollectionOrchestrator> logger,
         IOptions<CollectorOptions> options)
     {
-        _orgCollector = orgCollector;
-        _memberCollector = memberCollector;
-        _userCollector = userCollector;
+        _scopeFactory = scopeFactory;
         _logger = logger;
         _options = options.Value;
     }
@@ -47,14 +45,26 @@ public class CollectionOrchestrator
     // can't freeze Phase 1/2/3 fresh-data refresh.
     private Phase[] BuildPipeline(bool skipPhase2) => new[]
     {
-        new Phase("Phase 1: Discovering organizations", _orgCollector.DiscoverOrganizationsAsync, "organizations discovered"),
+        new Phase("Phase 1: Discovering organizations",
+            InScope<IOrganizationCollector>((c, ct) => c.DiscoverOrganizationsAsync(ct)),
+            "organizations discovered"),
         new Phase("Phase 2: Collecting organization metadata",
             skipPhase2
                 ? _ => Task.FromResult(-1)
-                : _orgCollector.CollectOrganizationMetadataAsync,
+                : InScope<IOrganizationCollector>((c, ct) => c.CollectOrganizationMetadataAsync(ct)),
             "organizations processed"),
-        new Phase("Phase 3: Collecting members", _memberCollector.CollectAllMembersAsync, "members collected"),
+        new Phase("Phase 3: Collecting members",
+            InScope<IMemberCollector>((c, ct) => c.CollectAllMembersAsync(ct)),
+            "members collected"),
     };
+
+    private Func<CancellationToken, Task<int>> InScope<TService>(Func<TService, CancellationToken, Task<int>> run)
+        where TService : notnull
+        => async ct =>
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            return await run(scope.ServiceProvider.GetRequiredService<TService>(), ct);
+        };
 
     /// <summary>
     /// Runs a single full cycle.
@@ -107,7 +117,8 @@ public class CollectionOrchestrator
             {
                 _logger.LogError(ex, "Unexpected error during collection cycle");
                 _logger.LogInformation("Waiting {Delay} before retry", _options.ErrorDelay);
-                await Task.Delay(_options.ErrorDelay, ct);
+                try { await Task.Delay(_options.ErrorDelay, ct); }
+                catch (OperationCanceledException) { break; }
             }
         }
 

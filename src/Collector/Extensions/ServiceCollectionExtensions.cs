@@ -53,14 +53,15 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Adds all collector services to the DI container. Set
     /// <paramref name="registerHostedServices"/> to false for one-shot CLI modes
-    /// (--single-run, --backfill-enrichment-queue, --integrity-check) so the
-    /// Phase4Worker doesn't keep the host alive.
+    /// (--single-run, --backfill-enrichment-queue, --integrity-check) so neither the
+    /// cycle loop nor the Phase4Worker keeps the host alive.
     /// </summary>
     public static IServiceCollection AddCollectorServices(
         this IServiceCollection services,
         IConfiguration configuration,
         string dataDir,
-        bool registerHostedServices = true)
+        bool registerHostedServices = true,
+        bool skipPhase2 = false)
     {
         // Configure and validate options at startup (fail-fast if any field is wrong).
         services.AddOptions<CollectorOptions>()
@@ -91,8 +92,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IChangeDetector, ChangeDetector>();
         services.AddScoped<IUserChangeDetector, UserChangeDetector>();
 
-        // Orchestrator (Scoped because it injects Scoped services)
-        services.AddScoped<CollectionOrchestrator>();
+        // Orchestrator: singleton that opens one DI scope per phase.
+        services.AddSingleton<CollectionOrchestrator>();
 
         // Integrity check
         services.AddScoped<IIntegrityCheckService, IntegrityCheckService>();
@@ -103,10 +104,12 @@ public static class ServiceCollectionExtensions
         // Corrupted-handle repair (one-shot) — see CorruptedUserRepairService docs.
         services.AddScoped<ICorruptedUserRepairService, CorruptedUserRepairService>();
 
-        // Phase 4 worker — drains user_enrichment_queue in parallel with the
-        // cycle loop. Skipped for one-shot CLI modes so the host can exit.
+        // Hosted services: the Phase 1-3 cycle loop and the Phase 4 worker, which
+        // drains user_enrichment_queue in parallel. Skipped for one-shot CLI modes.
         if (registerHostedServices)
         {
+            services.AddHostedService(sp => new CollectionWorker(
+                sp.GetRequiredService<CollectionOrchestrator>(), skipPhase2));
             services.AddHostedService<Phase4Worker>();
         }
 

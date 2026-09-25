@@ -16,9 +16,8 @@ try
 
     Console.WriteLine("Starting SC-Organizations-Tracker Collector...");
 
-    // Parse flags up-front so we can decide whether to register the
-    // Phase4Worker hosted service (one-shot CLI modes don't want a long-running
-    // background drain keeping the host alive).
+    // Parse flags up-front so we can decide whether to register the hosted
+    // services (one-shot CLI modes don't want a long-running loop keeping the host alive).
     var singleRun = args.Contains("--single-run") || args.Contains("-s");
     var integrityCheck = args.Contains("--integrity-check") || args.Contains("-i");
     var skipPhase2 = args.Contains("--skip-phase2");
@@ -28,12 +27,20 @@ try
 
     // Build host
     var builder = Host.CreateDefaultBuilder(args)
-        .UseContentRoot(AppContext.BaseDirectory);
+        .UseContentRoot(AppContext.BaseDirectory)
+        // Fail at startup on a scoped service resolved from the root provider
+        // (a DbContext living as long as the process) or an unresolvable registration.
+        .UseDefaultServiceProvider(o =>
+        {
+            o.ValidateScopes = true;
+            o.ValidateOnBuild = true;
+        });
 
     // Configure services
     builder.ConfigureServices((context, services) =>
     {
-        services.AddCollectorServices(context.Configuration, dataDir, registerHostedServices: continuousMode);
+        services.AddCollectorServices(context.Configuration, dataDir,
+            registerHostedServices: continuousMode, skipPhase2: skipPhase2);
     });
 
     // Configure logging with absolute path for the file sink
@@ -57,23 +64,7 @@ try
 
     Console.WriteLine("Database initialized");
 
-    // Get orchestrator
-    var orchestrator = host.Services.GetRequiredService<CollectionOrchestrator>();
     var options = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<CollectorOptions>>().Value;
-
-    // Create cancellation token
-    using var cts = new CancellationTokenSource();
-    var ct = cts.Token;
-
-    // Handle Ctrl+C
-    Console.CancelKeyPress += (_, e) =>
-    {
-        e.Cancel = true;
-        cts.Cancel();
-        Console.WriteLine("Shutdown requested. Finishing current operation...");
-    };
-
-    // Run the collection loop
     var logger = host.Services.GetRequiredService<ILogger<Program>>();
     logger.LogInformation("Starting SC-Organizations-Tracker Collector");
     logger.LogInformation("Cycle interval: {Interval}", options.CycleInterval);
@@ -83,6 +74,20 @@ try
     var sampleIdx = Array.IndexOf(args, "--sample");
     if (sampleIdx >= 0 && sampleIdx + 1 < args.Length && int.TryParse(args[sampleIdx + 1], out var parsed))
         sampleSize = parsed;
+
+    if (continuousMode)
+    {
+        // Continuous mode: CollectionWorker (cycle loop) and Phase4Worker run as
+        // hosted services; RunAsync returns once SIGTERM / Ctrl+C has stopped them.
+        await host.RunAsync();
+        logger.LogInformation("Application exiting");
+        return;
+    }
+
+    // One-shot modes: starting the host installs the SIGTERM / Ctrl+C handlers,
+    // which cancel ApplicationStopping.
+    await host.StartAsync();
+    var ct = host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
 
     if (backfillQueue)
     {
@@ -113,30 +118,21 @@ try
     {
         // Single-run mode: no hosted services registered, just run the cycle and exit.
         logger.LogInformation("Running in single-run mode");
-        await orchestrator.RunSingleCycleAsync(ct, skipPhase2);
-    }
-    else
-    {
-        // Continuous mode: start the host so Phase4Worker (IHostedService) runs in
-        // parallel with the cycle loop, then run the loop on the main thread, then
-        // gracefully stop the host so background services drain their work.
-        await host.StartAsync(ct);
-        try
-        {
-            await orchestrator.RunCollectionLoopAsync(ct, skipPhase2);
-        }
-        finally
-        {
-            await host.StopAsync(TimeSpan.FromSeconds(30));
-        }
+        await host.Services.GetRequiredService<CollectionOrchestrator>().RunSingleCycleAsync(ct, skipPhase2);
     }
 
+    await host.StopAsync();
     logger.LogInformation("Application exiting");
 }
 catch (Microsoft.Extensions.Hosting.HostAbortedException)
 {
     // Rethrow so EF Core design-time tooling can introspect the DbContext.
     throw;
+}
+catch (OperationCanceledException)
+{
+    // SIGTERM / Ctrl+C during a one-shot mode.
+    Console.WriteLine("Cancelled.");
 }
 catch (Exception ex)
 {
