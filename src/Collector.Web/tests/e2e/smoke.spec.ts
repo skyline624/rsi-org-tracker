@@ -1,66 +1,75 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 /**
- * Smoke test : juste vérifier que chaque page publique répond et affiche
- * ses éléments de cadrage (titre, label HUD, panel). Ne valide pas la
- * donnée — l'API peut être en cours d'indexation.
+ * Smoke test of the private site. Anonymous checks always run; the signed-in ones
+ * need an account: E2E_USERNAME and E2E_PASSWORD (skipped otherwise). Only reads:
+ * safe against a deployed site (E2E_BASE_URL).
  */
 
-test.describe("public pages", () => {
-  test("/ landing renders HUD tiles", async ({ page }) => {
-    await page.goto("/");
-    await expect(page).toHaveTitle(/Citizen Intel/);
-    await expect(page.getByText(/UEE::CITIZEN_INTEL_NETWORK/)).toBeVisible();
-    await expect(
-      page.getByRole("heading", { level: 1, name: /Real-time intel/i }),
-    ).toBeVisible();
-  });
+const PRIVATE_PAGES = ["/", "/orgs", "/users", "/stats", "/changes", "/dashboard", "/orgs/TEST"];
 
-  test("/orgs catalog has filters and data grid", async ({ page }) => {
+test.describe("anonymous visitor", () => {
+  for (const path of PRIVATE_PAGES) {
+    test(`${path} redirects to the login page`, async ({ page }) => {
+      await page.goto(path);
+      const url = new URL(page.url());
+      expect(url.pathname).toBe("/login");
+      expect(url.searchParams.get("from")).toBe(path);
+    });
+  }
+
+  test("a forged session cookie is not enough", async ({ page, context, baseURL }) => {
+    await context.addCookies([{ name: "sct_access", value: "x", url: baseURL! }]);
     await page.goto("/orgs");
-    await expect(page.getByText(/UEE::ORG_CATALOG/)).toBeVisible();
-    await expect(page.getByText(/SCAN/)).toBeVisible();
-    await expect(page.getByText(/ORGS INDEXED/)).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe("/login");
   });
 
-  test("/users registry renders", async ({ page }) => {
-    await page.goto("/users");
-    await expect(page.getByText(/UEE::CITIZEN_REGISTRY/)).toBeVisible();
-    await expect(page.getByText(/CITIZENS INDEXED/)).toBeVisible();
-  });
-
-  test("/stats dashboard renders", async ({ page }) => {
-    await page.goto("/stats");
-    await expect(page.getByText(/UEE::GLOBAL_TELEMETRY/)).toBeVisible();
-  });
-
-  test("/changes feed renders", async ({ page }) => {
-    await page.goto("/changes");
-    await expect(page.getByText(/UEE::LIVE_CHANGELOG/)).toBeVisible();
-  });
-});
-
-test.describe("auth pages", () => {
-  test("/login form renders", async ({ page }) => {
+  test("the login form renders", async ({ page }) => {
     await page.goto("/login");
     await expect(page.getByText(/SECURE LOGIN/i)).toBeVisible();
     await expect(page.getByLabel(/USERNAME/i)).toBeVisible();
     await expect(page.getByLabel(/PASSWORD/i)).toBeVisible();
   });
 
-  test("/register form renders", async ({ page }) => {
-    await page.goto("/register");
-    await expect(page.getByText(/ENLIST/i).first()).toBeVisible();
-    await expect(page.getByLabel(/EMAIL/i)).toBeVisible();
+  test("public registration no longer exists", async ({ page }) => {
+    const response = await page.goto("/register");
+    expect(new URL(page.url()).pathname === "/login" || response?.status() === 404).toBe(true);
   });
 });
 
-test.describe("protected routes", () => {
-  test("/dashboard redirects to /login when unauthenticated", async ({
-    page,
-  }) => {
-    const res = await page.goto("/dashboard");
-    expect(page.url()).toContain("/login");
-    expect(res?.status()).toBeLessThan(500);
+const username = process.env.E2E_USERNAME;
+const password = process.env.E2E_PASSWORD;
+
+async function signIn(page: Page, from = "/orgs") {
+  await page.goto(`/login?from=${encodeURIComponent(from)}`);
+  await page.getByLabel(/USERNAME/i).fill(username!);
+  await page.getByLabel(/PASSWORD/i).fill(password!);
+  await page.getByRole("button", { name: /CONNECT/i }).click();
+  await page.waitForURL((url) => url.pathname === from);
+}
+
+test.describe("signed-in user", () => {
+  test.skip(!username || !password, "set E2E_USERNAME and E2E_PASSWORD to run");
+
+  test("lands back on the page asked for", async ({ page }) => {
+    await signIn(page, "/stats");
+    await expect(page.getByText(/UEE::GLOBAL_TELEMETRY/)).toBeVisible();
+  });
+
+  test("main pages render their frame", async ({ page }) => {
+    await signIn(page);
+    await expect(page.getByText(/ORGS INDEXED/)).toBeVisible();
+    await page.goto("/users");
+    await expect(page.getByText(/UEE::CITIZEN_REGISTRY/)).toBeVisible();
+    await page.goto("/changes");
+    await expect(page.getByText(/UEE::LIVE_CHANGELOG/)).toBeVisible();
+    await page.goto("/dashboard");
+    expect(new URL(page.url()).pathname).toBe("/dashboard");
+  });
+
+  test("an unknown organization gets the not-found page", async ({ page }) => {
+    await signIn(page);
+    await page.goto("/orgs/NO_SUCH_ORG_E2E");
+    await expect(page.getByRole("heading", { name: /Not found/i })).toBeVisible();
   });
 });

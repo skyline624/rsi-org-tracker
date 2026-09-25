@@ -76,6 +76,14 @@ describe("authenticateRequest", () => {
     );
   });
 
+  it("keeps the request's own scheme when no proxy sets X-Forwarded-Proto (local run)", async () => {
+    const req = new NextRequest("http://127.0.0.1:3000/orgs", { headers: { host: "127.0.0.1:3000" } });
+
+    const res = await authenticateRequest(req, deps({}));
+
+    expect(res.headers.get("location")).toBe("http://127.0.0.1:3000/login?from=%2Forgs");
+  });
+
   it("ignores a client-supplied X-Forwarded-Host when building the redirect", async () => {
     const req = request("/orgs");
     req.headers.set("x-forwarded-host", "evil.example");

@@ -64,7 +64,8 @@ function isPublic(pathname: string) {
  */
 function loginRedirect(req: NextRequest) {
   const host = req.headers.get("host") ?? req.nextUrl.host;
-  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  // nginx always sets X-Forwarded-Proto; without it (local run) the request's own scheme holds.
+  const proto = req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(":", "");
   const url = new URL(`${proto}://${host}/login`);
   url.searchParams.set("from", req.nextUrl.pathname);
   const res = NextResponse.redirect(url);
