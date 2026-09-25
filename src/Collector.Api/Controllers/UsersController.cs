@@ -144,6 +144,13 @@ public class UsersController : ControllerBase
             .SqlQueryRaw<UserProfileDto>(pageSql, substring, prefix, citizenId, pageSize, (page - 1) * pageSize)
             .ToListAsync(ct);
 
+        // Raw SQL mapped onto a DTO skips the model's UTC conversion: mark the dates here.
+        foreach (var item in items)
+        {
+            item.UpdatedAt = DateTime.SpecifyKind(item.UpdatedAt, DateTimeKind.Utc);
+            if (item.Enlisted is { } enlisted) item.Enlisted = DateTime.SpecifyKind(enlisted, DateTimeKind.Utc);
+        }
+
         return PaginatedResponse<UserProfileDto>.Create(items, page, pageSize, total);
     }
 

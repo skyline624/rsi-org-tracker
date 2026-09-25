@@ -12,6 +12,13 @@ public class ApiDbContext : DbContext
 
     public ApiDbContext(DbContextOptions<ApiDbContext> options) : base(options) { }
 
+    // Dates are stored as UTC text without a zone: read them back as UTC (see UtcDateTimeConverter).
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        configurationBuilder.Properties<DateTime>().HaveConversion<Collector.Data.UtcDateTimeConverter>();
+        configurationBuilder.Properties<DateTime?>().HaveConversion<Collector.Data.UtcDateTimeConverter>();
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ApiUser>(e =>
