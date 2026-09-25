@@ -80,6 +80,7 @@ public static class ServiceCollectionExtensions
         services.AddHttpContextAccessor();
         services.AddScoped<CurrentUserAccessor>();
         services.AddScoped<TokenService>();
+        services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
         services.AddScoped<AuthService>();
         services.AddHostedService<RefreshTokenCleanupService>();
         services.AddScoped<ApiKeyService>();

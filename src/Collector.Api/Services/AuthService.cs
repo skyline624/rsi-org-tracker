@@ -1,3 +1,4 @@
+using Collector.Api.Auth;
 using Collector.Api.Errors;
 using Collector.Api.Data;
 using Collector.Api.Dtos.Auth;
@@ -16,15 +17,41 @@ public class AuthService
 
     private const string RevokedByRotation = "rotated";
 
+    /// <summary>Consecutive failures that lock an account; each further batch doubles the lock.</summary>
+    public const int MaxFailedLogins = 5;
+    private static readonly TimeSpan BaseLockout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan MaxLockout = TimeSpan.FromHours(24);
+    private const string InvalidCredentials = "Invalid username or password";
+
+    /// <summary>
+    /// Hash checked when the username does not exist, so an unknown account costs the same
+    /// BCrypt work as a wrong password and response times do not reveal which accounts exist.
+    /// </summary>
+    private static readonly Lazy<string> DummyHash =
+        new(() => BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString()));
+
     private readonly ApiDbContext _db;
     private readonly TokenService _tokenService;
+    private readonly IPasswordHasher _passwords;
+    private readonly ActivityLogService _activityLog;
+    private readonly CurrentUserAccessor _currentUser;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AuthService> _logger;
 
-    public AuthService(ApiDbContext db, TokenService tokenService, IConfiguration configuration, ILogger<AuthService> logger)
+    public AuthService(
+        ApiDbContext db,
+        TokenService tokenService,
+        IPasswordHasher passwords,
+        ActivityLogService activityLog,
+        CurrentUserAccessor currentUser,
+        IConfiguration configuration,
+        ILogger<AuthService> logger)
     {
         _db = db;
         _tokenService = tokenService;
+        _passwords = passwords;
+        _activityLog = activityLog;
+        _currentUser = currentUser;
         _configuration = configuration;
         _logger = logger;
     }
@@ -40,7 +67,7 @@ public class AuthService
         {
             Username = request.Username,
             Email = request.Email,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+            PasswordHash = _passwords.Hash(request.Password),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         };
@@ -49,21 +76,59 @@ public class AuthService
         return user;
     }
 
+    /// <summary>
+    /// Every failure answers the same generic message (unknown user, wrong password, locked
+    /// account): only someone who knows the password learns that an account is banned.
+    /// </summary>
     public async Task<AuthResponse> LoginAsync(LoginRequest request, CancellationToken ct = default)
     {
-        var user = await _db.ApiUsers.FirstOrDefaultAsync(u => u.Username == request.Username, ct)
-            ?? throw new AuthenticationFailedException("Invalid username or password");
+        var now = DateTime.UtcNow;
+        var user = await _db.ApiUsers.FirstOrDefaultAsync(u => u.Username == request.Username, ct);
+        var passwordOk = _passwords.Verify(request.Password, user?.PasswordHash ?? DummyHash.Value);
+
+        if (user is null)
+        {
+            await _activityLog.LogAsync("login_failed", null, "user", null, _currentUser.IpAddress, ct);
+            throw new AuthenticationFailedException(InvalidCredentials);
+        }
+
+        if (user.LockoutEnd > now)
+        {
+            await _activityLog.LogAsync("login_locked", user.Id, "user", user.Id.ToString(), _currentUser.IpAddress, ct);
+            throw new AuthenticationFailedException(InvalidCredentials);
+        }
+
+        if (!passwordOk)
+        {
+            await RecordFailedLoginAsync(user, now, ct);
+            throw new AuthenticationFailedException(InvalidCredentials);
+        }
 
         if (user.IsBanned)
             throw new AuthenticationFailedException("Account is banned");
 
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
-            throw new AuthenticationFailedException("Invalid username or password");
-
-        user.LastLoginAt = DateTime.UtcNow;
+        user.FailedLoginCount = 0;
+        user.LockoutEnd = null;
+        user.LastLoginAt = now;
         await _db.SaveChangesAsync(ct);
 
         return await CreateAuthResponseAsync(user, ct);
+    }
+
+    private async Task RecordFailedLoginAsync(ApiUser user, DateTime now, CancellationToken ct)
+    {
+        user.FailedLoginCount++;
+        if (user.FailedLoginCount % MaxFailedLogins == 0)
+        {
+            var lockouts = user.FailedLoginCount / MaxFailedLogins;
+            var duration = TimeSpan.FromTicks(Math.Min(
+                BaseLockout.Ticks * (1L << Math.Min(lockouts - 1, 16)), MaxLockout.Ticks));
+            user.LockoutEnd = now + duration;
+            _logger.LogWarning("Account {UserId} locked for {Minutes} min after {Count} failed logins",
+                user.Id, duration.TotalMinutes, user.FailedLoginCount);
+        }
+        await _db.SaveChangesAsync(ct);
+        await _activityLog.LogAsync("login_failed", user.Id, "user", user.Id.ToString(), _currentUser.IpAddress, ct);
     }
 
     public async Task<AuthResponse> RefreshAsync(string refreshToken, CancellationToken ct = default)
@@ -164,7 +229,7 @@ public class AuthService
             u => u.PasswordResetToken == token && u.PasswordResetTokenExpiry > DateTime.UtcNow, ct)
             ?? throw new ValidationException("Invalid or expired reset token");
 
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.PasswordHash = _passwords.Hash(newPassword);
         user.PasswordResetToken = null;
         user.PasswordResetTokenExpiry = null;
         user.UpdatedAt = DateTime.UtcNow;
@@ -222,10 +287,10 @@ public class AuthService
         var user = await _db.ApiUsers.FirstOrDefaultAsync(u => u.Id == userId, ct)
             ?? throw new AuthenticationFailedException("User not found");
 
-        if (!BCrypt.Net.BCrypt.Verify(currentPassword, user.PasswordHash))
+        if (!_passwords.Verify(currentPassword, user.PasswordHash))
             throw new AuthenticationFailedException("Current password is incorrect");
 
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.PasswordHash = _passwords.Hash(newPassword);
         user.UpdatedAt = DateTime.UtcNow;
         await RevokeAllSessionsAsync(user.Id, "password_changed", ct);
         return await CreateAuthResponseAsync(user, ct);
