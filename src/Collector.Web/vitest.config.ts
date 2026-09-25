@@ -3,7 +3,12 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
-    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // "server-only" throws outside a React Server environment; tests run the
+      // server modules directly in Node, which is exactly what it guards.
+      "server-only": fileURLToPath(new URL("./src/test/empty-module.ts", import.meta.url)),
+    },
   },
   test: {
     environment: "node",
