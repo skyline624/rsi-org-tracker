@@ -9,7 +9,7 @@ public class MemberCollectionLogRepository : Repository<MemberCollectionLog>, IM
 
     public async Task<MemberCollectionLog?> GetLatestAsync(string orgSid, CancellationToken ct = default)
     {
-        return await DbSet
+        return await DbSet.AsNoTracking()
             .Where(l => l.OrgSid == orgSid)
             .OrderByDescending(l => l.CollectionTime)
             .FirstOrDefaultAsync(ct);
@@ -17,7 +17,7 @@ public class MemberCollectionLogRepository : Repository<MemberCollectionLog>, IM
 
     public async Task<IReadOnlyList<MemberCollectionLog>> GetByOrgSidAsync(string orgSid, int limit = 10, CancellationToken ct = default)
     {
-        return await DbSet
+        return await DbSet.AsNoTracking()
             .Where(l => l.OrgSid == orgSid)
             .OrderByDescending(l => l.CollectionTime)
             .Take(limit)
@@ -26,7 +26,7 @@ public class MemberCollectionLogRepository : Repository<MemberCollectionLog>, IM
 
     public async Task<IReadOnlyList<MemberCollectionLog>> GetByCollectionTimeAsync(string orgSid, DateTime collectionTime, CancellationToken ct = default)
     {
-        return await DbSet
+        return await DbSet.AsNoTracking()
             .Where(l => l.OrgSid == orgSid && l.CollectionTime == collectionTime)
             .ToListAsync(ct);
     }

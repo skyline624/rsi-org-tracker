@@ -335,8 +335,7 @@ public class UserCollector : IUserCollector
 
                 if (isNewHandle)
                 {
-                    var memberships = await _memberRepo.GetByUserHandleAsync(handle, ct);
-                    foreach (var orgSid in memberships.Select(m => m.OrgSid).Distinct())
+                    foreach (var orgSid in await _memberRepo.GetOrgSidsForHandleAsync(handle, ct))
                     {
                         changeEvents.Add(new ChangeEvent
                         {
@@ -362,8 +361,7 @@ public class UserCollector : IUserCollector
                 // reuse of the handle by another (soon-to-be-updated) user.
                 var oldHandle = existingByCitizenId.UserHandle;
 
-                var memberships = await _memberRepo.GetByUserHandleAsync(handle, ct);
-                foreach (var orgSid in memberships.Select(m => m.OrgSid).Distinct())
+                foreach (var orgSid in await _memberRepo.GetOrgSidsForHandleAsync(handle, ct))
                 {
                     changeEvents.Add(new ChangeEvent
                     {

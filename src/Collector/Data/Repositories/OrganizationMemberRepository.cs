@@ -47,11 +47,12 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
             .ToListAsync(ct);
     }
 
-    public async Task<IReadOnlyList<OrganizationMember>> GetByUserHandleAsync(string userHandle, CancellationToken ct = default)
+    public async Task<IReadOnlyList<string>> GetOrgSidsForHandleAsync(string userHandle, CancellationToken ct = default)
     {
         return await DbSet
             .Where(m => m.UserHandle == userHandle)
-            .OrderByDescending(m => m.Timestamp)
+            .Select(m => m.OrgSid)
+            .Distinct()
             .ToListAsync(ct);
     }
 
