@@ -48,6 +48,17 @@ describe("BFF /api/auth", () => {
     },
   );
 
+  it("logout clears the cookies and sends the browser back to /login", async () => {
+    stubUpstream(200, { message: "Logged out" });
+
+    const res = await call("logout");
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/login");
+    expect(res.headers.get("set-cookie")).toMatch(/sct_access=;/);
+    expect(res.headers.get("set-cookie")).toMatch(/sct_refresh=;/);
+  });
+
   it("marks every auth response as non-cacheable", async () => {
     stubUpstream(401, { title: "Invalid credentials" });
 

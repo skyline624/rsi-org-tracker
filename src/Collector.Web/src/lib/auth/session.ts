@@ -1,14 +1,13 @@
 /**
- * Helpers de session côté serveur (RSC / route handlers).
+ * Helpers de session côté serveur (RSC / route handlers / Server Actions).
  *
- * v1 : on décode le JWT sans vérifier sa signature — la signature n'est
- * connue que du serveur .NET, et notre rôle ici est juste de savoir si
- * l'utilisateur est connecté pour le routage UI. Les opérations sensibles
- * passent de toute façon par l'API qui re-valide le token.
+ * La signature du JWT (RS256) est vérifiée avec la clé publique de l'API :
+ * un cookie forgé ne donne jamais de session, et donc jamais `isAdmin`.
  */
 
 import { cookies } from "next/headers";
 import { COOKIE_ACCESS } from "./cookies";
+import { verifyAccessToken } from "./jwt";
 
 export interface Session {
   userId: number;
@@ -33,33 +32,18 @@ interface JwtPayload {
   exp?: number;
 }
 
-function decodeJwt(token: string): JwtPayload | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length < 2) return null;
-    const payloadPart = parts[1];
-    if (!payloadPart) return null;
-    const b64 = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
-    const json = Buffer.from(padded, "base64").toString("utf-8");
-    return JSON.parse(json) as JwtPayload;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Retourne la session courante ou `null` si non authentifié.
- * Lit le cookie `sct_access` (posé par le BFF).
+ * Lit le cookie `sct_access` (posé par le BFF ou renouvelé par le middleware)
+ * et n'accepte que les tokens signés par l'API et non expirés.
  */
 export async function getSession(): Promise<Session | null> {
   const jar = await cookies();
   const token = jar.get(COOKIE_ACCESS)?.value;
   if (!token) return null;
 
-  const payload = decodeJwt(token);
+  const payload = (await verifyAccessToken(token)) as JwtPayload | null;
   if (!payload) return null;
-  if (payload.exp && payload.exp * 1000 < Date.now()) return null;
 
   const nameId =
     payload[

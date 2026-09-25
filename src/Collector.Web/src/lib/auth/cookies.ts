@@ -8,7 +8,9 @@ export const COOKIE_REFRESH = "sct_refresh";
 
 export const cookieBaseOptions = {
   httpOnly: true,
-  sameSite: "strict" as const,
+  // Lax: un lien ouvert depuis Discord ou un autre site arrive avec la session.
+  // Les POST cross-site restent bloqués et les Server Actions vérifient l'Origin.
+  sameSite: "lax" as const,
   secure: process.env.NODE_ENV === "production",
   path: "/",
 };

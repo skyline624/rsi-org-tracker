@@ -146,10 +146,16 @@ async function handle(
     response.cookies.set(COOKIE_REFRESH, auth.refreshToken, refreshCookieOptions());
   }
 
-  // Post logout — clear cookies quelle que soit la réponse upstream.
+  // Post logout — clear cookies quelle que soit la réponse upstream, et renvoyer le
+  // navigateur (formulaire DISCONNECT) vers /login plutôt que d'afficher du JSON.
   if (segment === "logout") {
-    response.cookies.delete(COOKIE_ACCESS);
-    response.cookies.delete(COOKIE_REFRESH);
+    const redirect = new NextResponse(null, {
+      status: 303,
+      headers: { ...NO_STORE, Location: "/login" },
+    });
+    redirect.cookies.delete(COOKIE_ACCESS);
+    redirect.cookies.delete(COOKIE_REFRESH);
+    return redirect;
   }
 
   return response;

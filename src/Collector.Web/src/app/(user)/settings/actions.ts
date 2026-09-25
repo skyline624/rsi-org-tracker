@@ -1,7 +1,15 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { getSession } from "@/lib/auth/session";
 import { apiPost } from "@/lib/api/client";
+import type { AuthResponse } from "@/lib/api/types";
+import {
+  COOKIE_ACCESS,
+  COOKIE_REFRESH,
+  accessCookieOptions,
+  refreshCookieOptions,
+} from "@/lib/auth/cookies";
 
 export interface ChangePasswordResult {
   ok: boolean;
@@ -18,11 +26,15 @@ export async function changePasswordAction(
     return { ok: false, error: "Le nouveau mot de passe doit faire au moins 8 caractères." };
 
   try {
-    await apiPost(
+    // The API revokes every session (this one included) and returns fresh tokens.
+    const auth = await apiPost<AuthResponse>(
       "/api/auth/change-password",
       { currentPassword, newPassword },
       { bearerToken: session.accessToken },
     );
+    const jar = await cookies();
+    jar.set(COOKIE_ACCESS, auth.accessToken, accessCookieOptions(new Date(auth.expiresAt)));
+    jar.set(COOKIE_REFRESH, auth.refreshToken, refreshCookieOptions());
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
