@@ -37,6 +37,9 @@ public class UsersController : ControllerBase
         _db = db;
     }
 
+    private const int MinSearchLength = 2;
+    private const int MaxCountedMatches = 1001;
+
     [HttpGet]
     public async Task<ActionResult<PaginatedResponse<UserProfileDto>>> GetAll(
         [FromQuery] string? search,
@@ -69,6 +72,12 @@ public class UsersController : ControllerBase
     private async Task<PaginatedResponse<UserProfileDto>> SearchUsersAsync(
         string search, int page, int pageSize, CancellationToken ct)
     {
+        // A single character would match a large share of 32 M roster rows.
+        if (search.Trim().Length < MinSearchLength)
+        {
+            return PaginatedResponse<UserProfileDto>.Create(Array.Empty<UserProfileDto>(), page, pageSize, 0);
+        }
+
         // Enriched side: substring match (full scan of the smaller `users` table is cheap).
         // Escape %/_ so user input can't pivot into wildcards (requires the ESCAPE clause).
         var escaped = search.Replace("%", "\\%").Replace("_", "\\_");
@@ -122,8 +131,12 @@ public class UsersController : ControllerBase
             WHERE ec.CitizenId = {2} AND ec.CurrentHandle IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = ec.CurrentHandle)";
 
+        // Counting stops at MaxCountedMatches: the front shows "more than 1000", and
+        // SQLite stops producing the union there instead of counting every match.
         var total = await _db.Database
-            .SqlQueryRaw<int>($"SELECT COUNT(*) AS Value FROM ({union})", substring, prefix, citizenId)
+            .SqlQueryRaw<int>(
+                $"SELECT COUNT(*) AS Value FROM (SELECT 1 FROM ({union}) LIMIT {MaxCountedMatches})",
+                substring, prefix, citizenId)
             .SingleAsync(ct);
 
         var pageSql = $"SELECT * FROM ({union}) ORDER BY UserHandle COLLATE NOCASE LIMIT {{3}} OFFSET {{4}}";
