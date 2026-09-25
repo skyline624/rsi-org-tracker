@@ -37,19 +37,8 @@ public interface IRsiApiClient
         CancellationToken ct = default);
 
     /// <summary>
-    /// Gets a page of members for an organization.
-    /// </summary>
-    Task<(IReadOnlyList<MemberData> Members, int TotalRows)?> GetOrganizationMembersAsync(
-        string orgSymbol,
-        int page = 1,
-        int pageSize = 32,
-        CancellationToken ct = default);
-
-    /// <summary>
-    /// Gets all members for an organization using pagination.
-    /// Returns <see cref="MemberCollectionResult.OrgExists"/> = false when RSI
-    /// reports the org as invalid (deleted/renamed), so the caller can flush
-    /// stale active rows instead of leaving ghost members around.
+    /// Reads an organization's whole roster, page by page, and says whether the
+    /// result may be written (see <see cref="RosterStatus"/>).
     /// </summary>
     Task<MemberCollectionResult> GetAllOrganizationMembersAsync(
         string orgSymbol,
@@ -75,19 +64,43 @@ public interface IRsiApiClient
         CancellationToken ct = default);
 }
 
+/// <summary>What a roster read allows the caller to do.</summary>
+public enum RosterStatus
+{
+    /// <summary>Every row RSI reported was read (at least 98%: rows shift while paging).</summary>
+    Complete,
+
+    /// <summary>
+    /// More rows than RSI serves (it stops at page 400); the readable window was
+    /// read completely but the rest of the roster cannot be seen.
+    /// </summary>
+    Capped,
+
+    /// <summary>A page failed or rows are missing: the roster must not be written.</summary>
+    Partial,
+
+    /// <summary>Not even the first page could be read.</summary>
+    Unreachable,
+
+    /// <summary>RSI answered <c>ErrInvalidOrganization</c>: the only signal that empties a roster.</summary>
+    OrgGone,
+}
+
 /// <summary>
-/// Result of a full member-collection pass for an organization.
-///
-/// - <see cref="OrgExists"/> = false means RSI responded with
-///   <c>ErrInvalidOrganization</c> on the first page. The caller must treat
-///   the current active roster as stale and deactivate it.
-/// - <see cref="Reachable"/> = false means we couldn't tell (network error,
-///   null response). The caller should keep the previous roster as-is.
+/// A roster read. <see cref="Members"/> are the visible rows (one per handle);
+/// <see cref="RawRows"/> counts every row read, redacted and hidden ones included.
 /// </summary>
-public record MemberCollectionResult(
+public sealed record MemberCollectionResult(
+    RosterStatus Status,
     IReadOnlyList<MemberData> Members,
-    bool OrgExists,
-    bool Reachable);
+    int TotalRows,
+    int RawRows,
+    int RedactedRows,
+    int HiddenRows)
+{
+    public static MemberCollectionResult Unreachable { get; } = new(RosterStatus.Unreachable, [], 0, 0, 0, 0);
+    public static MemberCollectionResult Gone { get; } = new(RosterStatus.OrgGone, [], 0, 0, 0, 0);
+}
 
 /// <summary>
 /// Outcome of a single org-page HTML fetch.
@@ -303,113 +316,108 @@ public class RsiApiClient : IRsiApiClient
         return organizations;
     }
 
-    public async Task<(IReadOnlyList<MemberData> Members, int TotalRows)?> GetOrganizationMembersAsync(
-        string orgSymbol,
-        int page = 1,
-        int pageSize = 32,
-        CancellationToken ct = default)
-    {
-        var payload = new
-        {
-            symbol = orgSymbol,
-            search = "",
-            pagesize = pageSize,
-            page
-        };
+    /// <summary>RSI serves at most 400 roster pages; later pages answer totalrows 0.</summary>
+    public const int MaxRosterPages = 400;
 
-        var data = await PostAsync("orgs/getOrgMembers", payload, ct);
-        if (data == null)
-        {
-            return null;
-        }
-
-        // Check for invalid organization
-        if (data["code"]?.GetValue<string>() == "ErrInvalidOrganization")
-        {
-            _logger.LogWarning("Invalid organization: {OrgSymbol}", orgSymbol);
-            return (Array.Empty<MemberData>(), 0);
-        }
-
-        var html = data["data"]?["html"]?.GetValue<string>();
-        var totalRows = data["data"]?["totalrows"]?.GetValue<int>() ?? 0;
-
-        if (string.IsNullOrEmpty(html))
-        {
-            _logger.LogWarning(
-                "RSI getOrgMembers returned no roster HTML for {OrgSymbol} page {Page} (code={Code}, msg={Msg})",
-                orgSymbol, page, data["code"]?.ToString(), data["msg"]?.ToString());
-            return null;
-        }
-
-        var members = _memberParser.ParsePage(html, orgSymbol).Visible;
-        return (members, totalRows);
-    }
+    /// <summary>
+    /// A read counts as complete from this share of the rows: members joining or
+    /// leaving during a multi-page read shift rows from one page to the next.
+    /// </summary>
+    private const double CompleteShare = 0.98;
 
     public async Task<MemberCollectionResult> GetAllOrganizationMembersAsync(
         string orgSymbol,
         int pageSize = 32,
         CancellationToken ct = default)
     {
-        var allMembers = new List<MemberData>();
-        var page = 1;
-        int totalRows;
-        var firstPage = true;
-        var reachable = false;
+        var first = await FetchRosterPageAsync(orgSymbol, 1, pageSize, ct);
+        if (first.Answer == RosterAnswer.InvalidOrganization) return MemberCollectionResult.Gone;
+        if (first.Answer == RosterAnswer.Failed) return MemberCollectionResult.Unreachable;
 
-        do
+        var totalRows = first.TotalRows;
+        var members = new Dictionary<string, MemberData>(StringComparer.OrdinalIgnoreCase);
+        int rawRows = 0, redactedRows = 0, hiddenRows = 0;
+        void Add(MemberPage page)
         {
-            var result = await GetOrganizationMembersAsync(orgSymbol, page, pageSize, ct);
-            if (result == null)
-            {
-                // Null on first page = couldn't reach / parse. We don't know whether
-                // the org still exists, so we signal "unreachable" and let the caller
-                // keep the existing roster untouched.
-                if (firstPage)
-                {
-                    return new MemberCollectionResult(
-                        Array.Empty<MemberData>(),
-                        OrgExists: true, // unknown, assume it exists
-                        Reachable: false);
-                }
-                break;
-            }
-
-            reachable = true;
-            var (members, total) = result.Value;
-            totalRows = total;
-
-            // Empty response on first page is RSI's signal for "this org doesn't
-            // exist anymore" (totalrows = 0, ErrInvalidOrganization already
-            // mapped to empty in GetOrganizationMembersAsync). For the roster
-            // cleanup to be safe we require first-page-confirmed empty.
-            if (members.Count == 0)
-            {
-                if (firstPage)
-                {
-                    return new MemberCollectionResult(
-                        Array.Empty<MemberData>(),
-                        OrgExists: totalRows > 0, // org exists but genuinely 0 members is rare; usually this means deleted
-                        Reachable: true);
-                }
-                break;
-            }
-
-            firstPage = false;
-            allMembers.AddRange(members);
-
-            // Check for completeness (> 95%)
-            if (page == 1)
-            {
-                _logger.LogInformation(
-                    "Organization {OrgSymbol}: {Count}/{Total} members collected",
-                    orgSymbol, members.Count, totalRows);
-            }
-
-            page++;
+            rawRows += page.RawRows;
+            redactedRows += page.RedactedRows;
+            hiddenRows += page.HiddenRows;
+            foreach (var member in page.Visible) members.TryAdd(member.Handle, member);
         }
-        while (allMembers.Count < totalRows);
 
-        return new MemberCollectionResult(allMembers, OrgExists: true, Reachable: reachable);
+        Add(first.Page);
+        var pages = Math.Min((int)Math.Ceiling(totalRows / (double)pageSize), MaxRosterPages);
+        var pageFailed = false;
+        for (var page = 2; page <= pages; page++)
+        {
+            var next = await FetchRosterPageAsync(orgSymbol, page, pageSize, ct);
+            if (next.Answer != RosterAnswer.Ok || next.Page.RawRows == 0)
+            {
+                pageFailed = true;
+                break;
+            }
+            Add(next.Page);
+        }
+
+        var readable = Math.Min(totalRows, MaxRosterPages * pageSize);
+        var status = totalRows <= 0 || pageFailed || rawRows < CompleteShare * readable
+            ? RosterStatus.Partial
+            : totalRows > readable ? RosterStatus.Capped : RosterStatus.Complete;
+
+        if (status == RosterStatus.Partial)
+        {
+            _logger.LogWarning(
+                "Roster of {OrgSymbol} incomplete: {Raw}/{Total} rows read{Failure}",
+                orgSymbol, rawRows, totalRows, pageFailed ? " (a page failed)" : "");
+        }
+
+        return new MemberCollectionResult(
+            status, members.Values.ToList(), totalRows, rawRows, redactedRows, hiddenRows);
+    }
+
+    private enum RosterAnswer { Ok, InvalidOrganization, Failed }
+
+    private sealed record RosterPageAnswer(RosterAnswer Answer, MemberPage Page, int TotalRows)
+    {
+        public static RosterPageAnswer Failed { get; } = new(RosterAnswer.Failed, new MemberPage([], 0, 0, 0), 0);
+    }
+
+    /// <summary>One getOrgMembers page. Failures are logged with RSI's status or code/msg.</summary>
+    private async Task<RosterPageAnswer> FetchRosterPageAsync(
+        string orgSymbol, int page, int pageSize, CancellationToken ct)
+    {
+        JsonNode? data;
+        try
+        {
+            data = await PostAsync("orgs/getOrgMembers",
+                new { symbol = orgSymbol, search = "", pagesize = pageSize, page }, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "RSI getOrgMembers {OrgSymbol} page {Page} failed: {Status} {Error}",
+                orgSymbol, page, (ex as HttpRequestException)?.StatusCode, ex.Message);
+            return RosterPageAnswer.Failed;
+        }
+
+        var code = data?["code"]?.ToString();
+        if (code == "ErrInvalidOrganization")
+        {
+            _logger.LogWarning("Invalid organization: {OrgSymbol}", orgSymbol);
+            return new RosterPageAnswer(RosterAnswer.InvalidOrganization, new MemberPage([], 0, 0, 0), 0);
+        }
+
+        var html = data?["data"]?["html"]?.ToString();
+        var totalRows = data?["data"]?["totalrows"]?.GetValue<int>() ?? 0;
+        if (html == null || data?["success"]?.GetValue<int>() != 1)
+        {
+            _logger.LogWarning(
+                "RSI getOrgMembers {OrgSymbol} page {Page} returned no roster (code={Code}, msg={Msg})",
+                orgSymbol, page, code, data?["msg"]?.ToString());
+            return RosterPageAnswer.Failed;
+        }
+
+        return new RosterPageAnswer(RosterAnswer.Ok, _memberParser.ParsePage(html, orgSymbol), totalRows);
     }
 
     public async Task<OrgPageFetchResult> GetOrgPageHtmlAsync(string sid, CancellationToken ct = default)

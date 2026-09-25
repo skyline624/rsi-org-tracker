@@ -156,7 +156,7 @@ public sealed class RsiRateGateTests
             new MemberHtmlParser(NullLogger<MemberHtmlParser>.Instance),
             gate);
 
-        var pending = client.GetOrganizationMembersAsync("SLOW");
+        var pending = client.GetAllOrganizationMembersAsync("SLOW");
         await Settle();
         _rsi.Calls.Should().Be(1);
         gate.PausedFor.Should().Be(TimeSpan.FromSeconds(30));

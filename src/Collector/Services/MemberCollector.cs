@@ -130,34 +130,42 @@ public class MemberCollector : IMemberCollector
         var collection = await _apiClient.GetAllOrganizationMembersAsync(
             orgSid, _options.MemberCollectionPageSize, ct);
 
-        // If the fetch failed entirely (network/5xx/parse), leave the existing
-        // roster alone — we have no authoritative signal to act on.
-        if (!collection.Reachable)
+        switch (collection.Status)
         {
-            _logger.LogWarning("Members unreachable for {Sid}; keeping prior roster", orgSid);
-            return 0;
+            // Nothing read: we have no authoritative signal to act on.
+            case RosterStatus.Unreachable:
+                _logger.LogWarning("Members unreachable for {Sid}; keeping prior roster", orgSid);
+                return 0;
+
+            // ErrInvalidOrganization is the only answer that empties a roster: flush
+            // it so the detail page no longer shows ghost members, and zero the count.
+            case RosterStatus.OrgGone:
+            {
+                var deactivated = await _memberRepo.MarkAllPreviousInactiveAsync(orgSid, DateTime.UtcNow, ct);
+                _logger.LogWarning(
+                    "Organization {Sid} no longer exists — deactivated {Count} prior active rows",
+                    orgSid, deactivated);
+                await ReconcileMembersCountAsync(orgSid, 0, ct);
+                return 0;
+            }
+
+            // A truncated roster would turn every unread member into a false departure.
+            case RosterStatus.Partial:
+            case RosterStatus.Capped:
+                await ReconcileMembersCountAsync(orgSid, collection.TotalRows, ct);
+                _logger.LogWarning(
+                    "Roster of {Sid} not written ({Status}: {Raw}/{Total} rows read); keeping prior roster",
+                    orgSid, collection.Status, collection.RawRows, collection.TotalRows);
+                return 0;
         }
 
-        // RSI signalled the org no longer exists, OR the org genuinely has zero
-        // members now. In either case the previously-active roster is stale —
-        // flush it so the detail page no longer shows ghost members.
-        if (!collection.OrgExists || collection.Members.Count == 0)
+        // Every row read but none visible (all redacted or hidden): the members are
+        // still there, so this is no reason to deactivate anyone.
+        if (collection.Members.Count == 0)
         {
-            var deactivated = await _memberRepo.MarkAllPreviousInactiveAsync(
-                orgSid, DateTime.UtcNow, ct);
-            _logger.LogWarning(
-                "No members for {Sid} (exists={Exists}) — deactivated {Count} prior active rows",
-                orgSid, collection.OrgExists, deactivated);
-            // Also zero the latest Organization snapshot so the list page stops
-            // showing a stale headcount for a dead org.
-            try
-            {
-                await _orgRepo.UpdateLatestMembersCountAsync(orgSid, 0, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Could not zero MembersCount for {Sid}", orgSid);
-            }
+            await ReconcileMembersCountAsync(orgSid, collection.TotalRows, ct);
+            _logger.LogInformation(
+                "All {Total} members of {Sid} are masked; keeping prior roster", collection.TotalRows, orgSid);
             return 0;
         }
 
@@ -326,33 +334,35 @@ public class MemberCollector : IMemberCollector
             }
         }
 
-        // ── STEP 4 — reconcile Organization.MembersCount with the real headcount.
-        //             Phase 1 reads the count from RSI's search API which occasionally
-        //             reports 0 for active orgs. Phase 3 just counted the real roster,
-        //             so we overwrite the latest Organization snapshot if it diverges.
-        try
-        {
-            var realCount = members.Select(m => m.Handle)
-                .Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            var updated = await _orgRepo.UpdateLatestMembersCountAsync(orgSid, realCount, ct);
-            if (updated > 0)
-            {
-                _logger.LogInformation(
-                    "Reconciled MembersCount for {Sid}: Phase1=stale → Phase3={Count}",
-                    orgSid, realCount);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "MembersCount reconciliation failed for {Sid} (non-fatal)", orgSid);
-        }
+        // ── STEP 4 — reconcile Organization.MembersCount with RSI's row count.
+        await ReconcileMembersCountAsync(orgSid, collection.TotalRows, ct);
 
         _logger.LogInformation(
             "Collected {Count} members for {Sid}, detected {Changes} changes, queued {NewUsers} new users",
             members.Count, orgSid, changes.Count, queued);
 
         return members.Count;
+    }
+
+    /// <summary>
+    /// Sets the latest organization snapshot's MembersCount to RSI's totalrows, which
+    /// counts redacted and hidden members too (the visible roster does not). Phase 1's
+    /// search listing carries the same counter but a cached, sometimes older value.
+    /// </summary>
+    private async Task ReconcileMembersCountAsync(string orgSid, int totalRows, CancellationToken ct)
+    {
+        try
+        {
+            var updated = await _orgRepo.UpdateLatestMembersCountAsync(orgSid, totalRows, ct);
+            if (updated > 0)
+            {
+                _logger.LogInformation("Reconciled MembersCount for {Sid}: {Count}", orgSid, totalRows);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "MembersCount reconciliation failed for {Sid} (non-fatal)", orgSid);
+        }
     }
 
     private async Task<IReadOnlyList<MemberSnapshot>> GetPreviousSnapshotsAsync(
