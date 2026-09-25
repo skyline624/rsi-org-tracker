@@ -1,6 +1,6 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiDelete } from "@/lib/api/client";
 
 export interface AudioDto {
@@ -55,7 +55,7 @@ export async function deleteAudioAction(id: number): Promise<AudioActionResult> 
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
   try {
-    await apiDelete(`/api/audio/${id}`, { bearerToken: session.accessToken });
+    await apiDelete(`/api/audio/${id}`, sessionCtx(session));
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };

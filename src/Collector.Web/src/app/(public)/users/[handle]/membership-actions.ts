@@ -1,6 +1,6 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet, apiPost, apiDelete } from "@/lib/api/client";
 
 export interface OrgOption {
@@ -17,7 +17,7 @@ export async function searchOrgsAction(query: string): Promise<OrgOption[]> {
     const res = await apiGet<{ items: Array<{ sid: string; name: string }> }>(
       "/api/organizations",
       { search: q, pageSize: 10 },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return (res.items ?? []).map((o) => ({ sid: o.sid, name: o.name }));
   } catch {
@@ -59,7 +59,7 @@ export async function createMembershipAction(
         via: input.via || null,
         sinceDate: input.sinceDate || null,
       },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return { ok: true, membership };
   } catch (e) {
@@ -71,7 +71,7 @@ export async function deleteMembershipAction(id: number): Promise<MembershipActi
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
   try {
-    await apiDelete(`/api/memberships/${id}`, { bearerToken: session.accessToken });
+    await apiDelete(`/api/memberships/${id}`, sessionCtx(session));
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };

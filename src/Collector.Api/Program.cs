@@ -1,5 +1,4 @@
 using System.Net;
-using System.Threading.RateLimiting;
 using Collector.Api.Data;
 using Collector.Api.Extensions;
 using Collector.Api.Middleware;
@@ -66,30 +65,20 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
     }
 }));
 
-// Global rate limiting (per IP) to protect public endpoints from abuse.
-var permitLimit = builder.Configuration.GetValue("Api:RateLimit:PermitLimit", 100);
-var windowSeconds = builder.Configuration.GetValue("Api:RateLimit:WindowSeconds", 60);
-builder.Services.AddRateLimiter(options =>
-{
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
-    {
-        var partitionKey = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
-        {
-            AutoReplenishment = true,
-            PermitLimit = permitLimit,
-            Window = TimeSpan.FromSeconds(windowSeconds),
-            QueueLimit = 0,
-        });
-    });
-});
+// Rate limiting per signed-in user / per anonymous client IP, plus a login policy.
+builder.Services.AddApiRateLimiting(builder.Configuration);
 
+// The only proxy in front of the API is the web front on the same host: trust the
+// client IP it forwards (X-Forwarded-For) from loopback only, one hop deep, so a
+// remote client can never pick the IP it is rate-limited and logged under.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
     options.KnownIPNetworks.Clear();
     options.KnownProxies.Clear();
+    options.KnownProxies.Add(IPAddress.Loopback);
+    options.KnownProxies.Add(IPAddress.IPv6Loopback);
+    options.ForwardLimit = 1;
 });
 
 builder.Services.AddControllers();
@@ -168,9 +157,10 @@ if (swaggerEnabled)
 }
 
 app.UseRouting();
-app.UseRateLimiter();
 app.UseCors();
 app.UseAuthentication();
+// After authentication so signed-in users are limited per user, not per IP.
+app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
 

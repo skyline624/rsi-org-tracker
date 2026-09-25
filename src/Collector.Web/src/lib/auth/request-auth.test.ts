@@ -96,6 +96,16 @@ describe("authenticateRequest", () => {
     expect(res.headers.get("x-middleware-request-cookie")).toContain("sct_access=new-access");
   });
 
+  it("forwards the client IP with the refresh call", async () => {
+    const d = deps({}, null);
+    const req = request("/orgs", { sct_refresh: "rt-ip" });
+    req.headers.set("x-forwarded-for", "203.0.113.7");
+
+    await authenticateRequest(req, d);
+
+    expect(d.refresh).toHaveBeenCalledWith("rt-ip", "203.0.113.7");
+  });
+
   it("refreshes proactively when the access token expires within a minute", async () => {
     const d = deps({ soon: { sub: "1", exp: nowSec() + 20 } }, {
       accessToken: "new-access",
@@ -105,7 +115,7 @@ describe("authenticateRequest", () => {
 
     await authenticateRequest(request("/orgs", { sct_access: "soon", sct_refresh: "rt-2" }), d);
 
-    expect(d.refresh).toHaveBeenCalledWith("rt-2");
+    expect(d.refresh).toHaveBeenCalledWith("rt-2", undefined);
   });
 
   it("redirects and clears cookies when the refresh is refused", async () => {

@@ -6,7 +6,10 @@ vi.mock("next/navigation", () => ({
     throw new Error(`REDIRECT:${url}`);
   }),
 }));
-vi.mock("@/lib/auth/session", () => ({ getSession: vi.fn() }));
+vi.mock("@/lib/auth/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/session")>()),
+  getSession: vi.fn(),
+}));
 
 const { getSession } = await import("@/lib/auth/session");
 const { requireAuthCtx, withAuthRedirect, redirectIfUnauthorized } = await import(
@@ -28,10 +31,14 @@ describe("server-api auth helpers", () => {
       username: "pilot",
       isAdmin: false,
       accessToken: "user-jwt",
+      clientIp: "203.0.113.7",
       expiresAt: new Date(Date.now() + 60_000),
     });
 
-    await expect(requireAuthCtx()).resolves.toEqual({ bearerToken: "user-jwt" });
+    await expect(requireAuthCtx()).resolves.toEqual({
+      bearerToken: "user-jwt",
+      clientIp: "203.0.113.7",
+    });
   });
 
   it("turns an API 401 into a redirect to /login", async () => {

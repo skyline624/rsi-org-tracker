@@ -1,6 +1,6 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPost } from "@/lib/api/client";
 
 export interface ActionResult {
@@ -25,7 +25,7 @@ export async function createEntityAction(input: {
         displayName: input.displayName ?? null,
         citizenId: input.citizenId ?? null,
       },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return { ok: true };
   } catch (e) {
@@ -54,7 +54,7 @@ export async function createOrganizationAction(input: {
         archetype: input.archetype ?? null,
         description: input.description ?? null,
       },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return { ok: true };
   } catch (e) {

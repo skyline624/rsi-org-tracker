@@ -1,3 +1,5 @@
+using Collector.Api.Extensions;
+using Microsoft.AspNetCore.RateLimiting;
 using Collector.Api.Errors;
 using Collector.Api.Auth;
 using Collector.Api.Dtos.Auth;
@@ -41,6 +43,7 @@ public class AuthController : ControllerBase
     public IActionResult Jwks([FromServices] JwtKeyProvider keys) =>
         Ok(new { keys = new[] { keys.PublicJwk } });
 
+    [EnableRateLimiting(RateLimitingExtensions.LoginPolicy)]
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
@@ -49,6 +52,7 @@ public class AuthController : ControllerBase
         return Ok(result);
     }
 
+    [EnableRateLimiting(RateLimitingExtensions.LoginPolicy)]
     [HttpPost("refresh")]
     public async Task<ActionResult<AuthResponse>> Refresh([FromBody] RefreshRequest request, CancellationToken ct)
     {

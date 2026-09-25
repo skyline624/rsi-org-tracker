@@ -5,7 +5,8 @@
  * un cookie forgé ne donne jamais de session, et donc jamais `isAdmin`.
  */
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { firstForwardedIp } from "@/lib/api/client-ip";
 import { COOKIE_ACCESS } from "./cookies";
 import { verifyAccessToken } from "./jwt";
 
@@ -15,6 +16,8 @@ export interface Session {
   email?: string;
   isAdmin: boolean;
   accessToken: string;
+  /** IP du navigateur (X-Forwarded-For de nginx), à relayer à l'API. */
+  clientIp?: string;
   expiresAt: Date;
 }
 
@@ -72,8 +75,14 @@ export async function getSession(): Promise<Session | null> {
     email: email ? String(email) : undefined,
     isAdmin,
     accessToken: token,
+    clientIp: firstForwardedIp((await headers()).get("x-forwarded-for")),
     expiresAt: payload.exp ? new Date(payload.exp * 1000) : new Date(0),
   };
+}
+
+/** Contexte d'appel à l'API pour cette session (JWT + IP du client). */
+export function sessionCtx(session: Session) {
+  return { bearerToken: session.accessToken, clientIp: session.clientIp };
 }
 
 /** Raccourci : force une session. À utiliser dans les layouts authentifiés. */

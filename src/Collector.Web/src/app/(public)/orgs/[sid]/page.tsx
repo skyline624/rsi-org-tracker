@@ -14,7 +14,7 @@ import {
 import { ApiError } from "@/lib/api/errors";
 import type { OrganizationMemberDto } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { requireAuthCtx, withAuthRedirect } from "@/lib/auth/server-api";
 import { apiGet } from "@/lib/api/client";
 import { OrgNotesSection } from "./OrgNotesSection";
@@ -65,14 +65,14 @@ export default async function OrgDetailPage({ params }: PageProps) {
     ? await apiGet<OrgNoteDto[]>(
         `/api/organizations/${encodeURIComponent(sid)}/notes`,
         undefined,
-        { bearerToken: session.accessToken },
+        sessionCtx(session),
       ).catch(() => [] as OrgNoteDto[])
     : [];
   const manualMembers = session
     ? await apiGet<OrgManualMember[]>(
         `/api/organizations/${encodeURIComponent(sid)}/manual-members`,
         undefined,
-        { bearerToken: session.accessToken },
+        sessionCtx(session),
       ).catch(() => [] as OrgManualMember[])
     : [];
 

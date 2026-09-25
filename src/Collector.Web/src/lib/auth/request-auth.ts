@@ -16,6 +16,7 @@ import {
   accessCookieOptions,
   refreshCookieOptions,
 } from "./cookies";
+import { firstForwardedIp } from "@/lib/api/client-ip";
 
 export interface RefreshedTokens {
   accessToken: string;
@@ -25,7 +26,7 @@ export interface RefreshedTokens {
 
 export interface AuthDeps {
   verify: (token: string) => Promise<JWTPayload | null>;
-  refresh: (refreshToken: string) => Promise<RefreshedTokens | null>;
+  refresh: (refreshToken: string, clientIp?: string) => Promise<RefreshedTokens | null>;
 }
 
 // Seules ces routes sont accessibles sans compte.
@@ -42,10 +43,10 @@ const inFlight = new Map<string, Promise<RefreshedTokens | null>>();
  * Plusieurs requêtes d'une même page arrivent en parallèle avec le même refresh
  * token : un seul appel à l'API, sinon la rotation invaliderait les suivants.
  */
-function refreshOnce(refreshToken: string, deps: AuthDeps) {
+function refreshOnce(refreshToken: string, clientIp: string | undefined, deps: AuthDeps) {
   let pending = inFlight.get(refreshToken);
   if (!pending) {
-    pending = deps.refresh(refreshToken).catch(() => null);
+    pending = deps.refresh(refreshToken, clientIp).catch(() => null);
     inFlight.set(refreshToken, pending);
     setTimeout(() => inFlight.delete(refreshToken), REFRESH_DEDUPE_MS).unref?.();
   }
@@ -103,7 +104,8 @@ export async function authenticateRequest(
   if (payload && secondsLeft > REFRESH_MARGIN_SECONDS) return NextResponse.next();
 
   if (refresh) {
-    const tokens = await refreshOnce(refresh, deps);
+    const clientIp = firstForwardedIp(req.headers.get("x-forwarded-for"));
+    const tokens = await refreshOnce(refresh, clientIp, deps);
     if (tokens) return withTokens(req, tokens);
   }
 

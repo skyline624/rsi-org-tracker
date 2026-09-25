@@ -1,6 +1,6 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPost, apiPut, apiDelete } from "@/lib/api/client";
 
 export interface AdminUserDto {
@@ -34,9 +34,7 @@ export async function createAccountAction(input: {
   const session = await requireAdmin();
   if (!session) return { ok: false, error: "Réservé aux administrateurs." };
   try {
-    const user = await apiPost<AdminUserDto>("/api/admin/users", input, {
-      bearerToken: session.accessToken,
-    });
+    const user = await apiPost<AdminUserDto>("/api/admin/users", input, sessionCtx(session));
     return { ok: true, user };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
@@ -50,7 +48,7 @@ export async function deleteAccountAction(id: number): Promise<AccountResult> {
   const session = await requireAdmin();
   if (!session) return { ok: false, error: "Réservé aux administrateurs." };
   try {
-    await apiDelete(`/api/admin/users/${id}`, { bearerToken: session.accessToken });
+    await apiDelete(`/api/admin/users/${id}`, sessionCtx(session));
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };
@@ -64,9 +62,7 @@ export async function setUserFlagsAction(
   const session = await requireAdmin();
   if (!session) return { ok: false, error: "Réservé aux administrateurs." };
   try {
-    const user = await apiPut<AdminUserDto>(`/api/admin/users/${id}`, flags, {
-      bearerToken: session.accessToken,
-    });
+    const user = await apiPut<AdminUserDto>(`/api/admin/users/${id}`, flags, sessionCtx(session));
     return { ok: true, user };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };

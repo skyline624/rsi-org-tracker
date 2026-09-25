@@ -1,7 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPost } from "@/lib/api/client";
 import type { AuthResponse } from "@/lib/api/types";
 import {
@@ -30,7 +30,7 @@ export async function changePasswordAction(
     const auth = await apiPost<AuthResponse>(
       "/api/auth/change-password",
       { currentPassword, newPassword },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     const jar = await cookies();
     jar.set(COOKIE_ACCESS, auth.accessToken, accessCookieOptions(new Date(auth.expiresAt)));

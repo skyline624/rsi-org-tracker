@@ -12,10 +12,17 @@ import { authenticateRequest, type RefreshedTokens } from "@/lib/auth/request-au
 
 const API_BASE = process.env.API_BASE_URL ?? "http://127.0.0.1:5000";
 
-async function refreshWithApi(refreshToken: string): Promise<RefreshedTokens | null> {
+async function refreshWithApi(
+  refreshToken: string,
+  clientIp?: string,
+): Promise<RefreshedTokens | null> {
   const res = await fetch(`${API_BASE}/api/auth/refresh`, {
     method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(clientIp ? { "X-Forwarded-For": clientIp } : {}),
+    },
     body: JSON.stringify({ refreshToken }),
     cache: "no-store",
   });

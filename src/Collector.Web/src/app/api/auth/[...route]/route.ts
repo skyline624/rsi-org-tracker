@@ -6,6 +6,7 @@ import {
   refreshCookieOptions,
 } from "@/lib/auth/cookies";
 import type { AuthResponse } from "@/lib/api/types";
+import { firstForwardedIp } from "@/lib/api/client-ip";
 
 /**
  * BFF (Backend-for-Frontend) des routes `/api/auth/*`.
@@ -44,6 +45,10 @@ function proxyHeaders(req: NextRequest): HeadersInit {
   };
   const cid = req.headers.get("x-correlation-id");
   if (cid) h["X-Correlation-Id"] = cid;
+  // Vraie IP du client (posée par nginx) : l'API limite les tentatives de login
+  // par IP et la journalise.
+  const clientIp = firstForwardedIp(req.headers.get("x-forwarded-for"));
+  if (clientIp) h["X-Forwarded-For"] = clientIp;
   return h;
 }
 

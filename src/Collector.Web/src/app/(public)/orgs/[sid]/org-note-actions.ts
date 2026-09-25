@@ -1,6 +1,6 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPost, apiPut, apiDelete } from "@/lib/api/client";
 
 export interface OrgNoteDto {
@@ -28,7 +28,7 @@ export async function createOrgNoteAction(sid: string, body: string): Promise<Or
     const note = await apiPost<OrgNoteDto>(
       `/api/organizations/${encodeURIComponent(sid)}/notes`,
       { body: trimmed },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return { ok: true, note };
   } catch (e) {
@@ -45,7 +45,7 @@ export async function updateOrgNoteAction(id: number, body: string): Promise<Org
     const note = await apiPut<OrgNoteDto>(
       `/api/org-notes/${id}`,
       { body: trimmed },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return { ok: true, note };
   } catch (e) {
@@ -57,7 +57,7 @@ export async function deleteOrgNoteAction(id: number): Promise<OrgNoteActionResu
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
   try {
-    await apiDelete(`/api/org-notes/${id}`, { bearerToken: session.accessToken });
+    await apiDelete(`/api/org-notes/${id}`, sessionCtx(session));
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };

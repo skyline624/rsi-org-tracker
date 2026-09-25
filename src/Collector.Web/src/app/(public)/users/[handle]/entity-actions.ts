@@ -1,6 +1,6 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPut } from "@/lib/api/client";
 
 export interface TrackedEntityDto {
@@ -28,7 +28,7 @@ export async function setCitizenIdAction(handle: string, citizenId: number): Pro
     const entity = await apiPut<TrackedEntityDto>(
       `/api/users/${encodeURIComponent(handle)}/citizen-id`,
       { citizenId },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return { ok: true, entity };
   } catch (e) {

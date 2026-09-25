@@ -2,12 +2,15 @@ using Collector.Api.Data;
 using Collector.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 namespace Collector.Api.Controllers;
 
 [ApiController]
 [AllowAnonymous]
+// Probes (systemd health checks, deploy script) must never be throttled.
+[DisableRateLimiting]
 public class HealthController : ControllerBase
 {
     private static readonly DateTime _startTime = DateTime.UtcNow;

@@ -1,4 +1,4 @@
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api/client";
 import { CitizenIdPanel } from "./CitizenIdPanel";
 import { UexPanel } from "./UexPanel";
@@ -31,7 +31,7 @@ export async function UserAnnotations({
   const session = await getSession();
   if (!session) return null;
 
-  const opts = { bearerToken: session.accessToken };
+  const opts = sessionCtx(session);
   const [notes, audio, memberships, links, entity] = await Promise.all([
     apiGet<NoteDto[]>(`/api/users/${encodeURIComponent(handle)}/notes`, undefined, opts).catch(
       () => [] as NoteDto[],

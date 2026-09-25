@@ -1,6 +1,6 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPut } from "@/lib/api/client";
 
 export interface DiscordTokenResult {
@@ -14,7 +14,7 @@ export async function setDiscordTokenAction(token: string): Promise<DiscordToken
   const t = token.trim();
   if (t.length < 20) return { ok: false, error: "Token invalide (trop court)." };
   try {
-    await apiPut("/api/admin/discord-token", { token: t }, { bearerToken: session.accessToken });
+    await apiPut("/api/admin/discord-token", { token: t }, sessionCtx(session));
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec de l'enregistrement." };

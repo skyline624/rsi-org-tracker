@@ -48,6 +48,20 @@ describe("BFF /api/auth", () => {
     },
   );
 
+  it("forwards the client IP set by nginx to the API (login rate limit, audit log)", async () => {
+    stubUpstream(200, auth);
+    const req = new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username: "u", password: "p" }),
+      headers: { "x-forwarded-for": "203.0.113.7" },
+    });
+
+    await POST(req, { params: Promise.resolve({ route: ["login"] }) });
+
+    const init = vi.mocked(fetch).mock.calls[0]![1]!;
+    expect((init.headers as Record<string, string>)["X-Forwarded-For"]).toBe("203.0.113.7");
+  });
+
   it("logout clears the cookies and sends the browser back to /login", async () => {
     stubUpstream(200, { message: "Logged out" });
 

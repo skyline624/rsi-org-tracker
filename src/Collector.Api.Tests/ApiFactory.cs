@@ -41,6 +41,12 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__JwtSecret", LegacyJwtSecret);
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__Jwt__PrivateKeyPath", keyPath);
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__AdminApiKey", AdminApiKey);
+
+        // Every test client shares one partition (no peer address in TestServer); budgets
+        // are exercised by dedicated tests with their own limits.
+        Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__UserPermitLimit", "100000");
+        Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__AnonymousPermitLimit", "100000");
+        Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__Login__PermitLimit", "100000");
     }
 
     /// <summary>Logs in and returns the raw auth response body.</summary>

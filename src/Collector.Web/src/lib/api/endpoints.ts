@@ -28,7 +28,7 @@ import type {
   UserResolveDto,
 } from "./types";
 
-type Ctx = { bearerToken?: string };
+type Ctx = { bearerToken?: string; clientIp?: string };
 
 // ── Health ──────────────────────────────────────────────────
 export const getHealth = (ctx: Ctx = {}) =>

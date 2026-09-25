@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api/client";
 import { AccountsManager } from "./AccountsManager";
 import type { AdminUserDto } from "./actions";
@@ -13,7 +13,7 @@ export default async function AccountsPage() {
   const users = await apiGet<{ items: AdminUserDto[] }>(
     "/api/admin/users",
     { pageSize: 200 },
-    { bearerToken: session.accessToken },
+    sessionCtx(session),
   )
     .then((r) => r.items ?? [])
     .catch(() => [] as AdminUserDto[]);

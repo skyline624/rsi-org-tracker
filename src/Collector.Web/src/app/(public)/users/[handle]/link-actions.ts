@@ -1,6 +1,6 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet, apiPost, apiDelete } from "@/lib/api/client";
 
 export interface LinkDto {
@@ -30,7 +30,7 @@ export async function createLinkAction(
     const link = await apiPost<LinkDto>(
       `/api/users/${encodeURIComponent(handle)}/links`,
       { provider, value: v },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return { ok: true, link };
   } catch (e) {
@@ -42,7 +42,7 @@ export async function deleteLinkAction(id: number): Promise<LinkResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
   try {
-    await apiDelete(`/api/links/${id}`, { bearerToken: session.accessToken });
+    await apiDelete(`/api/links/${id}`, sessionCtx(session));
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };
@@ -61,7 +61,7 @@ export async function autoAddTwitchLinkAction(
   if (!session) return { added: false };
   const value = username.trim();
   if (!value) return { added: false };
-  const opts = { bearerToken: session.accessToken };
+  const opts = sessionCtx(session);
   try {
     const links = await apiGet<LinkDto[]>(
       `/api/users/${encodeURIComponent(handle)}/links`,

@@ -31,6 +31,11 @@ export interface FetchOptions {
   timeoutMs?: number;
   /** JWT explicite à passer (contexte Bearer). */
   bearerToken?: string;
+  /**
+   * IP du navigateur (X-Forwarded-For posé par nginx), relayée à l'API pour
+   * qu'elle limite le débit et journalise le vrai client plutôt que 127.0.0.1.
+   */
+  clientIp?: string;
 }
 
 function buildUrl(path: string, query?: FetchOptions["query"]): string {
@@ -58,6 +63,7 @@ export async function apiFetch<T>(
     signal,
     timeoutMs = 15_000,
     bearerToken,
+    clientIp,
   } = opts;
 
   const url = buildUrl(path, query);
@@ -75,6 +81,10 @@ export async function apiFetch<T>(
 
   if (bearerToken) {
     finalHeaders["Authorization"] = `Bearer ${bearerToken}`;
+  }
+
+  if (clientIp) {
+    finalHeaders["X-Forwarded-For"] = clientIp;
   }
 
   // Timeout via AbortController. Si un signal externe est fourni, on les

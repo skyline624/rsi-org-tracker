@@ -8,10 +8,11 @@
 
 import { redirect } from "next/navigation";
 import { ApiError } from "@/lib/api/errors";
-import { getSession } from "./session";
+import { getSession, sessionCtx } from "./session";
 
 export interface AuthCtx {
   bearerToken: string;
+  clientIp?: string;
 }
 
 function isUnauthorized(err: unknown): boolean {
@@ -22,7 +23,7 @@ function isUnauthorized(err: unknown): boolean {
 export async function requireAuthCtx(): Promise<AuthCtx> {
   const session = await getSession();
   if (!session) redirect("/login");
-  return { bearerToken: session.accessToken };
+  return sessionCtx(session);
 }
 
 /** Attend `promise` ; un 401 de l'API devient une redirection vers /login. */

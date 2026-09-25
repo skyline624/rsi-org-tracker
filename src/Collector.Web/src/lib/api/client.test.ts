@@ -28,6 +28,15 @@ describe("apiFetch", () => {
     expect(Object.keys(headers).map((h) => h.toLowerCase())).not.toContain("x-api-key");
   });
 
+  it("passes the browser's IP to the API so it can rate-limit and log the real client", async () => {
+    const fetchMock = stubFetch();
+
+    await apiFetch("/api/organizations", { bearerToken: "t", clientIp: "203.0.113.7" });
+
+    const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    expect(headers["X-Forwarded-For"]).toBe("203.0.113.7");
+  });
+
   it("forwards the caller's bearer token", async () => {
     const fetchMock = stubFetch();
 

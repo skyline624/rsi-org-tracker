@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const setCookie = vi.fn();
 vi.mock("next/headers", () => ({ cookies: async () => ({ set: setCookie }) }));
-vi.mock("@/lib/auth/session", () => ({
+vi.mock("@/lib/auth/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/session")>()),
   getSession: vi.fn(async () => ({ userId: 1, username: "pilot", isAdmin: false, accessToken: "old" })),
 }));
 vi.mock("@/lib/api/client", () => ({ apiPost: vi.fn() }));

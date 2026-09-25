@@ -6,6 +6,7 @@ vi.mock("next/headers", () => ({
     get: (name: string) =>
       cookieValues.has(name) ? { name, value: cookieValues.get(name)! } : undefined,
   }),
+  headers: async () => new Headers({ "x-forwarded-for": "203.0.113.7" }),
 }));
 vi.mock("./jwt", () => ({ verifyAccessToken: vi.fn() }));
 
@@ -50,6 +51,7 @@ describe("getSession", () => {
       username: "pilot",
       isAdmin: true,
       accessToken: "signed-token",
+      clientIp: "203.0.113.7",
     });
   });
 

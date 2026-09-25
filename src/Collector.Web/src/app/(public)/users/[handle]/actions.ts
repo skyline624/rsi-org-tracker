@@ -1,6 +1,6 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPost, apiPut, apiDelete } from "@/lib/api/client";
 
 export interface NoteDto {
@@ -28,7 +28,7 @@ export async function createNoteAction(handle: string, body: string): Promise<No
     const note = await apiPost<NoteDto>(
       `/api/users/${encodeURIComponent(handle)}/notes`,
       { body: trimmed },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return { ok: true, note };
   } catch (e) {
@@ -45,7 +45,7 @@ export async function updateNoteAction(id: number, body: string): Promise<NoteAc
     const note = await apiPut<NoteDto>(
       `/api/notes/${id}`,
       { body: trimmed },
-      { bearerToken: session.accessToken },
+      sessionCtx(session),
     );
     return { ok: true, note };
   } catch (e) {
@@ -57,7 +57,7 @@ export async function deleteNoteAction(id: number): Promise<NoteActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
   try {
-    await apiDelete(`/api/notes/${id}`, { bearerToken: session.accessToken });
+    await apiDelete(`/api/notes/${id}`, sessionCtx(session));
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };

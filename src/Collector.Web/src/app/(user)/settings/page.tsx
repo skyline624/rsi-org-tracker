@@ -1,6 +1,6 @@
 import { HudPanel } from "@/components/hud/HudPanel";
 import { HudBadge } from "@/components/hud/HudBadge";
-import { getSession } from "@/lib/auth/session";
+import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils/format";
 import { ChangePasswordForm } from "./ChangePasswordForm";
@@ -11,9 +11,7 @@ export default async function SettingsPage() {
   if (!session) return null; // layout already redirects
 
   const discordConfigured = session.isAdmin
-    ? await apiGet<{ configured: boolean }>("/api/admin/discord-token", undefined, {
-        bearerToken: session.accessToken,
-      })
+    ? await apiGet<{ configured: boolean }>("/api/admin/discord-token", undefined, sessionCtx(session))
         .then((r) => r.configured)
         .catch(() => false)
     : false;
