@@ -84,10 +84,3 @@ export async function getSession(): Promise<Session | null> {
 export function sessionCtx(session: Session) {
   return { bearerToken: session.accessToken, clientIp: session.clientIp };
 }
-
-/** Raccourci : force une session. À utiliser dans les layouts authentifiés. */
-export async function requireSession(): Promise<Session> {
-  const s = await getSession();
-  if (!s) throw new Error("Unauthorized");
-  return s;
-}

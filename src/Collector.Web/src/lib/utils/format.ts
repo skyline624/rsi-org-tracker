@@ -23,17 +23,6 @@ export function formatDate(d: string | Date): string {
   }).format(date);
 }
 
-export function formatDateTime(d: string | Date): string {
-  const date = typeof d === "string" ? new Date(d) : d;
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
 /** "2 min ago" — short relative time. */
 export function formatRelative(d: string | Date): string {
   const date = typeof d === "string" ? new Date(d) : d;

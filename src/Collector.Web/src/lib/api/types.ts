@@ -57,13 +57,6 @@ export interface UserHandleHistoryDto {
   lastSeen: string;
 }
 
-export interface UserResolveDto {
-  citizenId: number;
-  currentHandle: string;
-  requestedHandle?: string;
-  handleChanged: boolean;
-}
-
 // ── Organizations ───────────────────────────────────────────
 export interface OrganizationDto {
   sid: string;
@@ -159,19 +152,4 @@ export interface CycleStatusDto {
   queue_stuck: number;
   last_member_collection: { org_sid: string; at: string } | null;
   discovered_orgs: number;
-}
-
-// ── ApiKeys ─────────────────────────────────────────────────
-export interface ApiKeyDto {
-  id: number;
-  name: string;
-  keyPrefix: string;
-  createdAt: string;
-  lastUsedAt?: string | null;
-  expiresAt?: string | null;
-  isRevoked: boolean;
-}
-
-export interface CreatedApiKeyDto extends ApiKeyDto {
-  rawKey: string;
 }

@@ -3,14 +3,12 @@
  * TanStack Query. Le serveur passe le JWT de l'utilisateur (`{ bearerToken }`).
  */
 
-import { apiDelete, apiGet, apiPost, apiPut } from "./client";
+import { apiGet, apiPost } from "./client";
 import type {
-  ApiKeyDto,
   ArchetypeStatsDto,
   AuthResponse,
   ChangeEventDto,
   ChangeSummaryDto,
-  CreatedApiKeyDto,
   CycleStatusDto,
   GrowthDataPoint,
   LoginRequest,
@@ -24,14 +22,11 @@ import type {
   UserDto,
   UserHandleHistoryDto,
   UserProfileDto,
-  UserResolveDto,
 } from "./types";
 
 type Ctx = { bearerToken?: string; clientIp?: string };
 
 // ── Health ──────────────────────────────────────────────────
-export const getHealth = (ctx: Ctx = {}) =>
-  apiGet<{ status: string }>("/api/health", undefined, ctx);
 export const getCycleStatus = (ctx: Ctx = {}) =>
   apiGet<CycleStatusDto>("/api/health/cycle", undefined, ctx);
 
@@ -130,16 +125,6 @@ export const getUser = (handle: string, ctx: Ctx = {}) =>
     ctx,
   );
 
-export const getUserByCitizenId = (id: number, ctx: Ctx = {}) =>
-  apiGet<UserProfileDto>(`/api/users/by-citizen-id/${id}`, undefined, ctx);
-
-export const resolveUser = (handle: string, ctx: Ctx = {}) =>
-  apiGet<UserResolveDto>(
-    `/api/users/resolve/${encodeURIComponent(handle)}`,
-    undefined,
-    ctx,
-  );
-
 export const getUserOrgs = (
   handle: string,
   include_inactive = false,
@@ -188,13 +173,3 @@ export const logout = (refreshToken: string) =>
   apiPost<{ message: string }>("/api/auth/logout", { refreshToken });
 export const me = (bearerToken: string) =>
   apiGet<UserDto>("/api/auth/me", undefined, { bearerToken });
-
-// ── ApiKeys ─────────────────────────────────────────────────
-export const listApiKeys = (bearerToken: string) =>
-  apiGet<ApiKeyDto[]>("/api/api-keys", undefined, { bearerToken });
-export const createApiKey = (
-  body: { name: string; expiresAt?: string },
-  bearerToken: string,
-) => apiPost<CreatedApiKeyDto>("/api/api-keys", body, { bearerToken });
-export const revokeApiKey = (id: number, bearerToken: string) =>
-  apiDelete<void>(`/api/api-keys/${id}`, { bearerToken });
