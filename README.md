@@ -152,19 +152,23 @@ ssh serv_ovh 'sudo systemctl stop sc-collector'
 ssh serv_ovh 'cd ~/collector-dotnet/bin/data && sqlite3 tracker.db "PRAGMA busy_timeout=30000; PRAGMA wal_checkpoint(TRUNCATE);"'
 
 # Une transaction de lecture ouverte empêche tout checkpoint de réécrire le fichier
-# pendant la copie (l'API peut continuer à écrire dans le WAL).
-ssh serv_ovh 'cd ~/collector-dotnet/bin/data && nohup sh -c "(echo \"BEGIN; SELECT count(*) FROM sqlite_master;\"; sleep 7200) | sqlite3 tracker.db" >/dev/null 2>&1 & echo $! > /tmp/sc-backup-holder.pid'
+# pendant la copie (l'API peut continuer à écrire dans le WAL). setsid en fait un
+# groupe de processus à part : le PID noté est celui du groupe (sh, sqlite3, sleep).
+ssh serv_ovh 'cd ~/collector-dotnet/bin/data && nohup setsid sh -c "(echo \"BEGIN; SELECT count(*) FROM sqlite_master;\"; sleep 7200) | sqlite3 tracker.db" >/dev/null 2>&1 & echo $! > /tmp/sc-backup-holder.pid'
 
 ssh serv_ovh 'cd ~/collector-dotnet/bin/data && cat tracker.db | tee >(sha256sum > /tmp/tracker.db.sha256) | pigz -6 -p 3' \
   | gunzip > backup/tracker.db
 sha256sum backup/tracker.db; ssh serv_ovh cat /tmp/tracker.db.sha256   # les deux doivent être identiques
 scp serv_ovh:collector-dotnet/bin/data/api.db backup/
 
-ssh serv_ovh 'kill $(cat /tmp/sc-backup-holder.pid); sudo systemctl start sc-collector'
+# "-" devant le PID : tout le groupe. Tuer le seul sh laisserait sqlite3 tenir sa
+# transaction, et le WAL grossirait jusqu'à 2 h après le redémarrage du collector.
+ssh serv_ovh 'kill -- -$(cat /tmp/sc-backup-holder.pid); sudo systemctl start sc-collector'
+ssh serv_ovh 'pgrep -a sqlite3 || echo "plus de porteur de verrou"'
 ```
 
-Compter environ 1 h pour 25 Go selon le débit. Tuer le porteur de verrou par son PID
-enregistré, jamais par motif (`pkill -f` peut viser la session SSH elle-même).
+Compter environ 1 h pour 25 Go selon le débit. Tuer le porteur de verrou par son
+groupe enregistré, jamais par motif (`pkill -f` peut viser la session SSH elle-même).
 
 ## Variables d'environnement
 
