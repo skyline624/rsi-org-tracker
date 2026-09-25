@@ -2,29 +2,27 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Collector.Api.Auth;
 using Collector.Api.Models;
-using Microsoft.IdentityModel.Tokens;
 
 namespace Collector.Api.Services;
 
 public class TokenService
 {
     private readonly IConfiguration _configuration;
+    private readonly JwtKeyProvider _keys;
 
-    public TokenService(IConfiguration configuration)
+    public TokenService(IConfiguration configuration, JwtKeyProvider keys)
     {
         _configuration = configuration;
+        _keys = keys;
     }
 
     public (string token, DateTime expiresAt) GenerateAccessToken(ApiUser user)
     {
-        var secret = _configuration["Api:JwtSecret"]!;
         var issuer = _configuration["Api:JwtIssuer"] ?? "sc-tracker-api";
         var audience = _configuration["Api:JwtAudience"] ?? "sc-tracker-clients";
         var minutes = _configuration.GetValue("Api:AccessTokenMinutes", 15);
-
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var expiresAt = DateTime.UtcNow.AddMinutes(minutes);
 
         var claims = new List<Claim>
@@ -42,7 +40,7 @@ public class TokenService
             audience: audience,
             claims: claims,
             expires: expiresAt,
-            signingCredentials: creds);
+            signingCredentials: _keys.SigningCredentials);
 
         return (new JwtSecurityTokenHandler().WriteToken(token), expiresAt);
     }

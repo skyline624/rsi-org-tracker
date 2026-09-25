@@ -34,6 +34,12 @@ public class AuthController : ControllerBase
         return Ok(loginResult);
     }
 
+    // Public key set used by the web front to verify access tokens (RS256).
+    [AllowAnonymous]
+    [HttpGet("jwks")]
+    public IActionResult Jwks([FromServices] JwtKeyProvider keys) =>
+        Ok(new { keys = new[] { keys.PublicJwk } });
+
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request, CancellationToken ct)
     {

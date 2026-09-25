@@ -23,19 +23,11 @@ public static class ServiceCollectionExtensions
         services.AddDbContext<ApiDbContext>(options =>
             options.UseSqlite($"Data Source={dbPath}"));
 
-        // Auth — both secrets are mandatory, must meet a minimum entropy floor, and must
-        // NOT be the legacy "change-me-…" placeholders. We fail fast at startup rather
-        // than silently booting with a weak key.
-        var jwtSecret = configuration["Api:JwtSecret"];
-        if (string.IsNullOrWhiteSpace(jwtSecret))
-            throw new InvalidOperationException(
-                "Api:JwtSecret is not configured. Set it via user-secrets " +
-                "(dotnet user-secrets set \"Api:JwtSecret\" <value>) or the " +
-                "COLLECTOR_API_Api__JwtSecret environment variable.");
-        if (jwtSecret.Length < 32)
-            throw new InvalidOperationException("Api:JwtSecret must be at least 32 characters (256 bits).");
-        if (jwtSecret.StartsWith("change-me", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Api:JwtSecret still uses the default placeholder value; rotate it.");
+        // Auth — the RSA signing key and the admin key are mandatory, must meet a minimum
+        // strength floor, and the admin key must NOT be a legacy "change-me-…" placeholder.
+        // We fail fast at startup rather than silently booting with a weak key.
+        var jwtKeys = JwtKeyProvider.FromConfiguration(configuration);
+        services.AddSingleton(jwtKeys);
 
         var adminKey = configuration["Api:AdminApiKey"];
         if (string.IsNullOrWhiteSpace(adminKey))
@@ -66,7 +58,8 @@ public static class ServiceCollectionExtensions
                     ValidateIssuerSigningKey = true,
                     ValidIssuer = issuer,
                     ValidAudience = audience,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+                    IssuerSigningKey = jwtKeys.PublicKey,
+                    ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
                     ClockSkew = TimeSpan.FromSeconds(30),
                 };
             })
