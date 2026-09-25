@@ -16,7 +16,7 @@ namespace Collector.Services;
 /// </summary>
 /// <param name="Enriched">Profiles genuinely written to the users table.</param>
 /// <param name="Gone">Handles that 404'd and were parked (never retried again).</param>
-/// <param name="Deferred">Live "n/a" profiles pushed to the back without spending an attempt.</param>
+/// <param name="Deferred">Live "n/a" profiles, checked again in 14 days without spending an attempt.</param>
 /// <param name="Failed">Transient/unparseable rows that spent a retry attempt.</param>
 public readonly record struct EnrichBatchResult(int Enriched, int Gone, int Deferred, int Failed)
 {
@@ -89,7 +89,7 @@ public class UserCollector : IUserCollector
     public async Task<EnrichBatchResult> EnrichBatchAsync(CancellationToken ct = default)
     {
         var fetchBatchSize = Math.Max(1, _options.MaxConcurrentRequests) * 2;
-        var pending = await _queueRepo.GetPendingAsync(fetchBatchSize, _options.MaxEnrichmentAttempts, ct);
+        var pending = await _queueRepo.GetPendingAsync(fetchBatchSize, DateTime.UtcNow, ct);
         if (pending.Count == 0) return default;
 
         ct.ThrowIfCancellationRequested();
@@ -103,9 +103,9 @@ public class UserCollector : IUserCollector
 
         // ── Process results sequentially (EF Core DbContext not thread-safe) ──
         var enriched = 0;   // genuinely written to the users table
-        var gone = 0;       // 404 — parked, never retried again
-        var deferred = 0;   // live but "n/a" — pushed to the back, no attempt spent
-        var failed = 0;     // transient/unparseable — counts towards the retry cap
+        var gone = 0;       // 404 — settled, never retried
+        var deferred = 0;   // live but "n/a" — checked again in 14 days, no attempt spent
+        var failed = 0;     // transient/unparseable — retried after a backoff, up to the cap
         for (int i = 0; i < pending.Count; i++)
         {
             var item = pending[i];
@@ -118,13 +118,14 @@ public class UserCollector : IUserCollector
                     case UserProfileFetchOutcome.NotFound:
                         // 404 → handle is gone or renamed. Stop retrying immediately
                         // instead of burning MaxEnrichmentAttempts fetches on a dead URL.
-                        await _queueRepo.MarkGoneAsync(item.Id, "Gone (HTTP 404)", ct);
+                        await _queueRepo.MarkGoneAsync(item.Id, "Gone (HTTP 404)", DateTime.UtcNow, ct);
                         gone++;
                         break;
 
                     case UserProfileFetchOutcome.Failed:
                         // Transient (Cloudflare 403/429, network, retries exhausted) — retry.
-                        await _queueRepo.IncrementAttemptAsync(item.Id, "Fetch failed (throttle/network)", ct);
+                        await _queueRepo.RecordFailureAsync(item.Id, "Fetch failed (throttle/network)",
+                            _options.MaxEnrichmentAttempts, DateTime.UtcNow, ct);
                         failed++;
                         break;
 
@@ -133,20 +134,21 @@ public class UserCollector : IUserCollector
                         if (parsed.Outcome == ProfileParseOutcome.Success
                             && await EnrichUserCoreAsync(item.UserHandle, item.Priority >= 1, parsed.Data!, ct))
                         {
-                            await _queueRepo.MarkEnrichedAsync(item.Id, ct);
+                            await _queueRepo.MarkEnrichedAsync(item.Id, DateTime.UtcNow, ct);
                             enriched++;
                         }
                         else if (parsed.Outcome == ProfileParseOutcome.NoCitizenNumber)
                         {
                             // Live profile that simply has no UEE Citizen Record yet
-                            // ("n/a"). Not a failure: defer for a later pass instead of
+                            // ("n/a"). Not a failure: checked again later without
                             // counting an attempt, so we never permanently abandon it.
-                            await _queueRepo.DeferAsync(item.Id, "No citizen record (n/a)", ct);
+                            await _queueRepo.DeferAsync(item.Id, "No citizen record (n/a)", DateTime.UtcNow, ct);
                             deferred++;
                         }
                         else
                         {
-                            await _queueRepo.IncrementAttemptAsync(item.Id, "Profile parse error", ct);
+                            await _queueRepo.RecordFailureAsync(item.Id, "Profile parse error",
+                                _options.MaxEnrichmentAttempts, DateTime.UtcNow, ct);
                             failed++;
                         }
                         break;
@@ -159,7 +161,7 @@ public class UserCollector : IUserCollector
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unexpected error enriching user {Handle}", item.UserHandle);
-                await _queueRepo.IncrementAttemptAsync(item.Id, ex.Message, ct);
+                await _queueRepo.RecordFailureAsync(item.Id, ex.Message, _options.MaxEnrichmentAttempts, DateTime.UtcNow, ct);
                 failed++;
             }
         }

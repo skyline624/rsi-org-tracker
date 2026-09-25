@@ -29,7 +29,7 @@ public sealed class MemberCollectorTests : IAsyncLifetime
 
     private static MemberCollectionResult Roster(RosterStatus status, int totalRows, params string[] handles)
         => new(status,
-            handles.Select(h => new MemberData { OrgSid = "", Handle = h, Rank = "Pilot", Stars = 3 }).ToList(),
+            handles.Select(h => new MemberData { OrgSid = "", Handle = h, DisplayName = $"Shown {h}", Rank = "Pilot", Stars = 3 }).ToList(),
             totalRows, RawRows: totalRows, RedactedRows: 0, HiddenRows: totalRows - handles.Length);
 
     public async Task InitializeAsync()
@@ -306,6 +306,54 @@ public sealed class MemberCollectorTests : IAsyncLifetime
         var (_, check) = Create();
         (await check.MemberCollectionLogs.AsNoTracking().Where(l => l.OrgSid == "LEGACY" && l.CollectionTime > before)
             .Select(l => l.ParserVersion).Distinct().ToListAsync()).Should().Equal(MemberHtmlParser.Version);
+    }
+
+    [Fact]
+    public async Task OnlyUnknownNewcomers_AreQueued_KnownCitizensNeverForTheirDisplayName()
+    {
+        await SeedUserAsync("alpha", 101);
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "newbie");
+
+        await CollectAsync("QUEUE");
+        await CollectAsync("QUEUE");
+
+        (await QueueAsync()).Should().Equal(("newbie", 1));
+    }
+
+    [Fact]
+    public async Task AnOrphan_IsRequeuedAtLowPriority_UnlessItRecentlyWentGone()
+    {
+        _roster = _ => Roster(RosterStatus.Complete, 1, "ghost");
+        await CollectAsync("ORPHAN");
+        await SettleAsync("ghost", DateTime.UtcNow.AddDays(-2));
+
+        await CollectAsync("ORPHAN");
+        (await QueueAsync()).Should().BeEmpty("it answered 404 two days ago");
+
+        await SettleAsync("ghost", DateTime.UtcNow.AddDays(-40));
+        await CollectAsync("ORPHAN");
+        (await QueueAsync()).Should().Equal(("ghost", 0));
+    }
+
+    /// <summary>Pending queue rows as (handle, priority).</summary>
+    private async Task<List<(string, int)>> QueueAsync()
+    {
+        var (_, db) = Create();
+        return (await db.UserEnrichmentQueue.AsNoTracking().Where(q => !q.Enriched).OrderBy(q => q.UserHandle).ToListAsync())
+            .Select(q => (q.UserHandle, q.Priority)).ToList();
+    }
+
+    /// <summary>Settles every row of the handle as gone at <paramref name="when"/>.</summary>
+    private async Task SettleAsync(string handle, DateTime when)
+    {
+        var (_, db) = Create();
+        foreach (var row in await db.UserEnrichmentQueue.Where(q => q.UserHandle == handle).ToListAsync())
+        {
+            row.Enriched = true;
+            row.Outcome = EnrichmentOutcome.Gone;
+            row.EnrichedAt = when;
+        }
+        await db.SaveChangesAsync();
     }
 
     private async Task SeedUserAsync(string handle, int citizenId)

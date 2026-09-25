@@ -2,44 +2,52 @@ using Collector.Models;
 
 namespace Collector.Data.Repositories;
 
+/// <summary>
+/// The Phase 4 queue. A row is pending (Enriched = 0) until it reaches a terminal
+/// outcome: enriched, gone or abandoned (Enriched = 1, see <see cref="EnrichmentOutcome"/>).
+/// A pending row is due once its NextAttemptAt has passed.
+/// </summary>
 public interface IUserEnrichmentQueueRepository : IRepository<UserEnrichmentQueue>
 {
-    Task<IReadOnlyList<UserEnrichmentQueue>> GetPendingAsync(int limit = 100, int maxAttempts = int.MaxValue, CancellationToken ct = default);
-    Task MarkEnrichedAsync(long id, CancellationToken ct = default);
-    Task IncrementAttemptAsync(long id, string? error, CancellationToken ct = default);
+    /// <summary>Due rows, highest priority then oldest first.</summary>
+    Task<IReadOnlyList<UserEnrichmentQueue>> GetPendingAsync(int limit, DateTime now, CancellationToken ct = default);
+
+    /// <summary>Number of due rows; Phase4Worker uses it to choose between idling and draining.</summary>
+    Task<int> CountPendingAsync(DateTime now, CancellationToken ct = default);
+
+    Task MarkEnrichedAsync(long id, DateTime now, CancellationToken ct = default);
+
+    /// <summary>The profile answered 404: stop, and free the handle for a later queueing.</summary>
+    Task MarkGoneAsync(long id, string? reason, DateTime now, CancellationToken ct = default);
 
     /// <summary>
-    /// Permanently stops retrying a handle that 404'd (gone/renamed on RSI). The row
-    /// is parked so <see cref="GetPendingAsync"/> never returns it again, without
-    /// counting as "enriched".
+    /// Live profile without a citizen record ("n/a"): checked again after
+    /// <see cref="UserEnrichmentQueueRepository.NoCitizenRecordRetry"/>, without spending an attempt.
     /// </summary>
-    Task MarkGoneAsync(long id, string? reason, CancellationToken ct = default);
+    Task DeferAsync(long id, string? reason, DateTime now, CancellationToken ct = default);
 
     /// <summary>
-    /// Soft-defers a handle that is live but currently has no citizen_id ("n/a"):
-    /// moves it to the BACK of the queue WITHOUT spending a retry attempt, so it
-    /// stays eligible for a future pass (the person may gain a citizen_id later)
-    /// instead of being abandoned after <c>MaxEnrichmentAttempts</c>.
+    /// Transient failure: retried after a growing delay, abandoned at
+    /// <paramref name="maxAttempts"/> attempts.
     /// </summary>
-    Task DeferAsync(long id, string? reason, CancellationToken ct = default);
+    Task RecordFailureAsync(long id, string? error, int maxAttempts, DateTime now, CancellationToken ct = default);
 
     /// <summary>
-    /// Counts entries with Enriched=0 and AttemptCount &lt; <paramref name="maxAttempts"/>.
-    /// Used by Phase4Worker to decide between idle and drain.
-    /// </summary>
-    Task<int> CountPendingAsync(int maxAttempts = int.MaxValue, CancellationToken ct = default);
-
-    /// <summary>
-    /// Returns the subset of <paramref name="handles"/> that currently have a row
-    /// with Enriched=0. Used by collectors to skip enqueueing handles that are
-    /// already pending (avoids redundant INSERT OR IGNORE round-trips).
+    /// The subset of <paramref name="handles"/> that currently have a pending row.
+    /// Collectors use it to skip handles already queued.
     /// </summary>
     Task<IReadOnlyList<string>> GetPendingHandlesInAsync(IReadOnlyList<string> handles, CancellationToken ct = default);
 
     /// <summary>
-    /// Inserts queue entries, silently skipping any handle that already has an active
-    /// pending row (thanks to the partial unique index). Returns the number of rows
-    /// actually written. Safe against concurrent inserters.
+    /// The subset of <paramref name="handles"/> that went gone or abandoned since
+    /// <paramref name="since"/>: queueing them again would only repeat that outcome.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetRecentlySettledHandlesInAsync(
+        IReadOnlyCollection<string> handles, DateTime since, CancellationToken ct = default);
+
+    /// <summary>
+    /// Inserts queue entries in one transaction, silently skipping any handle that
+    /// already has a pending row (partial unique index). Returns the rows written.
     /// </summary>
     Task<int> InsertPendingIgnoreDuplicatesAsync(IReadOnlyList<UserEnrichmentQueue> items, CancellationToken ct = default);
 }

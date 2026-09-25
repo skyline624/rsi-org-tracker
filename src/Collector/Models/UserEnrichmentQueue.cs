@@ -41,4 +41,10 @@ public class UserEnrichmentQueue
     /// Last error message (if any).
     /// </summary>
     public string? LastError { get; set; }
+
+    /// <summary>Not attempted again before this time; null means as soon as possible.</summary>
+    public DateTime? NextAttemptAt { get; set; }
+
+    /// <summary>Last outcome (see <see cref="EnrichmentOutcome"/>); null on older rows.</summary>
+    public string? Outcome { get; set; }
 }

@@ -57,8 +57,7 @@ public class Phase4Worker : BackgroundService
                 var queueRepo = scope.ServiceProvider.GetRequiredService<IUserEnrichmentQueueRepository>();
                 var userCollector = scope.ServiceProvider.GetRequiredService<IUserCollector>();
 
-                var pending = await queueRepo.CountPendingAsync(
-                    _options.MaxEnrichmentAttempts, stoppingToken);
+                var pending = await queueRepo.CountPendingAsync(DateTime.UtcNow, stoppingToken);
 
                 if (pending < _options.Phase4MinPendingThreshold)
                 {

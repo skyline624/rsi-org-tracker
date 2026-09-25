@@ -17,29 +17,6 @@ public class UserRepository : Repository<User>, IUserRepository
         return await DbSet.FirstOrDefaultAsync(u => u.UserHandle == handle, ct);
     }
 
-    public async Task<Dictionary<string, string?>> GetDisplayNamesByHandlesAsync(IReadOnlyList<string> handles, CancellationToken ct = default)
-    {
-        if (handles.Count == 0) return new(StringComparer.OrdinalIgnoreCase);
-
-        // A handle can map to MORE THAN ONE users row — handle reuse between two
-        // citizens (UserHandle is not unique; only CitizenId is), or case variants
-        // colliding under the OrdinalIgnoreCase key. Dedupe to the most-recently
-        // updated row instead of letting ToDictionary throw on the duplicate key,
-        // which used to abort member collection for any org containing such a
-        // handle (e.g. "Harion", "Gallus").
-        var rows = await DbSet
-            .Where(u => handles.Contains(u.UserHandle))
-            .Select(u => new { u.UserHandle, u.DisplayName, u.UpdatedAt })
-            .ToListAsync(ct);
-
-        return rows
-            .GroupBy(r => r.UserHandle, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                g => g.Key,
-                g => g.OrderByDescending(r => r.UpdatedAt).First().DisplayName,
-                StringComparer.OrdinalIgnoreCase);
-    }
-
     public async Task<Dictionary<string, int>> GetCitizenIdsByHandlesAsync(
         IReadOnlyCollection<string> handles, CancellationToken ct = default)
     {

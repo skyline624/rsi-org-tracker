@@ -28,5 +28,8 @@ public class UserEnrichmentQueueConfiguration : IEntityTypeConfiguration<UserEnr
 
         builder.Property(q => q.LastError)
             .HasMaxLength(2000);
+
+        builder.Property(q => q.Outcome)
+            .HasMaxLength(20);
     }
 }

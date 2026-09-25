@@ -50,4 +50,10 @@ public class DiscoveredOrganization
     /// (never collected first), so an interrupted cycle resumes where it stopped.
     /// </summary>
     public DateTime? LastMembersCollectedAt { get; set; }
+
+    /// <summary>
+    /// When Phase 2 last read the org page. Its content is only stored as a new
+    /// snapshot when it changed; the check itself is recorded here.
+    /// </summary>
+    public DateTime? ContentCheckedAt { get; set; }
 }

@@ -45,6 +45,9 @@ public class MemberCollector : IMemberCollector
     private readonly ILogger<MemberCollector> _logger;
     private readonly CollectorOptions _options;
 
+    /// <summary>A handle that ended gone or abandoned is not queued again before this delay.</summary>
+    private static readonly TimeSpan RequeueCooldown = TimeSpan.FromDays(30);
+
     public MemberCollector(
         IRsiApiClient apiClient,
         IOrganizationRepository orgRepo,
@@ -205,7 +208,6 @@ public class MemberCollector : IMemberCollector
         // Look up display names BEFORE opening the transaction — this can touch ~400k
         // rows of the users table on SQLite and we don't want it holding a write lock.
         var memberHandles = members.Select(m => m.Handle).ToList();
-        var knownByHandle = await _userRepo.GetDisplayNamesByHandlesAsync(memberHandles, ct);
 
         // Skip handles already pending in the enrichment queue. Without this,
         // the orphan-rescue branch below would re-INSERT-OR-IGNORE every
@@ -253,48 +255,26 @@ public class MemberCollector : IMemberCollector
         // atomically drop anything that already has a pending row.
         // knownByHandle is keyed only by handles that actually exist in the users
         // table — absence from this dict means the member has never been enriched.
-        var toQueue = new List<UserEnrichmentQueue>();
-        foreach (var member in members)
-        {
-            // Already pending — Phase4Worker will pick it up; skip the redundant insert.
-            if (pendingSet.Contains(member.Handle)) continue;
-
-            if (newHandleSet.Contains(member.Handle))
+        // Only members whose citizen is unknown go to Phase 4: a newcomer first
+        // (priority 1, Phase 4 tells a new player from a renamed one), else an orphan
+        // seen before but never identified (priority 0). A known citizen is never
+        // re-read for a display name difference (roster and profile names differ by
+        // nature, which used to re-queue most members every cycle), and a handle that
+        // recently ended gone or abandoned is left alone.
+        var unknown = members.Where(m => !citizenIds.ContainsKey(m.Handle) && !pendingSet.Contains(m.Handle)).ToList();
+        var recentlySettled = (await _enrichmentQueueRepo.GetRecentlySettledHandlesInAsync(
+                unknown.Select(m => m.Handle).ToList(), timestamp - RequeueCooldown, ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var toQueue = unknown
+            .Where(m => !recentlySettled.Contains(m.Handle))
+            .Select(m => new UserEnrichmentQueue
             {
-                toQueue.Add(new UserEnrichmentQueue
-                {
-                    UserHandle = member.Handle,
-                    Priority = 1,
-                    Enriched = false,
-                    QueuedAt = timestamp
-                });
-            }
-            else if (knownByHandle.TryGetValue(member.Handle, out var knownDisplayName))
-            {
-                if (knownDisplayName != member.DisplayName)
-                {
-                    toQueue.Add(new UserEnrichmentQueue
-                    {
-                        UserHandle = member.Handle,
-                        Priority = 0,
-                        Enriched = false,
-                        QueuedAt = timestamp
-                    });
-                }
-            }
-            else
-            {
-                // Orphan: seen before as a member but never successfully enriched.
-                // Re-queue at low priority so Phase 4 eventually catches up.
-                toQueue.Add(new UserEnrichmentQueue
-                {
-                    UserHandle = member.Handle,
-                    Priority = 0,
-                    Enriched = false,
-                    QueuedAt = timestamp
-                });
-            }
-        }
+                UserHandle = m.Handle,
+                Priority = newHandleSet.Contains(m.Handle) ? 1 : 0,
+                Enriched = false,
+                QueuedAt = timestamp
+            })
+            .ToList();
 
         // ── STEP 2 — atomic write of member snapshots, logs, change events,
         //             AND the deactivation of the previous snapshot. All or nothing. ──
