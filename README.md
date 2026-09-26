@@ -96,7 +96,8 @@ Modes ponctuels du collector (`dotnet run --project src/Collector -- <mode>`) :
 | Mode | Effet |
 |---|---|
 | `--single-run [--skip-phase2]` | un cycle (phases 1 à 3), puis sortie |
-| `--integrity-check [--sample N]` | compare N organisations stockées avec RSI |
+| `--integrity-check [--sample N] [--since <date UTC>]` | relit sur RSI un échantillon de N fiches d'org, N rosters et N profils lus depuis la date (7 jours par défaut) et liste les écarts (requêtes RSI : quelques centaines au plus) |
+| `--maintenance verify [--since <date UTC>]` | contrôles de cohérence en lecture seule de ce qui a été écrit depuis la date (rosters, compteurs, événements, instantanés, citoyens, file) ; possible pendant que le collector tourne ; code de sortie 2 si un contrôle échoue |
 | `--backfill-enrichment-queue` | met en file les membres jamais identifiés |
 | `--repair-corrupted-handles` | répare les handles mal lus par l'ancien parser |
 | `--maintenance measure \| check \| purge <cible> [--dry-run] [--batch N]` | mesures, `quick_check`, purges par lots (voir `deploy/README.md`) |

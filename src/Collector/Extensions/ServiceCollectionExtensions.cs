@@ -120,6 +120,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IStorageProbe>(new FileStorageProbe(Path.Combine(dataDir, "tracker.db")));
         services.AddScoped<MaintenanceService>();
         services.AddScoped<DataVerificationService>();
+        services.AddScoped<SourceComparisonService>();
 
         // Hosted services: the Phase 1-3 cycle loop and the Phase 4 worker, which
         // drains user_enrichment_queue in parallel. Skipped for one-shot CLI modes.

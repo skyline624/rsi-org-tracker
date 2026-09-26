@@ -169,10 +169,20 @@ try
     }
     else if (integrityCheck)
     {
+        // Organization listings, then rosters and citizen profiles read since --since
+        // (UTC, default 7 days ago), each a sample of N compared with RSI now.
         logger.LogInformation("Running integrity check (sample size: {N})", sampleSize);
         using var scope = host.Services.CreateScope();
         var checker = scope.ServiceProvider.GetRequiredService<IIntegrityCheckService>();
         await checker.RunCheckAsync(sampleSize, ct);
+        var sinceIdx = Array.IndexOf(args, "--since");
+        var since = sinceIdx >= 0 && sinceIdx + 1 < args.Length
+            ? DateTime.Parse(args[sinceIdx + 1], System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal)
+            : DateTime.UtcNow.AddDays(-7);
+        var comparison = scope.ServiceProvider.GetRequiredService<SourceComparisonService>();
+        await comparison.CompareRostersAsync(sampleSize, since, ct: ct);
+        await comparison.CompareProfilesAsync(sampleSize, since, ct);
     }
     else if (singleRun)
     {
