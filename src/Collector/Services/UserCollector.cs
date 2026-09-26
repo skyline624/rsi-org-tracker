@@ -274,7 +274,19 @@ public class UserCollector : IUserCollector
                     handle, profileData.CitizenId, existingByHandle.Id, existingByHandle.CitizenId);
             }
 
-            if (existingByCitizenId == null && existingByHandle == null)
+            // A handle given up and taken over by a citizen we do not know yet: that citizen
+            // gets its own row; the former owner's row keeps the handle until it is read again.
+            var handleTakenOver = existingByCitizenId == null && existingByHandle != null
+                && profileData.CitizenId > 0 && existingByHandle.CitizenId > 0
+                && existingByHandle.CitizenId != profileData.CitizenId;
+            if (handleTakenOver)
+            {
+                _logger.LogInformation(
+                    "Handle {Handle} now belongs to citizen {CitizenId}, not {FormerCitizenId}: new citizen row",
+                    handle, profileData.CitizenId, existingByHandle!.CitizenId);
+            }
+
+            if (existingByCitizenId == null && (existingByHandle == null || handleTakenOver))
             {
                 // Truly new user — create and emit member_joined for all their orgs
                 var newUser = new User

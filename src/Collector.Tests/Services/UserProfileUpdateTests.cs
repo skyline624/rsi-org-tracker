@@ -106,6 +106,24 @@ public sealed class UserProfileUpdateTests : IAsyncLifetime
         (await NewDb().Users.AsNoTracking().SingleAsync(u => u.CitizenId == 100001)).DisplayName.Should().Be("Known Name");
     }
 
+    [Fact]
+    public async Task AHandleTakenOverByAnotherCitizen_GetsItsOwnRow_TheFormerOwnersRowIsLeftAlone()
+    {
+        // Found in review: citizen 200 held "fixture-pilot"; citizen 100001 took it over.
+        // Its profile was written onto 200's row, which kept citizen number 200.
+        await SeedAsync(new User
+        {
+            CitizenId = 200, UserHandle = "fixture-pilot", DisplayName = "Former Owner",
+            CreatedAt = DateTime.UtcNow.AddYears(-2), UpdatedAt = DateTime.UtcNow.AddYears(-1),
+        });
+
+        await EnrichAsync(RsiFixtures.Text("profile-citizen.html"));
+
+        var users = await NewDb().Users.AsNoTracking().OrderBy(u => u.CitizenId).ToListAsync();
+        users.Select(u => (u.CitizenId, u.DisplayName)).Should().Equal((200, "Former Owner"), (100001, "fixture-pilot"));
+        (await NewDb().ChangeEvents.AsNoTracking().CountAsync(e => e.ChangeType == "display_name_changed")).Should().Be(0);
+    }
+
     private async Task SeedAsync(User user)
     {
         var db = NewDb();
