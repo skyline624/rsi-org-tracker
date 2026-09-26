@@ -64,8 +64,12 @@ try
 
     Console.WriteLine("Host built successfully");
 
-    // Ensure database exists
-    await host.Services.EnsureDatabaseAsync(dataDir);
+    // `--maintenance verify` only reads, next to a running collector: no bootstrap.
+    var verifyOnly = maintenance && args.SkipWhile(a => a != "--maintenance").Skip(1).FirstOrDefault() == "verify";
+    if (!verifyOnly)
+    {
+        await host.Services.EnsureDatabaseAsync(dataDir);
+    }
 
     Console.WriteLine("Database initialized");
 
@@ -104,6 +108,8 @@ try
         //   --maintenance measure
         //   --maintenance check
         //   --maintenance purge <target> [--dry-run] [--batch N]
+        // Read-only, also while the collector runs (exit code 2 when a check fails):
+        //   --maintenance verify [--since 2026-09-26T05:44]   (UTC, default: 7 days ago)
         using var scope = host.Services.CreateScope();
         var service = scope.ServiceProvider.GetRequiredService<MaintenanceService>();
         var verb = args.SkipWhile(a => a != "--maintenance").Skip(1).FirstOrDefault();
@@ -123,8 +129,22 @@ try
                 Console.WriteLine($"{report.Target}: {report.Deleted}/{report.Matched} deleted in {report.Batches} batches"
                     + (report.StoppedBecause != null ? $", stopped: {report.StoppedBecause}" : ""));
                 break;
+            case "verify":
+            {
+                var sinceIdx = Array.IndexOf(args, "--since");
+                var since = sinceIdx >= 0 && sinceIdx + 1 < args.Length
+                    ? DateTime.Parse(args[sinceIdx + 1], System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal)
+                    : DateTime.UtcNow.AddDays(-7);
+                var results = await scope.ServiceProvider.GetRequiredService<DataVerificationService>().VerifyAsync(since, ct);
+                var failed = results.Count(r => r.Failed);
+                Console.WriteLine($"verify since {since:u}: {results.Count - failed}/{results.Count} checks pass"
+                    + (failed > 0 ? $", {failed} fail: {string.Join(", ", results.Where(r => r.Failed).Select(r => r.Name))}" : ""));
+                if (failed > 0) Environment.ExitCode = 2;
+                break;
+            }
             default:
-                Console.WriteLine("usage: --maintenance measure | check | purge <target> [--dry-run] [--batch N]");
+                Console.WriteLine("usage: --maintenance measure | check | verify [--since <UTC date>] | purge <target> [--dry-run] [--batch N]");
                 Console.WriteLine($"purge targets: {string.Join(", ", MaintenanceService.TargetNames)}");
                 break;
         }

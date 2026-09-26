@@ -119,6 +119,7 @@ public static class ServiceCollectionExtensions
         // Database maintenance (one-shot, collector stopped): purges and measurements.
         services.AddSingleton<IStorageProbe>(new FileStorageProbe(Path.Combine(dataDir, "tracker.db")));
         services.AddScoped<MaintenanceService>();
+        services.AddScoped<DataVerificationService>();
 
         // Hosted services: the Phase 1-3 cycle loop and the Phase 4 worker, which
         // drains user_enrichment_queue in parallel. Skipped for one-shot CLI modes.

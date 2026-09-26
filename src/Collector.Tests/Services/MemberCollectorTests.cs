@@ -394,6 +394,35 @@ public sealed class MemberCollectorTests : IAsyncLifetime
         (await EventTypesAsync()).Should().ContainSingle(e => e == "member_left", "they did leave, and came back renamed");
     }
 
+    [Fact]
+    public async Task RealPasses_LeaveDataThatPassesEveryVerification()
+    {
+        var since = DateTime.UtcNow.AddMinutes(-1);
+        await DiscoverAsync("FLOW");
+        await SeedUserAsync("oldname", 100001);
+        Func<string, MemberCollectionResult>[] passes =
+        [
+            _ => Roster(RosterStatus.Complete, 4, "alpha", "bravo", "charlie", "oldname"),
+            _ => Roster(RosterStatus.Short, 4, "alpha", "charlie", "oldname"),       // bravo carried over
+            _ => Roster(RosterStatus.Short, 4, "alpha", "charlie", "fixture-pilot"), // bravo left; oldname renamed
+            _ => Roster(RosterStatus.Complete, 3, "alpha", "charlie", "fixture-pilot"),
+        ];
+        foreach (var pass in passes)
+        {
+            _roster = pass;
+            var (collector, _) = Create();
+            await collector.CollectAllMembersAsync();
+        }
+        await EnrichFixtureProfileAsync();
+
+        var results = await new DataVerificationService(Create().Db, NullLogger<DataVerificationService>.Instance)
+            .VerifyAsync(since);
+
+        results.Where(r => r.Failed).Select(r => $"{r.Name}: {string.Join("; ", r.Samples)}").Should().BeEmpty();
+        // bravo left; oldname's departure was the rename; RSI's total went from 4 to 3.
+        (await EventTypesAsync()).Should().BeEquivalentTo(["member_left", "handle_changed", "member_count_changed"]);
+    }
+
     /// <summary>Phase 4 reads the fixture profile: citizen 100001 with handle "fixture-pilot".</summary>
     private async Task EnrichFixtureProfileAsync()
     {
