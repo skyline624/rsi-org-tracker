@@ -152,7 +152,7 @@ public class UserProfileHtmlParser
     private static string? Clean(HtmlNode? node)
     {
         if (node == null) return null;
-        var text = Whitespace.Replace(HtmlEntity.DeEntitize(node.InnerText), " ").Trim();
+        var text = Whitespace.Replace(HtmlText.Decode(node.InnerText), " ").Trim();
         return text.Length == 0 ? null : text;
     }
 
