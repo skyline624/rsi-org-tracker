@@ -1,6 +1,6 @@
 "use server";
 
-import { INVALID_ARGUMENTS, idSchema, valid } from "@/lib/validation";
+import { INVALID_ARGUMENTS, accountInputSchema, idSchema, userFlagsSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPost, apiPut, apiDelete } from "@/lib/api/client";
 
@@ -32,6 +32,7 @@ export async function createAccountAction(input: {
   password: string;
   isAdmin: boolean;
 }): Promise<AccountResult> {
+  if (!valid(accountInputSchema, input)) return { ok: false, error: INVALID_ARGUMENTS };
   const session = await requireAdmin();
   if (!session) return { ok: false, error: "Réservé aux administrateurs." };
   try {
@@ -63,7 +64,7 @@ export async function setUserFlagsAction(
 ): Promise<AccountResult> {
   const session = await requireAdmin();
   if (!session) return { ok: false, error: "Réservé aux administrateurs." };
-  if (!valid(idSchema, id)) return { ok: false, error: INVALID_ARGUMENTS };
+  if (!valid(idSchema, id) || !valid(userFlagsSchema, flags)) return { ok: false, error: INVALID_ARGUMENTS };
   try {
     const user = await apiPut<AdminUserDto>(`/api/admin/users/${id}`, flags, sessionCtx(session));
     return { ok: true, user };

@@ -1,6 +1,6 @@
 "use server";
 
-import { INVALID_ARGUMENTS, handleSchema, idSchema, sidSchema, valid } from "@/lib/validation";
+import { INVALID_ARGUMENTS, handleSchema, idSchema, searchQuerySchema, sidSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet, apiPost, apiDelete } from "@/lib/api/client";
 
@@ -11,6 +11,7 @@ export interface OrgOption {
 
 /** Autocomplete search over known organizations (collected or manually added). */
 export async function searchOrgsAction(query: string): Promise<OrgOption[]> {
+  if (!valid(searchQuerySchema, query)) return [];
   const session = await getSession();
   const q = query.trim();
   if (!session || q.length < 1) return [];

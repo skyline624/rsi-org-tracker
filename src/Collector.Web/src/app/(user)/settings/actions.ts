@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { INVALID_ARGUMENTS, passwordSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPost } from "@/lib/api/client";
 import type { AuthResponse } from "@/lib/api/types";
@@ -20,6 +21,8 @@ export async function changePasswordAction(
   currentPassword: string,
   newPassword: string,
 ): Promise<ChangePasswordResult> {
+  if (!valid(passwordSchema, currentPassword) || !valid(passwordSchema, newPassword))
+    return { ok: false, error: INVALID_ARGUMENTS };
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
   if (newPassword.length < 8)

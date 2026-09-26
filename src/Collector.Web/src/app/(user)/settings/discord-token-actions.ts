@@ -1,5 +1,6 @@
 "use server";
 
+import { INVALID_ARGUMENTS, discordTokenSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPut } from "@/lib/api/client";
 
@@ -9,10 +10,12 @@ export interface DiscordTokenResult {
 }
 
 export async function setDiscordTokenAction(token: string): Promise<DiscordTokenResult> {
+  if (typeof token !== "string") return { ok: false, error: INVALID_ARGUMENTS };
   const session = await getSession();
   if (!session?.isAdmin) return { ok: false, error: "Réservé aux administrateurs." };
   const t = token.trim();
   if (t.length < 20) return { ok: false, error: "Token invalide (trop court)." };
+  if (!valid(discordTokenSchema, t)) return { ok: false, error: INVALID_ARGUMENTS };
   try {
     await apiPut("/api/admin/discord-token", { token: t }, sessionCtx(session));
     return { ok: true };

@@ -1,5 +1,6 @@
 "use server";
 
+import { INVALID_ARGUMENTS, entityInputSchema, organizationInputSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiPost } from "@/lib/api/client";
 
@@ -14,6 +15,7 @@ export async function createEntityAction(input: {
   displayName?: string;
   citizenId?: number;
 }): Promise<ActionResult> {
+  if (!valid(entityInputSchema, input)) return { ok: false, error: INVALID_ARGUMENTS };
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
 
@@ -41,6 +43,7 @@ export async function createOrganizationAction(input: {
   archetype?: string;
   description?: string;
 }): Promise<ActionResult> {
+  if (!valid(organizationInputSchema, input)) return { ok: false, error: INVALID_ARGUMENTS };
   const session = await getSession();
   if (!session) return { ok: false, error: "Non authentifié." };
 
