@@ -204,6 +204,9 @@ public sealed class DataVerificationService
               AND COALESCE(FocusSecondaryName, '') = COALESCE(pFocusSecondaryName, '')
               AND COALESCE(FocusSecondaryImage, '') = COALESCE(pFocusSecondaryImage, '')
             """),
+        new("org-name-html-entities",
+            "an organization snapshot whose name is still HTML-encoded (\"Steal &amp; Deal\")",
+            "SELECT Sid, Name FROM organizations WHERE Timestamp >= $since AND Name LIKE '%&%;%'"),
         new("dead-org-read",
             "a roster read after the organization was declared dead",
             """

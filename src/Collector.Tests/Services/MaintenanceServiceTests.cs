@@ -154,6 +154,27 @@ public sealed class MaintenanceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RepairOrgNames_DecodesHtmlEntities_InEverySnapshot()
+    {
+        var db = NewDb();
+        db.Organizations.AddRange(
+            new Organization { Sid = "LH34", Name = "Les H&eacute;raults 34", Timestamp = Now.AddDays(-9) },
+            new Organization { Sid = "LH34", Name = "Les H&eacute;raults 34", Timestamp = Now.AddDays(-2) },
+            new Organization { Sid = "PLAIN", Name = "Plain & simple", Timestamp = Now.AddDays(-2) });
+        db.DiscoveredOrganizations.Add(new DiscoveredOrganization { Sid = "LH34", Name = "Les H&eacute;raults 34", DiscoveredAt = Now });
+        await db.SaveChangesAsync();
+
+        (await Create().RepairOrgNamesAsync(dryRun: true)).Should().Be(3);
+        (await NewDb().Organizations.CountAsync(o => o.Name.Contains("&eacute;"))).Should().Be(2, "a dry run changes nothing");
+
+        (await Create().RepairOrgNamesAsync(dryRun: false)).Should().Be(3);
+
+        (await NewDb().Organizations.OrderBy(o => o.Id).Select(o => o.Name).ToListAsync())
+            .Should().Equal("Les Héraults 34", "Les Héraults 34", "Plain & simple");
+        (await NewDb().DiscoveredOrganizations.Select(d => d.Name).SingleAsync()).Should().Be("Les Héraults 34");
+    }
+
+    [Fact]
     public async Task UnknownTarget_IsRejected()
     {
         var act = () => Create().PurgeAsync("everything", dryRun: true, batchSize: 10, Now);

@@ -162,6 +162,29 @@ public sealed class OrganizationCollectorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Phase1_ANameStoredWithHtmlEntities_IsCleanedWithoutAChangeEvent()
+    {
+        await SeedAsync("ENC", "Steal &amp; Deal", "Text", DateTime.UtcNow.AddDays(-2));
+        ListOnPageOne(new OrganizationData { Sid = "ENC", Name = "Steal & Deal", MembersCount = 10 });
+
+        await Create(NewDb()).DiscoverOrganizationsAsync();
+
+        (await SnapshotsAsync("ENC"))[^1].Name.Should().Be("Steal & Deal");
+        (await EventsAsync()).Should().BeEmpty("only the encoding differs");
+    }
+
+    [Fact]
+    public async Task Phase2_ContentSnapshots_CarryTheDecodedName()
+    {
+        await SeedAsync("ENC2", "A &amp; B", null, DateTime.UtcNow.AddDays(-10));
+        ServePage("ENC2", "About us");
+
+        await Create(NewDb()).CollectOrganizationMetadataAsync();
+
+        (await SnapshotsAsync("ENC2"))[^1].Name.Should().Be("A & B");
+    }
+
+    [Fact]
     public async Task Phase2_UnchangedContent_WritesNoSnapshot_ButRecordsTheCheck()
     {
         await SeedAsync("STILL", "Still", "Same text", DateTime.UtcNow.AddDays(-30));

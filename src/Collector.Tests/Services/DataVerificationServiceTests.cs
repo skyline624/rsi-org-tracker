@@ -258,6 +258,14 @@ public sealed class DataVerificationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ANameStoredWithHtmlEntities_IsFound()
+    {
+        await ChangeAsync(db => db.Organizations.Add(new Organization { Sid = "ORG", Name = "Org &amp; Co", Timestamp = Read, MembersCount = 2 }));
+
+        (await CountAsync("org-name-html-entities")).Should().Be(1);
+    }
+
+    [Fact]
     public async Task ADeadOrganizationReadAgain_IsFound()
     {
         await ChangeAsync(db => db.DiscoveredOrganizations.Single().DeadAt = Read.AddMinutes(-5));

@@ -221,6 +221,62 @@ public sealed class MaintenanceService
         return results;
     }
 
+    /// <summary>
+    /// Decodes the organization names stored HTML-encoded by the old listing parser
+    /// ("Les H&amp;eacute;raults" shown as such on the site), in every snapshot and in
+    /// discovered_organizations. Only the encoding changes: no event is written.
+    /// Returns the number of rows that differ (changed, unless <paramref name="dryRun"/>).
+    /// </summary>
+    public async Task<int> RepairOrgNamesAsync(bool dryRun, CancellationToken ct = default)
+    {
+        await _db.Database.OpenConnectionAsync(ct);
+        try
+        {
+            var connection = (SqliteConnection)_db.Database.GetDbConnection();
+            var total = 0;
+            foreach (var (table, key) in new[] { ("organizations", "Id"), ("discovered_organizations", "Sid") })
+            {
+                var rows = new List<(object Key, string Name)>();
+                await using (var select = connection.CreateCommand())
+                {
+                    select.CommandText = $"SELECT {key}, Name FROM {table} WHERE Name LIKE '%&%;%'";
+                    await using var reader = await select.ExecuteReaderAsync(ct);
+                    while (await reader.ReadAsync(ct))
+                    {
+                        var name = reader.GetString(1);
+                        var decoded = HtmlAgilityPack.HtmlEntity.DeEntitize(name);
+                        if (decoded != name) rows.Add((reader.GetValue(0), decoded));
+                    }
+                }
+                _logger.LogInformation("Org names: {Count} rows of {Table} are HTML-encoded{DryRun}",
+                    rows.Count, table, dryRun ? " — dry run, nothing changed" : "");
+                total += rows.Count;
+                if (dryRun) continue;
+
+                foreach (var batch in rows.Chunk(1000))
+                {
+                    await using var transaction = await connection.BeginTransactionAsync(ct);
+                    foreach (var (rowKey, decoded) in batch)
+                    {
+                        await using var update = connection.CreateCommand();
+                        update.Transaction = (SqliteTransaction)transaction;
+                        update.CommandText = $"UPDATE {table} SET Name = $name WHERE {key} = $key";
+                        update.Parameters.AddWithValue("$name", decoded);
+                        update.Parameters.AddWithValue("$key", rowKey);
+                        await update.ExecuteNonQueryAsync(ct);
+                    }
+                    await transaction.CommitAsync(ct);
+                }
+            }
+            if (!dryRun) await CheckpointAsync(connection, ct);
+            return total;
+        }
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
+        }
+    }
+
     /// <summary>PRAGMA quick_check: "ok", or the first problems found.</summary>
     public async Task<string> QuickCheckAsync(CancellationToken ct = default)
     {

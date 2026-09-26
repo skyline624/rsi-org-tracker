@@ -108,6 +108,7 @@ try
         //   --maintenance measure
         //   --maintenance check
         //   --maintenance purge <target> [--dry-run] [--batch N]
+        //   --maintenance repair-org-names [--dry-run]
         // Read-only, also while the collector runs (exit code 2 when a check fails):
         //   --maintenance verify [--since 2026-09-26T05:44]   (UTC, default: 7 days ago)
         using var scope = host.Services.CreateScope();
@@ -129,6 +130,10 @@ try
                 Console.WriteLine($"{report.Target}: {report.Deleted}/{report.Matched} deleted in {report.Batches} batches"
                     + (report.StoppedBecause != null ? $", stopped: {report.StoppedBecause}" : ""));
                 break;
+            case "repair-org-names":
+                Console.WriteLine($"HTML-encoded organization names: {await service.RepairOrgNamesAsync(args.Contains("--dry-run"), ct)} rows"
+                    + (args.Contains("--dry-run") ? " (dry run)" : " decoded"));
+                break;
             case "verify":
             {
                 var sinceIdx = Array.IndexOf(args, "--since");
@@ -144,7 +149,7 @@ try
                 break;
             }
             default:
-                Console.WriteLine("usage: --maintenance measure | check | verify [--since <UTC date>] | purge <target> [--dry-run] [--batch N]");
+                Console.WriteLine("usage: --maintenance measure | check | verify [--since <UTC date>] | purge <target> [--dry-run] [--batch N] | repair-org-names [--dry-run]");
                 Console.WriteLine($"purge targets: {string.Join(", ", MaintenanceService.TargetNames)}");
                 break;
         }

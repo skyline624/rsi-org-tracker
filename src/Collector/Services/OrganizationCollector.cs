@@ -1,5 +1,6 @@
 using Collector.Data.Repositories;
 using Collector.Dtos;
+using HtmlAgilityPack;
 using Collector.Models;
 using Collector.Options;
 using Collector.Parsers;
@@ -149,9 +150,11 @@ public class OrganizationCollector : IOrganizationCollector
 
                         if (prev != null)
                         {
+                            // Names used to be stored HTML-encoded ("Steal &amp; Deal"): the
+                            // snapshot above stores the text, a change of encoding is no event.
                             var prevSnap = new OrganizationSnapshot
                             {
-                                Sid = prev.Sid, Name = prev.Name, Archetype = prev.Archetype,
+                                Sid = prev.Sid, Name = HtmlEntity.DeEntitize(prev.Name), Archetype = prev.Archetype,
                                 Commitment = prev.Commitment, Recruiting = prev.Recruiting,
                                 Roleplay = prev.Roleplay, Lang = prev.Lang, Members = prev.MembersCount
                             };
@@ -351,7 +354,7 @@ public class OrganizationCollector : IOrganizationCollector
                 await _orgRepo.AddAsync(new Organization
                 {
                     Sid              = existing.Sid,
-                    Name             = existing.Name,
+                    Name             = HtmlEntity.DeEntitize(existing.Name),
                     UrlImage         = existing.UrlImage,
                     UrlCorpo         = existing.UrlCorpo,
                     Archetype        = existing.Archetype,

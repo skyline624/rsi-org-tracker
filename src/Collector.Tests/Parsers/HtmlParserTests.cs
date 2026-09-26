@@ -70,4 +70,17 @@ public class OrganizationHtmlParserTests
         result.Should().HaveCount(1);
         result[0].Sid.Should().Be("TEST");
     }
+
+    [Fact]
+    public void ParseOrganizations_DecodesHtmlEntitiesInTheName()
+    {
+        // As RSI serves it: 1 005 organizations were stored as "Les H&eacute;raults 34".
+        var html = @"
+            <div class='org-cell'>
+                <a href='/orgs/SNDCO' class='trans-03s'><img src='/media/logo.png' alt='' /></a>
+                <h3 class=""trans-03s name"">Steal &amp; Deal H&eacute;raults</h3>
+            </div>";
+
+        _parser.ParseOrganizations(html).Single().Name.Should().Be("Steal & Deal Héraults");
+    }
 }

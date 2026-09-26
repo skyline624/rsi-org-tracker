@@ -119,14 +119,15 @@ public class OrganizationHtmlParser
     private string? ExtractName(HtmlNode cell)
     {
         // Try title attribute
+        // RSI serves names HTML-encoded ("Steal &amp; Deal"): store the text, as the other parsers do.
         var nameNode = cell.SelectSingleNode(".//h1|././/h2|././/*[contains(@class, 'name')]");
-        var name = nameNode?.InnerText?.Trim();
+        var name = nameNode == null ? null : HtmlEntity.DeEntitize(nameNode.InnerText).Trim();
 
         if (string.IsNullOrEmpty(name))
         {
             // Try alt attribute on image
             var img = cell.SelectSingleNode(".//img");
-            name = img?.GetAttributeValue("alt", "");
+            name = HtmlEntity.DeEntitize(img?.GetAttributeValue("alt", "") ?? "").Trim();
         }
 
         return name;
@@ -152,7 +153,7 @@ public class OrganizationHtmlParser
         var infoNodes = cell.SelectNodes(".//*[contains(@class, 'infoitem')]//*[contains(@class, 'value')]");
         if (infoNodes != null)
         {
-            values.AddRange(infoNodes.Select(n => n.InnerText?.Trim() ?? ""));
+            values.AddRange(infoNodes.Select(n => HtmlEntity.DeEntitize(n.InnerText ?? "").Trim()));
         }
 
         return values;
