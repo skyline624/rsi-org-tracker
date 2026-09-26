@@ -99,8 +99,8 @@ public class HealthController : ControllerBase
         // Pending rows that are due now (an "n/a" profile or a failed fetch waits for
         // its next attempt), and rows given up after repeated failures in the last day.
         var now = DateTime.UtcNow;
-        var queuePending = await _trackerDb.UserEnrichmentQueue
-            .CountAsync(q => !q.Enriched && (q.NextAttemptAt == null || q.NextAttemptAt <= now), ct);
+        var queuePending = await Collector.Data.Repositories.UserEnrichmentQueueRepository
+            .PendingDue(_trackerDb.UserEnrichmentQueue.AsNoTracking(), now).CountAsync(ct);
 
         var abandonedSince = now.AddDays(-1);
         var queueStuck = await _trackerDb.UserEnrichmentQueue

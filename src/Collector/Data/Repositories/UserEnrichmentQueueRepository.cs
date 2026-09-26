@@ -45,13 +45,15 @@ public class UserEnrichmentQueueRepository : Repository<UserEnrichmentQueue>, IU
         return rows;
     }
 
-    public async Task<int> CountPendingAsync(DateTime now, CancellationToken ct = default)
+    /// <summary>Rows waiting and due now, seeking the (Enriched, Priority, QueuedAt) index.</summary>
+    public static IQueryable<UserEnrichmentQueue> PendingDue(IQueryable<UserEnrichmentQueue> source, DateTime now)
     {
-        return await DbSet
-            .AsNoTracking()
-            .Where(q => !q.Enriched && (q.NextAttemptAt == null || q.NextAttemptAt <= now))
-            .CountAsync(ct);
+        var pending = false; // a parameter: "!Enriched" becomes NOT (Enriched), a full scan
+        return source.Where(q => q.Enriched == pending && (q.NextAttemptAt == null || q.NextAttemptAt <= now));
     }
+
+    public async Task<int> CountPendingAsync(DateTime now, CancellationToken ct = default)
+        => await PendingDue(DbSet.AsNoTracking(), now).CountAsync(ct);
 
     public Task MarkEnrichedAsync(long id, DateTime now, CancellationToken ct = default)
         => SettleAsync(id, EnrichmentOutcome.Enriched, error: null, now, ct);

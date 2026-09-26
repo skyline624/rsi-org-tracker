@@ -72,6 +72,16 @@ public sealed class QueryPlanTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CountingTheDueQueue_SeeksThePendingIndex()
+    {
+        // Phase 4 counts it before every batch and the dashboard on every refresh: "!Enriched"
+        // became NOT (Enriched), which scanned the whole queue.
+        var plan = await PlanAsync(UserEnrichmentQueueRepository.PendingDue(_db.UserEnrichmentQueue, DateTime.UtcNow));
+
+        plan.Should().MatchRegex("USING (COVERING )?INDEX IX_user_enrichment_queue_Enriched_Priority_QueuedAt \\(Enriched=\\?");
+    }
+
+    [Fact]
     public async Task QueueDueRows_ReadThePendingIndexInOrder()
     {
         var plan = await PlanAsync(UserEnrichmentQueueRepository.DueQuery(_db.UserEnrichmentQueue, 1, DateTime.UtcNow).Take(10));
