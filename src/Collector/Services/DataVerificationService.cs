@@ -216,9 +216,9 @@ public sealed class DataVerificationService
         // the roster row must match one of them.
         new("roster-and-citizen-disagree",
             "an active roster row whose citizen number matches no citizen holding that handle",
-            """
+            $"""
             SELECT m.OrgSid, m.UserHandle, m.CitizenId FROM organization_members m
-            WHERE m.IsActive = 1 AND m.Timestamp >= $since AND m.CitizenId IS NOT NULL
+            WHERE m.OrgSid IN ({OrgsReadSince}) AND m.IsActive = 1 AND m.Timestamp >= $since AND m.CitizenId IS NOT NULL
               AND EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle)
               AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle AND u.CitizenId = m.CitizenId)
             """),
