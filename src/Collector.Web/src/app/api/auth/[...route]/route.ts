@@ -47,6 +47,22 @@ function proxyHeaders(req: NextRequest): HeadersInit {
   return h;
 }
 
+/**
+ * Un navigateur envoie toujours `Origin` sur un POST venu d'un autre site : seul ce
+ * site peut poster ici (sinon un formulaire caché ailleurs déconnecte l'utilisateur,
+ * ou le connecte à un autre compte). Sans `Origin` (curl, scripts), rien à vérifier.
+ */
+function postedFromAnotherSite(req: NextRequest) {
+  const origin = req.headers.get("origin");
+  if (!origin) return false;
+  const host = req.headers.get("host") ?? req.nextUrl.host;
+  try {
+    return new URL(origin).host !== host;
+  } catch {
+    return true;
+  }
+}
+
 async function handle(
   req: NextRequest,
   ctx: { params: Promise<{ route: string[] }> },
@@ -56,6 +72,16 @@ async function handle(
   const segment = route[0];
   if (!segment || !ALLOWED_SEGMENTS.has(segment)) {
     return NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE });
+  }
+  // Seul `me` se lit en GET : un lien ou une image vers /api/auth/logout déconnectait.
+  if (method === "GET" && segment !== "me") {
+    return NextResponse.json(
+      { error: "Method not allowed" },
+      { status: 405, headers: { ...NO_STORE, Allow: "POST" } },
+    );
+  }
+  if (method === "POST" && postedFromAnotherSite(req)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE });
   }
 
   // Pour `me`, on relit le JWT depuis le cookie et on le pose en Authorization.

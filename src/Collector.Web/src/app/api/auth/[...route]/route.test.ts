@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 const auth = {
   accessToken: "header.payload.signature",
@@ -32,6 +32,49 @@ function call(segment: string, body = "") {
 
 describe("BFF /api/auth", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  // A link or an image on another site used to log the user out.
+  it("refuses logout over GET, leaving the session alone", async () => {
+    stubUpstream(200, {});
+    const req = new NextRequest("http://localhost/api/auth/logout", {
+      headers: { cookie: "sct_access=a; sct_refresh=r" },
+    });
+
+    const res = await GET(req, { params: Promise.resolve({ route: ["logout"] }) });
+
+    expect(res.status).toBe(405);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it.each(["logout", "login", "refresh"])(
+    "refuses a %s posted from another site (a hidden form)",
+    async (segment) => {
+      stubUpstream(200, auth);
+      const req = new NextRequest(`http://localhost/api/auth/${segment}`, {
+        method: "POST",
+        body: "{}",
+        headers: { origin: "https://evil.example", host: "localhost" },
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ route: [segment] }) });
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get("set-cookie")).toBeNull();
+    },
+  );
+
+  it("accepts a logout posted from the site itself", async () => {
+    stubUpstream(200, {});
+    const req = new NextRequest("http://localhost/api/auth/logout", {
+      method: "POST",
+      headers: { origin: "http://localhost", host: "localhost", cookie: "sct_refresh=r" },
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ route: ["logout"] }) });
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("set-cookie")).toMatch(/sct_refresh=;/);
+  });
 
   it.each(["login", "refresh"])(
     "%s keeps the tokens in httpOnly cookies and out of the response body",
