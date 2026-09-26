@@ -15,7 +15,8 @@ export async function GET(
   const { id } = await params;
   const range = req.headers.get("range");
 
-  const apiRes = await fetch(`${process.env.API_BASE_URL}/api/audio/${encodeURIComponent(id)}`, {
+  const apiBase = process.env.API_BASE_URL ?? "http://127.0.0.1:5000";
+  const apiRes = await fetch(`${apiBase}/api/audio/${encodeURIComponent(id)}`, {
     headers: {
       Authorization: `Bearer ${session.accessToken}`,
       ...(range ? { Range: range } : {}),

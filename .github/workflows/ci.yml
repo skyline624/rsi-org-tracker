@@ -35,11 +35,8 @@ jobs:
       - name: Test
         run: dotnet test Collector.sln -c Release --no-build
 
+      # Both contexts have a design-time factory: no host configuration is needed.
       - name: EF model matches migrations
-        env:
-          # Only needed so the API host can be built at design time; never a real secret.
-          COLLECTOR_API_Api__JwtSecret: ci-design-time-placeholder-0123456789abcdef
-          COLLECTOR_API_Api__AdminApiKey: ci-design-time-placeholder-0123456789
         run: |
           dotnet tool restore
           dotnet ef migrations has-pending-model-changes --project src/Collector --context TrackerDbContext

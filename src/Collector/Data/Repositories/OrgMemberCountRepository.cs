@@ -24,8 +24,16 @@ public class OrgMemberCountRepository : Repository<OrgMemberCount>, IOrgMemberCo
         if (unchanged) return (false, latest);
 
         DbSet.Add(counts);
-        await Context.SaveChangesAsync(ct);
-        Context.Entry(counts).State = EntityState.Detached;
+        try
+        {
+            await Context.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            // Also after a failed save: left tracked, the roster transaction that follows
+            // in MemberCollector would insert it again.
+            Context.Entry(counts).State = EntityState.Detached;
+        }
         return (true, latest);
     }
 }

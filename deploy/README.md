@@ -61,6 +61,13 @@ avec RSI (une centaine de requêtes).
 ~/sc-tracker/current/deploy/rollback.sh --collector <dossier de release>
 ```
 
+Le retour arrière ne touche jamais au schéma : l'ancienne release lit sans problème une
+base migrée, puisque les migrations ne font qu'ajouter des colonnes, des tables et des
+index. Ne jamais lancer `dotnet ef database update <migration précédente>` sur la
+production : les méthodes `Down` suppriment des colonnes, ce qu'EF fait en
+reconstruisant les tables (`ef_temp_*`), soit des heures sur 25 Go. Pour revenir à
+l'état d'avant une migration, la seule voie est la sauvegarde.
+
 ## Migration initiale (une seule fois)
 
 Passage de l'ancienne installation (binaires Debug dans `collector-dotnet/bin`,
