@@ -133,9 +133,28 @@ public sealed class DataVerificationServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AnOverlayTitleStoredAsRank_IsFound()
+    public async Task ARankNamedAffiliate_IsARankAnOrgChose()
     {
         await ChangeAsync(db => db.MemberCollectionLogs.First().Rank = "Affiliate");
+
+        (await CountAsync("overlay-titles-as-ranks")).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AReadWhereEveryRankIsAnOverlayTitle_IsFound()
+    {
+        // The v1 parser's fault: the "Roles" / "Affiliate" overlay read as everyone's rank.
+        await ChangeAsync(db =>
+        {
+            foreach (var log in db.MemberCollectionLogs) log.Rank = "Roles";
+            foreach (var handle in new[] { "charlie", "delta", "echo" })
+            {
+                db.MemberCollectionLogs.Add(new MemberCollectionLog
+                {
+                    OrgSid = "ORG", CollectionTime = Read, UserHandle = handle, Rank = "Affiliate", ParserVersion = 2,
+                });
+            }
+        });
 
         (await CountAsync("overlay-titles-as-ranks")).Should().Be(1);
     }
@@ -256,6 +275,20 @@ public sealed class DataVerificationServiceTests : IAsyncLifetime
         });
 
         (await CountAsync("roster-and-citizen-disagree")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AReusedHandle_IsReported_AndTheRosterMayMatchEitherHolder()
+    {
+        await ChangeAsync(db =>
+        {
+            db.Users.Add(new User { CitizenId = 1, UserHandle = "alpha", CreatedAt = Read, UpdatedAt = Read.AddDays(-90), DisplayName = "A", Enlisted = Read });
+            db.Users.Add(new User { CitizenId = 2, UserHandle = "alpha", CreatedAt = Read, UpdatedAt = Read.AddDays(-9), DisplayName = "B", Enlisted = Read });
+            db.OrganizationMembers.Single(m => m.UserHandle == "alpha").CitizenId = 2;
+        });
+
+        (await CountAsync("roster-and-citizen-disagree")).Should().Be(0);
+        (await CountAsync("handle-held-by-two-citizens")).Should().Be(1);
     }
 
     [Fact]

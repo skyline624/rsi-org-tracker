@@ -101,11 +101,15 @@ public sealed class DataVerificationService
             "visible + redacted + hidden differs from RSI's totalrows on a complete read (RSI's own counts, or rows read twice)",
             $"SELECT Sid, TotalRows, Visible, Redacted, Hidden FROM ({OrgCounts}) WHERE Visible IS NOT NULL AND Visible + Redacted + Hidden <> TotalRows",
             Informational: true),
+        // Orgs name their ranks as they like, "Affiliate" included: only a whole read
+        // made of overlay titles is the v1 parser's fault.
         new("overlay-titles-as-ranks",
-            "a v2 roster row whose rank is the overlay title (Roles, Affiliate) instead of the member's rank",
+            "a v2 roster read of 5+ members in which every rank is an overlay title (Roles, Affiliate)",
             $"""
-            SELECT OrgSid, UserHandle, Rank FROM member_collection_log
-            WHERE OrgSid IN ({OrgsReadSince}) AND CollectionTime >= $since AND ParserVersion = 2 AND Rank IN ('Roles', 'Affiliate')
+            SELECT OrgSid, CollectionTime, COUNT(*) FROM member_collection_log
+            WHERE OrgSid IN ({OrgsReadSince}) AND CollectionTime >= $since AND ParserVersion = 2
+            GROUP BY OrgSid, CollectionTime
+            HAVING COUNT(*) >= 5 AND SUM(Rank IN ('Roles', 'Affiliate')) = COUNT(*)
             """),
         new("stars-out-of-range",
             "an active member with a star count outside 0-5",
@@ -208,13 +212,20 @@ public sealed class DataVerificationService
             """),
 
         // ── Citizens (Phase 4) ──
+        // A reused handle is held by two citizens until the former owner is read again:
+        // the roster row must match one of them.
         new("roster-and-citizen-disagree",
-            "an active roster row whose citizen number differs from the citizen who holds that handle",
+            "an active roster row whose citizen number matches no citizen holding that handle",
             """
-            SELECT m.OrgSid, m.UserHandle, m.CitizenId, u.CitizenId FROM organization_members m
-            JOIN users u ON u.UserHandle = m.UserHandle
-            WHERE m.IsActive = 1 AND m.Timestamp >= $since AND m.CitizenId IS NOT NULL AND m.CitizenId <> u.CitizenId
+            SELECT m.OrgSid, m.UserHandle, m.CitizenId FROM organization_members m
+            WHERE m.IsActive = 1 AND m.Timestamp >= $since AND m.CitizenId IS NOT NULL
+              AND EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle)
+              AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle AND u.CitizenId = m.CitizenId)
             """),
+        new("handle-held-by-two-citizens",
+            "handles stored for two citizens: a handle given up and taken by someone else, until the former owner is read again",
+            "SELECT UserHandle, COUNT(*) FROM users GROUP BY UserHandle COLLATE NOCASE HAVING COUNT(*) > 1",
+            Informational: true),
         new("citizen-profile-incomplete",
             "a citizen updated from a profile without a display name or enlistment date (every profile has both)",
             """

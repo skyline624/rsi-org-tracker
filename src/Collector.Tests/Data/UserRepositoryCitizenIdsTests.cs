@@ -41,6 +41,19 @@ public sealed class UserRepositoryCitizenIdsTests : IDisposable
     }
 
     [Fact]
+    public async Task ReusedHandle_TheCitizenLookedUpByHandle_IsTheLatestOwner()
+    {
+        // The user page and Phase 4 read one citizen per handle: the same rule as above.
+        // The former owner was stored first, as in production.
+        _db.Users.Add(new User { CitizenId = 1, UserHandle = "Harion", CreatedAt = new DateTime(2024, 1, 1), UpdatedAt = new DateTime(2024, 1, 1) });
+        await _db.SaveChangesAsync();
+        _db.Users.Add(new User { CitizenId = 2, UserHandle = "Harion", CreatedAt = new DateTime(2026, 1, 1), UpdatedAt = new DateTime(2026, 6, 1) });
+        await _db.SaveChangesAsync();
+
+        (await _sut.GetByHandleAsync("Harion"))!.CitizenId.Should().Be(2);
+    }
+
+    [Fact]
     public async Task CaseVariantHandles_DoNotCollide()
     {
         _db.Users.AddRange(

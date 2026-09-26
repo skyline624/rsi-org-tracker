@@ -14,7 +14,12 @@ public class UserRepository : Repository<User>, IUserRepository
 
     public async Task<User?> GetByHandleAsync(string handle, CancellationToken ct = default)
     {
-        return await DbSet.FirstOrDefaultAsync(u => u.UserHandle == handle, ct);
+        // A handle given up and taken by another citizen is held by two rows until the
+        // former owner is read again: the one whose profile was read last holds it now.
+        return await DbSet
+            .Where(u => u.UserHandle == handle)
+            .OrderByDescending(u => u.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
     }
 
     public async Task<Dictionary<string, int>> GetCitizenIdsByHandlesAsync(
