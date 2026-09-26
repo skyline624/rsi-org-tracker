@@ -103,6 +103,31 @@ public class RefreshTokenTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task ARotatedToken_ReplayedWithinTheGracePeriod_AfterLogout_IsRefused()
+    {
+        // Deferred from the final review: the 30 s grace for concurrent refreshes brought
+        // a session back after its logout.
+        var session = await NewSessionAsync("rt-grace-logout");
+        var next = await RefreshOkAsync(session.RefreshToken);
+        await factory.CreateClient().PostAsJsonAsync("/api/auth/logout", new { refreshToken = next.RefreshToken });
+
+        (await RefreshAsync(session.RefreshToken)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task ARotatedToken_ReplayedWithinTheGracePeriod_AfterAPasswordChange_IsRefused()
+    {
+        var session = await NewSessionAsync("rt-grace-password");
+        var next = await RefreshOkAsync(session.RefreshToken);
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", next.AccessToken);
+        (await client.PostAsJsonAsync("/api/auth/change-password",
+            new { currentPassword = Password, newPassword = "another correct horse" })).EnsureSuccessStatusCode();
+
+        (await RefreshAsync(session.RefreshToken)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
     public async Task Logout_RevokesTheWholeFamily()
     {
         var session = await NewSessionAsync("rt-logout");

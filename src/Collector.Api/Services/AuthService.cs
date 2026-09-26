@@ -142,9 +142,12 @@ public class AuthService
 
         if (stored.IsRevoked)
         {
-            var concurrentRefresh = stored.RevokedReason == RevokedByRotation
-                && stored.RevokedAt is { } revokedAt
-                && now - revokedAt <= RotationGracePeriod;
+            // A session ended on purpose (logout, password change, reuse) stays ended: the
+            // grace below is only for requests racing a rotation. No reuse alarm either.
+            if (stored.RevokedReason != RevokedByRotation || await SessionEndedAsync(stored, ct))
+                throw new AuthenticationFailedException("Refresh token expired or revoked");
+
+            var concurrentRefresh = stored.RevokedAt is { } revokedAt && now - revokedAt <= RotationGracePeriod;
             if (!concurrentRefresh)
             {
                 // A token that was already rotated away is being replayed: assume it leaked
@@ -202,6 +205,17 @@ public class AuthService
         }
         await _db.SaveChangesAsync(ct);
     }
+
+    /// <summary>
+    /// Whether the token's session was ended on purpose: a token of its family revoked
+    /// for another reason than a rotation. Rotated tokens keep their reason when the
+    /// family is revoked afterwards.
+    /// </summary>
+    private Task<bool> SessionEndedAsync(RefreshToken token, CancellationToken ct) =>
+        token.FamilyId is null
+            ? Task.FromResult(false)
+            : _db.RefreshTokens.AnyAsync(t => t.FamilyId == token.FamilyId && t.IsRevoked
+                && t.RevokedReason != RevokedByRotation, ct);
 
     private static string NewFamilyId() => Guid.NewGuid().ToString("N");
 
