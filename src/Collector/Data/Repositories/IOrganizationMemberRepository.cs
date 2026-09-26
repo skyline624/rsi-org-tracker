@@ -4,8 +4,6 @@ namespace Collector.Data.Repositories;
 
 public interface IOrganizationMemberRepository : IRepository<OrganizationMember>
 {
-    Task<IReadOnlyList<OrganizationMember>> GetByOrgSidAsync(string orgSid, DateTime? asOf = null, CancellationToken ct = default);
-
     /// <summary>The org's current members: one active row each, read through the (OrgSid, IsActive) index.</summary>
     Task<IReadOnlyList<OrganizationMember>> GetActiveByOrgSidAsync(string orgSid, CancellationToken ct = default);
 
@@ -15,6 +13,10 @@ public interface IOrganizationMemberRepository : IRepository<OrganizationMember>
     /// </summary>
     Task<(IReadOnlyList<OrganizationMember> Items, int Total)> GetLatestPageAsync(
         string orgSid, bool? active, int page, int pageSize, CancellationToken ct = default);
+
+    /// <summary>One page of the members seen up to <paramref name="asOf"/>, each by its latest row then, by handle regardless of case.</summary>
+    Task<(IReadOnlyList<OrganizationMember> Items, int Total)> GetPageAtAsync(
+        string orgSid, DateTime asOf, int page, int pageSize, CancellationToken ct = default);
     /// <summary>When a handle first appeared in each organization it was ever seen in.</summary>
     Task<IReadOnlyDictionary<string, DateTime>> GetFirstSeenByOrgAsync(string userHandle, CancellationToken ct = default);
     /// <summary>Distinct organizations a handle appears in: currently, or ever when <paramref name="activeOnly"/> is false.</summary>

@@ -64,6 +64,31 @@ public sealed class MemberReadsTests : IAsyncLifetime
         db.ChangeTracker.Entries().Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task ARosterAtAPastTime_IsPagedByTheDatabase_EachMemberByItsLatestRowThen()
+    {
+        // at_time used to load every row of the org and page in memory (TEST: 442 k rows).
+        var db = NewDb();
+        var t0 = Collected.AddDays(10);
+        foreach (var (handle, days, rank) in new[]
+                 {
+                     ("charlie", 0, "Recruit"), ("charlie", 2, "Member"), ("charlie", 5, "Officer"),
+                     ("Bravo", 1, "Pilot"), ("alpha", 3, "Pilot"), ("delta", 6, "Pilot"),
+                 })
+        {
+            db.OrganizationMembers.Add(new OrganizationMember { OrgSid = "GAMMA", UserHandle = handle, Rank = rank, Timestamp = t0.AddDays(days) });
+        }
+        await db.SaveChangesAsync();
+        var repo = new OrganizationMemberRepository(NewDb());
+
+        var (page1, total) = await repo.GetPageAtAsync("GAMMA", t0.AddDays(4), page: 1, pageSize: 2);
+        var (page2, _) = await repo.GetPageAtAsync("GAMMA", t0.AddDays(4), page: 2, pageSize: 2);
+
+        total.Should().Be(3, "delta only appears after that time");
+        page1.Select(m => m.UserHandle).Should().Equal("alpha", "Bravo");
+        page2.Select(m => (m.UserHandle, m.Rank)).Should().Equal(("charlie", "Member"));
+    }
+
     public async Task DisposeAsync()
     {
         await _provider.DisposeAsync();

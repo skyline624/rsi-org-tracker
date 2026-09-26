@@ -7,46 +7,6 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
 {
     public OrganizationMemberRepository(TrackerDbContext context) : base(context) { }
 
-    public async Task<IReadOnlyList<OrganizationMember>> GetByOrgSidAsync(string orgSid, DateTime? asOf = null, CancellationToken ct = default)
-    {
-        // EF Core on SQLite translates `GroupBy().Select(g => g.OrderByDescending().First())`
-        // into a correlated subquery that does ~O(N²) work. For TEST Squadron
-        // (~15k rows after GroupBy, ~27k raw rows) the LINQ version takes ~2 minutes;
-        // the window-function variant below takes ~70 ms — a 1700x speedup.
-        if (asOf.HasValue)
-        {
-            var cutoff = asOf.Value;
-            return await DbSet
-                .FromSqlInterpolated($@"
-                    SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
-                           Rank, RolesJson, UrlImage, IsActive, Stars
-                    FROM (
-                        SELECT *,
-                               ROW_NUMBER() OVER (PARTITION BY UserHandle ORDER BY Timestamp DESC) AS _rn
-                        FROM organization_members
-                        WHERE OrgSid = {orgSid}
-                          AND Timestamp <= {cutoff}
-                    )
-                    WHERE _rn = 1")
-                .AsNoTracking()
-                .ToListAsync(ct);
-        }
-
-        return await DbSet
-            .FromSqlInterpolated($@"
-                SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
-                       Rank, RolesJson, UrlImage, IsActive, Stars
-                FROM (
-                    SELECT *,
-                           ROW_NUMBER() OVER (PARTITION BY UserHandle ORDER BY Timestamp DESC) AS _rn
-                    FROM organization_members
-                    WHERE OrgSid = {orgSid}
-                )
-                WHERE _rn = 1")
-            .AsNoTracking()
-            .ToListAsync(ct);
-    }
-
     public async Task<IReadOnlyList<OrganizationMember>> GetActiveByOrgSidAsync(string orgSid, CancellationToken ct = default)
         => await DbSet.AsNoTracking().Where(m => m.OrgSid == orgSid && m.IsActive).ToListAsync(ct);
 
@@ -99,6 +59,36 @@ public class OrganizationMemberRepository : Repository<OrganizationMember>, IOrg
             .ToListAsync(ct);
         var total = await Context.Database
             .SqlQueryRaw<int>($"SELECT COUNT(*) AS Value FROM ({handles})", orgSid)
+            .SingleAsync(ct);
+        return (pageRows, total);
+    }
+
+    public async Task<(IReadOnlyList<OrganizationMember> Items, int Total)> GetPageAtAsync(
+        string orgSid, DateTime asOf, int page, int pageSize, CancellationToken ct = default)
+    {
+        // Same shape as GetLatestPageAsync, up to asOf: the page's handles first, then
+        // only their rows are read (at_time used to load the org's whole history).
+        const string handles =
+            "SELECT UserHandle FROM organization_members WHERE OrgSid = {0} AND Timestamp <= {3} GROUP BY UserHandle";
+        var offset = (page - 1) * pageSize;
+        var pageRows = await DbSet
+            .FromSqlRaw($@"
+                SELECT Id, OrgSid, UserHandle, CitizenId, Timestamp, DisplayName,
+                       Rank, RolesJson, UrlImage, IsActive, Stars
+                FROM (
+                    SELECT m.*,
+                           ROW_NUMBER() OVER (PARTITION BY m.UserHandle ORDER BY m.Timestamp DESC) AS _rn
+                    FROM organization_members m
+                    WHERE m.OrgSid = {{0}} AND m.Timestamp <= {{3}} AND m.UserHandle IN (
+                        SELECT UserHandle FROM ({handles})
+                        ORDER BY UserHandle COLLATE NOCASE LIMIT {{1}} OFFSET {{2}})
+                )
+                WHERE _rn = 1
+                ORDER BY UserHandle COLLATE NOCASE", orgSid, pageSize, offset, asOf)
+            .AsNoTracking()
+            .ToListAsync(ct);
+        var total = await Context.Database
+            .SqlQueryRaw<int>($"SELECT COUNT(*) AS Value FROM ({handles})", orgSid, pageSize, offset, asOf)
             .SingleAsync(ct);
         return (pageRows, total);
     }

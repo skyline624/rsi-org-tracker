@@ -196,10 +196,9 @@ public class OrganizationsController : ControllerBase
 
         if (at_time.HasValue)
         {
-            var then = await _memberRepo.GetByOrgSidAsync(sid, at_time.Value.ToUniversalTime(), ct);
+            var (thenItems, thenTotal) = await _memberRepo.GetPageAtAsync(sid, at_time.Value.ToUniversalTime(), page, pageSize, ct);
             return Ok(PaginatedResponse<OrganizationMemberDto>.Create(
-                then.OrderBy(m => m.UserHandle, StringComparer.OrdinalIgnoreCase).Select(m => m.ToDto(orgName)),
-                page, pageSize));
+                thenItems.Select(m => m.ToDto(orgName)).ToList(), page, pageSize, thenTotal));
         }
 
         var (items, total) = await _memberRepo.GetLatestPageAsync(sid, active, page, pageSize, ct);
@@ -222,14 +221,20 @@ public class OrganizationsController : ControllerBase
         string sid,
         [FromQuery] DateTime? from,
         [FromQuery] DateTime? to,
+        [FromQuery] int limit = 100,
         CancellationToken ct = default)
     {
         var query = _db.Organizations.AsNoTracking().Where(o => o.Sid == sid.ToUpperInvariant());
         if (from.HasValue) query = query.Where(o => o.Timestamp >= from.Value.ToUniversalTime());
         if (to.HasValue) query = query.Where(o => o.Timestamp <= to.Value.ToUniversalTime());
 
-        var history = await query.OrderByDescending(o => o.Timestamp).ToListAsync(ct);
-        return Ok(history.Select(MapOrg).ToList());
+        // Newest first, at most 500, and only the returned columns (not the page texts).
+        var history = await query
+            .OrderByDescending(o => o.Timestamp)
+            .Take(Paging.Limit(limit))
+            .Select(o => MapOrgExpr(o))
+            .ToListAsync(ct);
+        return Ok(history);
     }
 
     [HttpGet("{sid}/growth")]

@@ -33,6 +33,28 @@ public class PagingBoundsTests(ApiFactory factory)
         feed.GetArrayLength().Should().Be(500);
     }
 
+    [Fact]
+    public async Task OrganizationHistory_IsBounded_NewestFirst()
+    {
+        // Deferred from the final review: every snapshot of the org, texts included.
+        var start = DateTime.UtcNow.AddDays(-10);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<TrackerDbContext>();
+            db.Organizations.AddRange(Enumerable.Range(0, 5).Select(i => new Organization
+            {
+                Sid = "HISTORY", Name = $"Name {i}", Timestamp = start.AddDays(i), MembersCount = i,
+                ContentCollected = true, Description = new string('x', 5_000),
+            }));
+            await db.SaveChangesAsync();
+        }
+        var client = await factory.SignedInClientAsync("paging-history");
+
+        var history = await client.GetFromJsonAsync<JsonElement>("/api/organizations/HISTORY/history?limit=2");
+
+        history.EnumerateArray().Select(o => o.GetProperty("name").GetString()).Should().Equal("Name 4", "Name 3");
+    }
+
     [Theory]
     [InlineData("/api/organizations?page=-2&pageSize=0", 1, 1)]
     [InlineData("/api/organizations?page=1&pageSize=100000", 1, 200)]
