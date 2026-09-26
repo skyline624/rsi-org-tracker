@@ -15,11 +15,12 @@ public class OrgMemberCountRepository : Repository<OrgMemberCount>, IOrgMemberCo
             .OrderByDescending(c => c.CollectedAt)
             .FirstOrDefaultAsync(ct);
 
+        // A split that becomes unknown is a change too: after an incomplete read, the
+        // latest row must not keep the visible count of an earlier complete one.
         var unchanged = latest != null && latest.TotalRows == counts.TotalRows
-            && (counts.VisibleCount == null
-                || (latest.VisibleCount == counts.VisibleCount
-                    && latest.RedactedCount == counts.RedactedCount
-                    && latest.HiddenCount == counts.HiddenCount));
+            && latest.VisibleCount == counts.VisibleCount
+            && latest.RedactedCount == counts.RedactedCount
+            && latest.HiddenCount == counts.HiddenCount;
         if (unchanged) return (false, latest);
 
         DbSet.Add(counts);

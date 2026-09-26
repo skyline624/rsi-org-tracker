@@ -280,6 +280,25 @@ public sealed class MemberCollectorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AShortReadAfterACompleteOne_RecordsThatTheSplitIsUnknown_AndVerifyStaysClean()
+    {
+        // Found in review: a Short read with the same total wrote no counts row, so the
+        // latest row still gave the complete read's visible count while the roster changed.
+        var since = DateTime.UtcNow.AddMinutes(-1);
+        await DiscoverAsync("SPLIT");
+        _roster = _ => Roster(RosterStatus.Complete, 3, "alpha", "bravo");
+        await Create().Collector.CollectAllMembersAsync();
+        _roster = _ => Roster(RosterStatus.Short, 3, "alpha", "bravo", "charlie"); // someone joined mid-read
+        await Create().Collector.CollectAllMembersAsync();
+
+        (await CountersAsync("SPLIT")).Should().Equal((3, 2, 0, 1), (3, (int?)null, (int?)null, (int?)null));
+        var results = await new DataVerificationService(Create().Db, NullLogger<DataVerificationService>.Instance)
+            .VerifyAsync(since);
+        results.Where(r => r.Failed).Select(r => $"{r.Name}: {string.Join("; ", r.Samples)}").Should().BeEmpty();
+        (await EventTypesAsync()).Should().NotContain("member_count_changed");
+    }
+
+    [Fact]
     public async Task AChangeOfRsisTotal_IsAMemberCountEvent()
     {
         _roster = _ => Roster(RosterStatus.Complete, 3, "alpha");
