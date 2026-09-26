@@ -83,4 +83,18 @@ public class OrganizationHtmlParserTests
 
         _parser.ParseOrganizations(html).Single().Name.Should().Be("Steal & Deal Héraults");
     }
+
+    [Fact]
+    public void ParseOrganizations_DecodesNamesRsiEncodedTwice()
+    {
+        // RSI serves some names encoded twice ("Concepts &amp;amp; Xenotech", seen on 2026-09-26):
+        // decoded until stable, so the stored name is the same however many times it was encoded.
+        var html = @"
+            <div class='org-cell'>
+                <a href='/orgs/ARCX' class='trans-03s'><img src='/media/logo.png' alt='' /></a>
+                <h3 class=""trans-03s name"">Advanced Research Concepts &amp;amp; Xenotech</h3>
+            </div>";
+
+        _parser.ParseOrganizations(html).Single().Name.Should().Be("Advanced Research Concepts & Xenotech");
+    }
 }

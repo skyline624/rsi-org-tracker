@@ -244,7 +244,7 @@ public sealed class MaintenanceService
                     while (await reader.ReadAsync(ct))
                     {
                         var name = reader.GetString(1);
-                        var decoded = HtmlAgilityPack.HtmlEntity.DeEntitize(name);
+                        var decoded = Collector.Parsers.HtmlText.Decode(name);
                         if (decoded != name) rows.Add((reader.GetValue(0), decoded));
                     }
                 }

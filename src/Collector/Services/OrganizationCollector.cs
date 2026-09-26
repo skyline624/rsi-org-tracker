@@ -1,6 +1,5 @@
 using Collector.Data.Repositories;
 using Collector.Dtos;
-using HtmlAgilityPack;
 using Collector.Models;
 using Collector.Options;
 using Collector.Parsers;
@@ -154,7 +153,7 @@ public class OrganizationCollector : IOrganizationCollector
                             // snapshot above stores the text, a change of encoding is no event.
                             var prevSnap = new OrganizationSnapshot
                             {
-                                Sid = prev.Sid, Name = HtmlEntity.DeEntitize(prev.Name), Archetype = prev.Archetype,
+                                Sid = prev.Sid, Name = HtmlText.Decode(prev.Name), Archetype = prev.Archetype,
                                 Commitment = prev.Commitment, Recruiting = prev.Recruiting,
                                 Roleplay = prev.Roleplay, Lang = prev.Lang, Members = prev.MembersCount
                             };
@@ -354,7 +353,7 @@ public class OrganizationCollector : IOrganizationCollector
                 await _orgRepo.AddAsync(new Organization
                 {
                     Sid              = existing.Sid,
-                    Name             = HtmlEntity.DeEntitize(existing.Name),
+                    Name             = HtmlText.Decode(existing.Name),
                     UrlImage         = existing.UrlImage,
                     UrlCorpo         = existing.UrlCorpo,
                     Archetype        = existing.Archetype,

@@ -175,6 +175,19 @@ public sealed class MaintenanceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RepairOrgNames_DecodesNamesEncodedSeveralTimes_AndCanBeRunAgain()
+    {
+        var db = NewDb();
+        db.Organizations.Add(new Organization { Sid = "AADHD", Name = "Defence &amp;amp;amp; Hauling", Timestamp = Now });
+        await db.SaveChangesAsync();
+
+        (await Create().RepairOrgNamesAsync(dryRun: false)).Should().Be(1);
+        (await Create().RepairOrgNamesAsync(dryRun: false)).Should().Be(0, "a second run finds nothing left to decode");
+
+        (await NewDb().Organizations.Select(o => o.Name).SingleAsync()).Should().Be("Defence & Hauling");
+    }
+
+    [Fact]
     public async Task UnknownTarget_IsRejected()
     {
         var act = () => Create().PurgeAsync("everything", dryRun: true, batchSize: 10, Now);

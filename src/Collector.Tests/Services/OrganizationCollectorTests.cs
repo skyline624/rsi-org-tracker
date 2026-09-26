@@ -174,6 +174,18 @@ public sealed class OrganizationCollectorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Phase1_ANameRsiEncodesTwice_IsStoredDecoded_WithoutAChangeEvent()
+    {
+        await SeedAsync("ARCX", "Concepts &amp;amp; Xenotech", "Text", DateTime.UtcNow.AddDays(-2));
+        ListOnPageOne(new OrganizationData { Sid = "ARCX", Name = "Concepts & Xenotech", MembersCount = 10 });
+
+        await Create(NewDb()).DiscoverOrganizationsAsync();
+
+        (await SnapshotsAsync("ARCX"))[^1].Name.Should().Be("Concepts & Xenotech");
+        (await EventsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Phase2_ContentSnapshots_CarryTheDecodedName()
     {
         await SeedAsync("ENC2", "A &amp; B", null, DateTime.UtcNow.AddDays(-10));
