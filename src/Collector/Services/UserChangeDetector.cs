@@ -46,8 +46,11 @@ public class UserChangeDetector : IUserChangeDetector
                 null, existing.UserHandle, timestamp));
         }
 
-        // Detect display name change
-        if (existing.DisplayName != newData.DisplayName && !string.IsNullOrEmpty(newData.DisplayName))
+        // A change of a known value only: most stored users have no display name or
+        // location (the old parser could not read them), and the first value read is
+        // not an event.
+        if (existing.DisplayName != newData.DisplayName
+            && !string.IsNullOrEmpty(existing.DisplayName) && !string.IsNullOrEmpty(newData.DisplayName))
         {
             events.Add(CreateEvent(
                 "user", existing.CitizenId.ToString(), "display_name_changed",
@@ -55,8 +58,8 @@ public class UserChangeDetector : IUserChangeDetector
                 null, existing.UserHandle, timestamp));
         }
 
-        // Detect location change
-        if (existing.Location != newData.Location && !string.IsNullOrEmpty(newData.Location))
+        if (existing.Location != newData.Location
+            && !string.IsNullOrEmpty(existing.Location) && !string.IsNullOrEmpty(newData.Location))
         {
             events.Add(CreateEvent(
                 "user", existing.CitizenId.ToString(), "location_changed",

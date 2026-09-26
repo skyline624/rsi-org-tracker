@@ -358,13 +358,7 @@ public class UserCollector : IUserCollector
                     });
                 }
 
-                existingByCitizenId.UserHandle = profileData.Handle;
-                existingByCitizenId.DisplayName = profileData.DisplayName;
-                existingByCitizenId.UrlImage = profileData.UrlImage;
-                existingByCitizenId.Bio = profileData.Bio;
-                existingByCitizenId.Location = profileData.Location;
-                existingByCitizenId.Enlisted = profileData.Enlisted;
-                existingByCitizenId.UpdatedAt = timestamp;
+                ApplyProfile(existingByCitizenId, profileData, timestamp);
 
                 var latestHistory = await _handleHistoryRepo.GetLatestAsync(profileData.CitizenId, ct);
                 if (latestHistory == null || latestHistory.UserHandle != profileData.Handle)
@@ -395,13 +389,7 @@ public class UserCollector : IUserCollector
                 var existingUser = existingByCitizenId ?? existingByHandle!;
                 var userChanges = _userChangeDetector.DetectUserChanges(existingUser, profileData);
 
-                existingUser.UserHandle = profileData.Handle;
-                existingUser.DisplayName = profileData.DisplayName;
-                existingUser.UrlImage = profileData.UrlImage;
-                existingUser.Bio = profileData.Bio;
-                existingUser.Location = profileData.Location;
-                existingUser.Enlisted = profileData.Enlisted;
-                existingUser.UpdatedAt = timestamp;
+                ApplyProfile(existingUser, profileData, timestamp);
 
                 if (profileData.CitizenId > 0)
                     await _memberRepo.UpdateCitizenIdByHandleAsync(handle, profileData.CitizenId, ct);
@@ -427,5 +415,21 @@ public class UserCollector : IUserCollector
             _userRepo.ClearTrackedEntities();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Copies a read profile onto the stored user. Every profile has a display name,
+    /// an avatar and an enlistment date: when one of them cannot be read, the stored
+    /// value is kept rather than erased. A bio or a location can be removed on RSI.
+    /// </summary>
+    private static void ApplyProfile(User user, UserProfileData profile, DateTime timestamp)
+    {
+        user.UserHandle = profile.Handle;
+        user.DisplayName = profile.DisplayName ?? user.DisplayName;
+        user.UrlImage = profile.UrlImage ?? user.UrlImage;
+        user.Enlisted = profile.Enlisted ?? user.Enlisted;
+        user.Bio = profile.Bio;
+        user.Location = profile.Location;
+        user.UpdatedAt = timestamp;
     }
 }

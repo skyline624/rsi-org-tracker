@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using Collector.Dtos;
@@ -139,72 +140,48 @@ public class UserProfileHtmlParser
         return null;
     }
 
-    private string? ExtractDisplayName(HtmlDocument doc)
+    // RSI's profile markup: labelled entries such as
+    //   <p class="entry"><span class="label">Enlisted</span><strong class="value">Feb 14, 2014</strong></p>
+    // (the bio is a div.entry with a div.value), and a "profile" block holding the
+    // avatar thumbnail and, as its first unlabelled entry, the display name.
+    private static readonly Regex Whitespace = new(@"\s+", RegexOptions.Compiled);
+
+    private static string HasClass(string name) =>
+        $"contains(concat(' ', normalize-space(@class), ' '), ' {name} ')";
+
+    private static string? Clean(HtmlNode? node)
     {
-        var nameNode = doc.DocumentNode.SelectSingleNode("//*[@class='name']|//*[contains(@class, 'display-name')]|//*[contains(@class, 'profile-name')]");
-        return nameNode?.InnerText?.Trim();
+        if (node == null) return null;
+        var text = Whitespace.Replace(HtmlEntity.DeEntitize(node.InnerText), " ").Trim();
+        return text.Length == 0 ? null : text;
     }
 
-    private string? ExtractAvatarUrl(HtmlDocument doc)
+    private static HtmlNode? ProfileBlock(HtmlDocument doc) =>
+        doc.DocumentNode.SelectSingleNode($"//div[{HasClass("profile")}]");
+
+    /// <summary>The value of the entry labelled <paramref name="label"/>, whitespace collapsed.</summary>
+    private static string? EntryValue(HtmlDocument doc, string label) =>
+        Clean(doc.DocumentNode.SelectSingleNode(
+            $"//*[{HasClass("entry")}][*[{HasClass("label")} and normalize-space(.) = '{label}']]/*[{HasClass("value")}]"));
+
+    private static string? ExtractDisplayName(HtmlDocument doc) =>
+        Clean(ProfileBlock(doc)?.SelectSingleNode(
+            $".//*[{HasClass("entry")}][not(*[{HasClass("label")}])]/strong[{HasClass("value")}]"));
+
+    /// <summary>The src as served, usually a path relative to robertsspaceindustries.com.</summary>
+    private static string? ExtractAvatarUrl(HtmlDocument doc)
     {
-        var img = doc.DocumentNode.SelectSingleNode("//img[contains(@class, 'avatar')]|//img[contains(@class, 'profile-image')]|//img[contains(@src, 'avatar')]");
-        return img?.GetAttributeValue("src", "");
+        var src = ProfileBlock(doc)?.SelectSingleNode($".//*[{HasClass("thumb")}]//img")?.GetAttributeValue("src", null);
+        return string.IsNullOrWhiteSpace(src) ? null : src.Trim();
     }
 
-    private string? ExtractBio(HtmlDocument doc)
-    {
-        var bioNode = doc.DocumentNode.SelectSingleNode("//*[@class='bio']|//*[contains(@class, 'biography')]|//*[contains(@class, 'about')]");
-        return bioNode?.InnerText?.Trim();
-    }
+    private static string? ExtractBio(HtmlDocument doc) => EntryValue(doc, "Bio");
 
-    private string? ExtractLocation(HtmlDocument doc)
-    {
-        var locationNode = doc.DocumentNode.SelectSingleNode("//*[@class='location']|//*[contains(@class, 'region')]|//*[contains(@class, 'country')]");
-        return locationNode?.InnerText?.Trim();
-    }
+    private static string? ExtractLocation(HtmlDocument doc) => EntryValue(doc, "Location");
 
-    private DateTime? ExtractEnlistedDate(HtmlDocument doc)
-    {
-        var enlistedNode = doc.DocumentNode.SelectSingleNode("//*[contains(text(), 'Enlisted')]|//*[contains(@class, 'enlisted')]|//*[contains(@class, 'member-since')]");
-
-        if (enlistedNode == null)
-        {
-            // Try to find any date-like content
-            enlistedNode = doc.DocumentNode.SelectSingleNode("//*[contains(text(), 'Enlisted')]/..");
-        }
-
-        if (enlistedNode == null)
-        {
-            return null;
-        }
-
-        var text = enlistedNode.InnerText ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return null;
-        }
-
-        // Try to parse date like "Enlisted: Jan 15, 2020" or similar
-        var patterns = new[]
-        {
-            @"Enlisted[:\s]+(\w+\s+\d{1,2},?\s+\d{4})",
-            @"(\d{4}-\d{2}-\d{2})",
-            @"(\w+\s+\d{1,2},?\s+\d{4})"
-        };
-
-        foreach (var pattern in patterns)
-        {
-            var match = System.Text.RegularExpressions.Regex.Match(text, pattern);
-            if (match.Success)
-            {
-                var dateStr = match.Groups[1].Value;
-                if (DateTime.TryParse(dateStr, out var date))
-                {
-                    return date;
-                }
-            }
-        }
-
-        return null;
-    }
+    private static DateTime? ExtractEnlistedDate(HtmlDocument doc) =>
+        DateTime.TryParseExact(EntryValue(doc, "Enlisted"), "MMM d, yyyy", CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var date)
+            ? DateTime.SpecifyKind(date, DateTimeKind.Utc)
+            : null;
 }
