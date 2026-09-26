@@ -57,14 +57,20 @@ public class ProfileFieldsTests
         _parser.ParseProfile(Profile()).Data!.Bio.Should().Be("Fixture bio.");
     }
 
-    [Fact]
-    public void Location_IsTheLocationEntry_WithItsWhitespaceCollapsed()
+    [Theory]
+    [InlineData("\n   France,\n   Paris  ", "France, Paris")]
+    // As RSI renders it: country and region on their own lines, the comma on the region's.
+    [InlineData("\n   United States\n   , New Jersey\n", "United States, New Jersey")]
+    [InlineData("France", "France")]
+    public void Location_IsTheLocationEntry_WrittenAsCountryCommaRegion(string value, string expected)
     {
+        // Settled before any location is stored: reformatting later would turn every
+        // stored location into a false location_changed.
         var html = Profile().Replace(
             "<span class=\"label\">Fluency</span>",
-            "<span class=\"label\">Location</span>\n<strong class=\"value\">\n   France,\n   Paris  </strong></p><p class=\"entry\"><span class=\"label\">Fluency</span>");
+            $"<span class=\"label\">Location</span>\n<strong class=\"value\">{value}</strong></p><p class=\"entry\"><span class=\"label\">Fluency</span>");
 
-        _parser.ParseProfile(html).Data!.Location.Should().Be("France, Paris");
+        _parser.ParseProfile(html).Data!.Location.Should().Be(expected);
     }
 
     [Fact]

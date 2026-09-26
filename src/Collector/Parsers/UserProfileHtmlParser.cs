@@ -177,7 +177,11 @@ public class UserProfileHtmlParser
 
     private static string? ExtractBio(HtmlDocument doc) => EntryValue(doc, "Bio");
 
-    private static string? ExtractLocation(HtmlDocument doc) => EntryValue(doc, "Location");
+    // RSI puts the region's comma on its own line ("United States\n , New Jersey").
+    private static readonly Regex SpaceBeforeComma = new(@"\s+,", RegexOptions.Compiled);
+
+    private static string? ExtractLocation(HtmlDocument doc) =>
+        EntryValue(doc, "Location") is { } location ? SpaceBeforeComma.Replace(location, ",") : null;
 
     private static DateTime? ExtractEnlistedDate(HtmlDocument doc) =>
         DateTime.TryParseExact(EntryValue(doc, "Enlisted"), "MMM d, yyyy", CultureInfo.InvariantCulture,
