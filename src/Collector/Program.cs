@@ -75,7 +75,16 @@ try
 
     // The unit's ExecStartPre: `systemctl restart sc-collector` returns once tracker.db is
     // migrated (or fails with the migration), before deploy.sh restarts the API on it.
-    if (migrateOnly) return;
+    // Organization names stored HTML-encoded are decoded here, before the first Phase 1
+    // compares with them: only their encoding changes, and later runs find none.
+    if (migrateOnly)
+    {
+        using var repairScope = host.Services.CreateScope();
+        var decoded = await repairScope.ServiceProvider.GetRequiredService<MaintenanceService>()
+            .RepairOrgNamesAsync(dryRun: false);
+        Console.WriteLine($"Organization names decoded: {decoded}");
+        return;
+    }
 
     var options = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<CollectorOptions>>().Value;
     var logger = host.Services.GetRequiredService<ILogger<Program>>();

@@ -96,6 +96,44 @@ public sealed class SourceComparisonServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ActiveRowsDifferingOnlyByCase_DoNotAbortTheCheck()
+    {
+        var db = NewDb();
+        db.OrganizationMembers.Add(new OrganizationMember { OrgSid = "ORG", UserHandle = "ALPHA", Rank = "Pilot", Timestamp = Read, IsActive = true });
+        await db.SaveChangesAsync();
+        LiveRoster(RosterStatus.Complete, 3, ("alpha", "Pilot"), ("bravo", "Pilot"));
+
+        var act = () => Create().CompareRostersAsync(5, Read.AddHours(-1));
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task AReusedHandle_IsComparedWithTheCitizenThatWasSampled()
+    {
+        // The former owner of the handle, stored first: it must not be the row compared.
+        var db = NewDb();
+        var current = await db.Users.SingleAsync(u => u.CitizenId == 100001);
+        db.Users.Remove(current);
+        await db.SaveChangesAsync();
+        db.Users.Add(new User { CitizenId = 1, UserHandle = "fixture-pilot", DisplayName = "Former", CreatedAt = Read.AddYears(-3), UpdatedAt = Read.AddDays(-400) });
+        await db.SaveChangesAsync();
+        db.Users.Add(new User
+        {
+            CitizenId = 100001, UserHandle = "fixture-pilot", DisplayName = "fixture-pilot", Bio = "Fixture bio.",
+            Enlisted = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            UrlImage = "https://robertsspaceindustries.com/media/fixture/avatar.jpg", CreatedAt = Read, UpdatedAt = Read,
+        });
+        await db.SaveChangesAsync();
+        _rsi.Setup(r => r.GetUserProfileResultAsync("fixture-pilot", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserProfileFetchResult(RsiFixtures.Text("profile-citizen.html"), UserProfileFetchOutcome.Ok));
+
+        var result = (await Create().CompareProfilesAsync(5, Read.AddHours(-1))).Single();
+
+        result.Differences.Select(d => d.Field).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task AnIncompleteLiveRead_IsSkipped_NotCompared()
     {
         LiveRoster(RosterStatus.Partial, 3, ("alpha", "Pilot"));

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Collector.Dtos;
 using Collector.Models;
+using Collector.Parsers;
 using Microsoft.Extensions.Logging;
 
 namespace Collector.Services;
@@ -28,6 +29,12 @@ public class UserChangeDetector : IUserChangeDetector
         _logger = logger;
     }
 
+    private static readonly System.Text.RegularExpressions.Regex Whitespace = new(@"\s+");
+
+    /// <summary>A stored value as the profile parser writes it today.</summary>
+    private static string? Normalized(string? value)
+        => value == null ? null : Whitespace.Replace(HtmlText.Decode(value), " ").Trim();
+
     public IReadOnlyList<ChangeEvent> DetectUserChanges(User existing, UserProfileData newData)
     {
         var events = new List<ChangeEvent>();
@@ -48,8 +55,9 @@ public class UserChangeDetector : IUserChangeDetector
 
         // A change of a known value only: most stored users have no display name or
         // location (the old parser could not read them), and the first value read is
-        // not an event.
-        if (existing.DisplayName != newData.DisplayName
+        // not an event. Stored values are compared the way the parser now writes them:
+        // some were stored HTML-encoded or with runs of whitespace.
+        if (Normalized(existing.DisplayName) != newData.DisplayName
             && !string.IsNullOrEmpty(existing.DisplayName) && !string.IsNullOrEmpty(newData.DisplayName))
         {
             events.Add(CreateEvent(
@@ -58,7 +66,7 @@ public class UserChangeDetector : IUserChangeDetector
                 null, existing.UserHandle, timestamp));
         }
 
-        if (existing.Location != newData.Location
+        if (Normalized(existing.Location) != newData.Location
             && !string.IsNullOrEmpty(existing.Location) && !string.IsNullOrEmpty(newData.Location))
         {
             events.Add(CreateEvent(

@@ -29,6 +29,28 @@ public sealed class MigrateModeTests : IDisposable
     }
 
     [Fact]
+    public async Task MigrateMode_DecodesHtmlEncodedOrganizationNames_BeforeTheCollectorStarts()
+    {
+        // Before the first Phase 1 of the new collector: otherwise it writes a clean snapshot
+        // next to each encoded one, and the repair then makes the pair identical.
+        (await RunMigrateAsync("Development")).ExitCode.Should().Be(0);
+        await using (var seed = OpenDatabase())
+        {
+            seed.Organizations.Add(new Collector.Models.Organization { Sid = "ENC", Name = "Steal &amp; Deal", Timestamp = DateTime.UtcNow });
+            await seed.SaveChangesAsync();
+        }
+
+        var (_, exitCode, output) = await RunMigrateAsync("Development");
+
+        exitCode.Should().Be(0, output);
+        await using var db = OpenDatabase();
+        (await db.Organizations.Select(o => o.Name).SingleAsync()).Should().Be("Steal & Deal");
+    }
+
+    private TrackerDbContext OpenDatabase() => new(new DbContextOptionsBuilder<TrackerDbContext>()
+        .UseSqlite($"Data Source={Path.Combine(_dataDir, "tracker.db")};Pooling=False").Options);
+
+    [Fact]
     public void TheBuildShipsTheMarkerThatEnablesTheUnitsPreStep()
     {
         // deploy/systemd/sc-collector.service only runs --migrate when this file is next

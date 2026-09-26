@@ -68,6 +68,16 @@ public sealed class UserProfileUpdateTests : IAsyncLifetime
         });
     }
 
+    [Theory]
+    // 564 stored display names are HTML-encoded and 51 hold runs of whitespace (rehearsal copy):
+    // read again with the fixed parser, they are the same names.
+    [InlineData("Salt &amp; Pepper", "Salt & Pepper")]
+    [InlineData("Old  Name\n", "Old Name")]
+    public void AStoredValueThatDiffersOnlyByEncodingOrSpacing_IsNotAChange(string stored, string read)
+    {
+        _detector.DetectUserChanges(Stored(stored, stored), Read(read, read)).Should().BeEmpty();
+    }
+
     [Fact]
     public async Task EnrichingAKnownCitizen_FillsTheProfileFields()
     {

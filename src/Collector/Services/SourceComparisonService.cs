@@ -83,7 +83,9 @@ public sealed class SourceComparisonService
                 continue;
             }
 
-            var storedByHandle = stored.ToDictionary(m => m.UserHandle, m => m.Rank, StringComparer.OrdinalIgnoreCase);
+            // Two active rows may differ only by case: one of them is enough to compare.
+            var storedByHandle = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var m in stored) storedByHandle.TryAdd(m.UserHandle, m.Rank);
             var liveByHandle = live.Members.ToDictionary(m => m.Handle, m => m.Rank, StringComparer.OrdinalIgnoreCase);
             var comparison = new RosterComparison(
                 sid, readAt, storedTotal, live.TotalRows,
@@ -110,14 +112,16 @@ public sealed class SourceComparisonService
     public async Task<IReadOnlyList<ProfileComparison>> CompareProfilesAsync(
         int sampleSize, DateTime since, CancellationToken ct = default)
     {
+        // Sampled by citizen number: a handle given up and taken by someone else is held by two rows.
         var sample = await SampleAsync(
-            "SELECT UserHandle, UpdatedAt FROM users WHERE UpdatedAt >= $since ORDER BY random() LIMIT $sample",
+            "SELECT CAST(CitizenId AS TEXT), UpdatedAt FROM users WHERE UpdatedAt >= $since ORDER BY random() LIMIT $sample",
             since, sampleSize, 0, ct);
 
         var results = new List<ProfileComparison>();
-        foreach (var (handle, readAt) in sample)
+        foreach (var (citizenId, readAt) in sample)
         {
-            var stored = await _db.Users.AsNoTracking().FirstAsync(u => u.UserHandle == handle, ct);
+            var stored = await _db.Users.AsNoTracking().FirstAsync(u => u.CitizenId == int.Parse(citizenId), ct);
+            var handle = stored.UserHandle;
             var fetched = await _rsi.GetUserProfileResultAsync(handle, ct);
             if (fetched.Outcome != UserProfileFetchOutcome.Ok || fetched.Html == null)
             {

@@ -266,6 +266,28 @@ public sealed class DataVerificationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ANameWithAnAmpersandAndASemicolon_IsNotAnEncodedName()
+    {
+        await ChangeAsync(db => db.Organizations.Add(new Organization { Sid = "ORG", Name = "Salt & Pepper; Co", Timestamp = Read, MembersCount = 2 }));
+
+        (await CountAsync("org-name-html-entities")).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ARosterRowMatchesItsCitizen_RegardlessOfTheHandlesCase()
+    {
+        // Phase 3 maps handles to citizens regardless of case (the newest row wins).
+        await ChangeAsync(db =>
+        {
+            db.Users.Add(new User { CitizenId = 10, UserHandle = "alpha", CreatedAt = Read, UpdatedAt = Read.AddDays(-90), DisplayName = "A", Enlisted = Read });
+            db.Users.Add(new User { CitizenId = 11, UserHandle = "ALPHA", CreatedAt = Read, UpdatedAt = Read.AddDays(-9), DisplayName = "B", Enlisted = Read });
+            db.OrganizationMembers.Single(m => m.UserHandle == "alpha").CitizenId = 11;
+        });
+
+        (await CountAsync("roster-and-citizen-disagree")).Should().Be(0);
+    }
+
+    [Fact]
     public async Task ADeadOrganizationReadAgain_IsFound()
     {
         await ChangeAsync(db => db.DiscoveredOrganizations.Single().DeadAt = Read.AddMinutes(-5));

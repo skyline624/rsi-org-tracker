@@ -43,6 +43,17 @@ qu'elle en avait besoin est annulée automatiquement. Une release plus ancienne 
 mode (sans `migrate-mode.txt` à côté de `Collector.dll`, par exemple lors d'un retour
 arrière) saute l'`ExecStartPre` et migre au démarrage, comme avant.
 
+Ce même `--migrate` décode les noms d'organisation stockés encodés en HTML par l'ancien
+parser (« Les H&amp;eacute;raults 34 », environ 35 000 lignes sur la copie du 24/09,
+24 s) avant la première phase 1 de la nouvelle version : seul l'encodage change, aucun
+événement n'est écrit, et les démarrages suivants n'en trouvent plus. La commande
+manuelle `--maintenance repair-org-names [--dry-run]` fait la même chose.
+
+Après un déploiement, `Collector.dll --maintenance verify --since <heure du déploiement UTC>`
+(lecture seule, collector en marche) contrôle la cohérence de ce que la nouvelle version
+écrit, et `--integrity-check --sample 20 --since <même heure>` compare un échantillon
+avec RSI (une centaine de requêtes).
+
 ## Revenir en arrière
 
 ```bash

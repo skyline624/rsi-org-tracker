@@ -1,4 +1,5 @@
 using Collector.Data;
+using Collector.Parsers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -24,7 +25,9 @@ public sealed record VerificationResult(
 /// </summary>
 public sealed class DataVerificationService
 {
-    private sealed record Check(string Name, string Description, string Sql, bool Informational = false);
+    /// <summary><paramref name="Keep"/> narrows the rows the SQL returns where SQL cannot say it.</summary>
+    private sealed record Check(
+        string Name, string Description, string Sql, bool Informational = false, Func<SqliteDataReader, bool>? Keep = null);
 
     /// <summary>Organizations whose roster Phase 3 read since the date.</summary>
     private const string OrgsReadSince =
@@ -33,9 +36,12 @@ public sealed class DataVerificationService
     /// <summary>Each such organization's latest roster log, when written since the date.</summary>
     private const string LatestLogs = $"""
         latest AS (
-            SELECT l.OrgSid, MAX(l.CollectionTime) AS t FROM member_collection_log l
-            WHERE l.OrgSid IN ({OrgsReadSince})
-            GROUP BY l.OrgSid HAVING MAX(l.CollectionTime) >= $since),
+            -- One index seek per organization (a GROUP BY would walk every log entry).
+            SELECT OrgSid, t FROM (
+                SELECT d.Sid AS OrgSid,
+                    (SELECT MAX(l.CollectionTime) FROM member_collection_log l WHERE l.OrgSid = d.Sid) AS t
+                FROM discovered_organizations d WHERE d.LastMembersCollectedAt >= $since)
+            WHERE t >= $since),
         logged AS (
             SELECT l.OrgSid, l.UserHandle FROM member_collection_log l
             JOIN latest ON latest.OrgSid = l.OrgSid AND l.CollectionTime = latest.t),
@@ -206,7 +212,9 @@ public sealed class DataVerificationService
             """),
         new("org-name-html-entities",
             "an organization snapshot whose name is still HTML-encoded (\"Steal &amp; Deal\")",
-            "SELECT Sid, Name FROM organizations WHERE Timestamp >= $since AND Name LIKE '%&%;%'"),
+            "SELECT Sid, Name FROM organizations WHERE Timestamp >= $since AND Name LIKE '%&%;%'",
+            // "Salt & Pepper; Co" matches the LIKE but decodes to itself.
+            Keep: row => HtmlText.Decode(row.GetString(1)) != row.GetString(1)),
         new("dead-org-read",
             "a roster read after the organization was declared dead",
             """
@@ -218,12 +226,14 @@ public sealed class DataVerificationService
         // A reused handle is held by two citizens until the former owner is read again:
         // the roster row must match one of them.
         new("roster-and-citizen-disagree",
-            "an active roster row whose citizen number matches no citizen holding that handle",
+            "an active roster row whose citizen is known under neither that handle nor a former one (case ignored)",
             $"""
             SELECT m.OrgSid, m.UserHandle, m.CitizenId FROM organization_members m
             WHERE m.OrgSid IN ({OrgsReadSince}) AND m.IsActive = 1 AND m.Timestamp >= $since AND m.CitizenId IS NOT NULL
-              AND EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle)
-              AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle AND u.CitizenId = m.CitizenId)
+              AND NOT EXISTS (SELECT 1 FROM users u
+                              WHERE u.CitizenId = m.CitizenId AND u.UserHandle = m.UserHandle COLLATE NOCASE)
+              AND NOT EXISTS (SELECT 1 FROM user_handle_history h
+                              WHERE h.CitizenId = m.CitizenId AND h.UserHandle = m.UserHandle COLLATE NOCASE)
             """),
         new("handle-held-by-two-citizens",
             "handles stored for two citizens: a handle given up and taken by someone else, until the former owner is read again",
@@ -279,6 +289,7 @@ public sealed class DataVerificationService
                 {
                     while (await reader.ReadAsync(ct))
                     {
+                        if (check.Keep != null && !check.Keep(reader)) continue;
                         if (count++ < 5)
                         {
                             samples.Add(string.Join(" | ", Enumerable.Range(0, reader.FieldCount)
