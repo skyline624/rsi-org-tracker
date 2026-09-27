@@ -35,6 +35,19 @@ jobs:
       - name: Test
         run: dotnet test Collector.sln -c Release --no-build
 
+      # deploy.sh publishes both, and a build that succeeds says nothing of a publish: the
+      # first production deploy stopped on NETSDK1152 (the collector's appsettings.json
+      # next to the API's). The API must publish its own settings, and only the collector
+      # carries the migrate-mode marker its unit looks for.
+      - name: Publish as deploy.sh does
+        run: |
+          dotnet publish src/Collector.Api/Collector.Api.csproj -c Release --no-restore -o "$RUNNER_TEMP/api"
+          dotnet publish src/Collector/Collector.csproj -c Release --no-restore -o "$RUNNER_TEMP/collector"
+          grep -q '"JwtIssuer"' "$RUNNER_TEMP/api/appsettings.json"
+          test ! -e "$RUNNER_TEMP/api/migrate-mode.txt"
+          grep -q '"Collector"' "$RUNNER_TEMP/collector/appsettings.json"
+          test -e "$RUNNER_TEMP/collector/migrate-mode.txt"
+
       # Both contexts have a design-time factory: no host configuration is needed.
       - name: EF model matches migrations
         run: |

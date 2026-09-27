@@ -14,6 +14,22 @@
     <ProjectReference Include="..\Collector\Collector.csproj" />
   </ItemGroup>
 
+  <!--
+    The collector's appsettings.json and migrate-mode.txt ride along with the project
+    reference. Published next to the API's own appsettings.json they stopped the publish
+    (NETSDK1152), and the API must never read the collector's settings: drop them before
+    the SDK checks for duplicates.
+  -->
+  <Target Name="ExcludeCollectorFilesFromPublish" AfterTargets="ComputeFilesToPublish" BeforeTargets="_HandleFileConflictsForPublish">
+    <PropertyGroup>
+      <_CollectorDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../Collector/'))</_CollectorDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+        Condition="$([System.String]::Copy('%(ResolvedFileToPublish.FullPath)').StartsWith('$(_CollectorDir)')) and ('%(ResolvedFileToPublish.RelativePath)' == 'appsettings.json' or '%(ResolvedFileToPublish.RelativePath)' == 'migrate-mode.txt')" />
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="BCrypt.Net-Next" />
