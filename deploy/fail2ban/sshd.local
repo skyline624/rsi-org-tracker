@@ -2,6 +2,9 @@
 [sshd]
 enabled  = true
 backend  = systemd
+# Ubuntu 24.04 runs sshd as ssh.service: the filter's default match (sshd.service)
+# sees none of its log lines, and the jail would never ban anyone.
+journalmatch = _SYSTEMD_UNIT=ssh.service + _COMM=sshd
 maxretry = 5
 findtime = 10m
 bantime  = 1h
