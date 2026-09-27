@@ -248,6 +248,11 @@ public sealed class DataVerificationService
         new("location-format",
             "a location not written as \"Country, Region\"",
             "SELECT CitizenId, Location FROM users WHERE UpdatedAt >= $since AND Location LIKE '% ,%'"),
+        // Whatever the date: what Phase 4 still has to read again.
+        new("profiles-to-read-again",
+            "a citizen whose profile an older parser stored, not read again yet",
+            $"SELECT CitizenId, UserHandle FROM users WHERE ParserVersion < {UserProfileHtmlParser.Version}",
+            Informational: true),
         new("queue-state",
             "an enrichment queue row whose Enriched flag contradicts its outcome",
             """

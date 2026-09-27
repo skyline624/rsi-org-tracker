@@ -44,6 +44,12 @@ public class User
     public DateTime? Enlisted { get; set; }
 
     /// <summary>
+    /// Version of the profile parser that last read this profile (see UserProfileHtmlParser.Version).
+    /// Rows written before the column existed are 1; Phase 4 reads older versions again.
+    /// </summary>
+    public int ParserVersion { get; set; } = 1;
+
+    /// <summary>
     /// Record creation timestamp.
     /// </summary>
     public DateTime CreatedAt { get; set; }

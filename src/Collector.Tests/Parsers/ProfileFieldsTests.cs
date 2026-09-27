@@ -58,6 +58,19 @@ public class ProfileFieldsTests
     }
 
     [Theory]
+    // As RSI renders a bio: its line breaks as "<br />" followed by a newline.
+    [InlineData("\n      Reddit: u/Fixture<br />\nDiscord:   Fixture#0001<br />\n\n", "Reddit: u/Fixture\nDiscord: Fixture#0001")]
+    [InlineData("First line<br>Second line", "First line\nSecond line")]
+    [InlineData("One<br />\n<br />\n<br />\n<br />\nTwo &quot;quoted&quot;", "One\n\nTwo \"quoted\"")]
+    public void Bio_KeepsItsLineBreaks(string value, string expected)
+    {
+        // The bio used to be stored on one line: "Reddit: u/Fixture Discord: Fixture#0001".
+        var html = Profile().Replace("<div class=\"value\">Fixture bio.</div>", $"<div class=\"value\">{value}</div>");
+
+        _parser.ParseProfile(html).Data!.Bio.Should().Be(expected);
+    }
+
+    [Theory]
     [InlineData("\n   France,\n   Paris  ", "France, Paris")]
     // As RSI renders it: country and region on their own lines, the comma on the region's.
     [InlineData("\n   United States\n   , New Jersey\n", "United States, New Jersey")]

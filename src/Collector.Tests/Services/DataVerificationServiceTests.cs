@@ -1,6 +1,7 @@
 using Collector.Data;
 using Collector.Extensions;
 using Collector.Models;
+using Collector.Parsers;
 using Collector.Services;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
@@ -331,6 +332,25 @@ public sealed class DataVerificationServiceTests : IAsyncLifetime
 
         (await CountAsync("citizen-profile-incomplete")).Should().Be(1);
         (await CountAsync("location-format")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ProfilesStoredByAnOlderParser_AreCounted_UntilReadAgain()
+    {
+        // Whatever the date: this is how far Phase 4 still has to go.
+        await ChangeAsync(db =>
+        {
+            db.Users.Add(new User { CitizenId = 4, UserHandle = "delta", CreatedAt = Read.AddYears(-1), UpdatedAt = Read.AddYears(-1) });
+            db.Users.Add(new User
+            {
+                CitizenId = 5, UserHandle = "echo", CreatedAt = Read, UpdatedAt = Read, DisplayName = "E", Enlisted = Read,
+                ParserVersion = UserProfileHtmlParser.Version,
+            });
+        });
+
+        var result = (await VerifyAsync()).Single(r => r.Name == "profiles-to-read-again");
+
+        (result.Informational, result.Count, result.Samples.Single()).Should().Be((true, 1L, "4 | delta"));
     }
 
     [Fact]

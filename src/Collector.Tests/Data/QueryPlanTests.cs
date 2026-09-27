@@ -82,6 +82,15 @@ public sealed class QueryPlanTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProfilesToRefresh_WalkThePrimaryKeyFromTheCursor()
+    {
+        // Phase 4 asks for the next few every few seconds while hundreds of thousands wait.
+        var plan = await PlanAsync(UserRepository.ProfilesToRefresh(_db.Users, afterId: 1000, version: 2).Take(10));
+
+        plan.Should().Contain("USING INTEGER PRIMARY KEY (rowid>?)").And.NotContain("TEMP B-TREE");
+    }
+
+    [Fact]
     public async Task QueueDueRows_ReadThePendingIndexInOrder()
     {
         var plan = await PlanAsync(UserEnrichmentQueueRepository.DueQuery(_db.UserEnrichmentQueue, 1, DateTime.UtcNow).Take(10));

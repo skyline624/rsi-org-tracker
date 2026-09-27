@@ -25,6 +25,22 @@ public readonly record struct EnrichBatchResult(int Enriched, int Gone, int Defe
 }
 
 /// <summary>
+/// Per-outcome tally of a single <see cref="IUserCollector.RefreshProfilesAsync"/> pass.
+/// </summary>
+/// <param name="LastId">Id of the last citizen of the batch: the next batch starts after it.</param>
+/// <param name="Refreshed">Profiles read and stored.</param>
+/// <param name="Gone">Handles that answered 404: deleted, or given up by a renamed citizen.</param>
+/// <param name="NoCitizenRecord">Live profiles without a citizen record.</param>
+/// <param name="TakenOver">Handles now held by another citizen; the row is left as it is.</param>
+/// <param name="Failed">Failed fetches and unreadable pages, read again on the next pass.</param>
+public readonly record struct ProfileRefreshResult(
+    long LastId, int Refreshed, int Gone, int NoCitizenRecord, int TakenOver, int Failed)
+{
+    /// <summary>Citizens handled in this batch.</summary>
+    public int Processed => Refreshed + Gone + NoCitizenRecord + TakenOver + Failed;
+}
+
+/// <summary>
 /// Interface for user enrichment operations.
 /// </summary>
 public interface IUserCollector
@@ -37,6 +53,14 @@ public interface IUserCollector
     /// progress and is <b>not</b> a signal to back off.
     /// </summary>
     Task<EnrichBatchResult> EnrichBatchAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Reads again one batch of known citizens whose profile an older parser stored, the
+    /// first ones after <paramref name="afterId"/>. The profile is stored as a reference
+    /// read (no change event). A result with nothing processed means no such citizen is
+    /// left after <paramref name="afterId"/>.
+    /// </summary>
+    Task<ProfileRefreshResult> RefreshProfilesAsync(long afterId, CancellationToken ct = default);
 
     /// <summary>
     /// Enriches a single user profile from pre-fetched HTML.
@@ -179,6 +203,79 @@ public class UserCollector : IUserCollector
         return new EnrichBatchResult(enriched, gone, deferred, failed);
     }
 
+    public async Task<ProfileRefreshResult> RefreshProfilesAsync(long afterId, CancellationToken ct = default)
+    {
+        var batchSize = Math.Max(1, _options.MaxConcurrentRequests) * 2;
+        var citizens = await _userRepo.GetProfilesToRefreshAsync(afterId, UserProfileHtmlParser.Version, batchSize, ct);
+        if (citizens.Count == 0) return default;
+
+        var fetchResults = await Task.WhenAll(citizens.Select(c => FetchProfileResultSafeAsync(c.UserHandle, ct)));
+
+        int refreshed = 0, gone = 0, noCitizenRecord = 0, takenOver = 0, failed = 0;
+        for (var i = 0; i < citizens.Count; i++)
+        {
+            var citizen = citizens[i];
+            var fetch = fetchResults[i];
+            try
+            {
+                if (fetch.Outcome == UserProfileFetchOutcome.NotFound)
+                {
+                    await _userRepo.MarkProfileReadAsync(citizen.Id, UserProfileHtmlParser.Version, ct);
+                    gone++;
+                    continue;
+                }
+                if (fetch.Outcome == UserProfileFetchOutcome.Failed)
+                {
+                    failed++;
+                    continue;
+                }
+
+                var parsed = _profileParser.ParseProfile(fetch.Html!);
+                switch (parsed.Outcome)
+                {
+                    case ProfileParseOutcome.NoCitizenNumber:
+                        await _userRepo.MarkProfileReadAsync(citizen.Id, UserProfileHtmlParser.Version, ct);
+                        noCitizenRecord++;
+                        break;
+
+                    case ProfileParseOutcome.Success when parsed.Data!.CitizenId != citizen.CitizenId:
+                        // This citizen gave the handle up. Their row is fixed when their new
+                        // handle shows up in a roster; the new holder, when Phase 4 reads it.
+                        _logger.LogInformation(
+                            "Profile refresh: {Handle} now belongs to citizen {CitizenId}, not {FormerCitizenId}; row left as it is",
+                            citizen.UserHandle, parsed.Data.CitizenId, citizen.CitizenId);
+                        await _userRepo.MarkProfileReadAsync(citizen.Id, UserProfileHtmlParser.Version, ct);
+                        takenOver++;
+                        break;
+
+                    case ProfileParseOutcome.Success
+                        when await EnrichUserCoreAsync(citizen.UserHandle, isNewHandle: false, parsed.Data!, ct):
+                        refreshed++;
+                        break;
+
+                    default:
+                        failed++;
+                        break;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error refreshing the profile of {Handle}", citizen.UserHandle);
+                failed++;
+            }
+        }
+
+        var result = new ProfileRefreshResult(citizens[^1].Id, refreshed, gone, noCitizenRecord, takenOver, failed);
+        _logger.LogInformation(
+            "Profile refresh batch: {Refreshed} refreshed, {Gone} gone(404), {NoRecord} n/a, {TakenOver} handle taken over, {Failed} failed (up to user {LastId})",
+            refreshed, gone, noCitizenRecord, takenOver, failed, result.LastId);
+        return result;
+    }
+
     private async Task<UserProfileFetchResult> FetchProfileResultSafeAsync(string handle, CancellationToken ct)
     {
         try
@@ -298,6 +395,7 @@ public class UserCollector : IUserCollector
                     Bio = profileData.Bio,
                     Location = profileData.Location,
                     Enlisted = profileData.Enlisted,
+                    ParserVersion = UserProfileHtmlParser.Version,
                     CreatedAt = timestamp,
                     UpdatedAt = timestamp
                 };
@@ -399,7 +497,11 @@ public class UserCollector : IUserCollector
                 // existingByCitizenId (permanent key) over existingByHandle whenever
                 // both are set, to defend against handle-reuse edge cases.
                 var existingUser = existingByCitizenId ?? existingByHandle!;
-                var userChanges = _userChangeDetector.DetectUserChanges(existingUser, profileData);
+                // A profile last read by an older parser is a reference read: its stored
+                // fields may have been misread, and a real change happened at an unknown time.
+                var userChanges = existingUser.ParserVersion >= UserProfileHtmlParser.Version
+                    ? _userChangeDetector.DetectUserChanges(existingUser, profileData)
+                    : [];
 
                 ApplyProfile(existingUser, profileData, timestamp);
 
@@ -442,6 +544,7 @@ public class UserCollector : IUserCollector
         user.Enlisted = profile.Enlisted ?? user.Enlisted;
         user.Bio = profile.Bio;
         user.Location = profile.Location;
+        user.ParserVersion = UserProfileHtmlParser.Version;
         user.UpdatedAt = timestamp;
     }
 }

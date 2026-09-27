@@ -140,7 +140,7 @@ export default async function UserDetailPage({ params }: PageProps) {
               <span>· LAST SYNC {formatRelative(user.updatedAt)}</span>
             </div>
             {user.bio && (
-              <p className="mt-4 max-w-3xl font-ui text-sm leading-relaxed text-hud-text">
+              <p className="mt-4 max-w-3xl whitespace-pre-line font-ui text-sm leading-relaxed text-hud-text">
                 {user.bio}
               </p>
             )}

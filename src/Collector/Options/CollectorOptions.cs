@@ -93,6 +93,13 @@ public class CollectorOptions
     public TimeSpan Phase4IdleInterval { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// Profiles stored by an older parser that Phase 4 reads again per hour, only while the
+    /// queue is below <see cref="Phase4MinPendingThreshold"/>. 3 600 an hour is half of the
+    /// RSI budget at the default pace (2 requests a second); 0 turns it off.
+    /// </summary>
+    public int ProfileRefreshPerHour { get; set; } = 3600;
+
+    /// <summary>
     /// Shared pause after RSI throttles a request (HTTP 403/429/503 or ErrApiThrottled).
     /// Doubles on each new throttle episode up to <see cref="MaxThrottlePauseSeconds"/>.
     /// </summary>

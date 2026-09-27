@@ -34,5 +34,10 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
 
         builder.Property(u => u.Location)
             .HasMaxLength(200);
+
+        // Profiles stored before the labelled-entry parser (v2) mostly lack their display
+        // name and enlistment date; Phase 4 reads them again.
+        builder.Property(u => u.ParserVersion)
+            .HasDefaultValue(1);
     }
 }

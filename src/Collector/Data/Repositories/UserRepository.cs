@@ -48,4 +48,28 @@ public class UserRepository : Repository<User>, IUserRepository
 
         return result;
     }
+
+    /// <summary>
+    /// Citizens after the cursor read by an older parser, walking the primary key from the
+    /// cursor: rows already read again are skipped without an index of their own.
+    /// </summary>
+    public static IQueryable<User> ProfilesToRefresh(IQueryable<User> source, long afterId, int version)
+        => source.Where(u => u.Id > afterId && u.ParserVersion < version).OrderBy(u => u.Id);
+
+    public async Task<IReadOnlyList<ProfileToRefresh>> GetProfilesToRefreshAsync(
+        long afterId, int version, int limit, CancellationToken ct = default)
+    {
+        return await ProfilesToRefresh(DbSet.AsNoTracking(), afterId, version)
+            .Take(limit)
+            .Select(u => new ProfileToRefresh(u.Id, u.CitizenId, u.UserHandle))
+            .ToListAsync(ct);
+    }
+
+    public async Task MarkProfileReadAsync(long id, int version, CancellationToken ct = default)
+    {
+        // UpdatedAt is left alone: nothing of the profile changed, and a handle held by two
+        // rows goes to the one read last (GetByHandleAsync).
+        await DbSet.Where(u => u.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.ParserVersion, version), ct);
+    }
 }

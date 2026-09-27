@@ -93,6 +93,42 @@ public sealed class UserProfileUpdateTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AProfileLastReadByAnOlderParser_IsAReferenceRead_WithoutEvents()
+    {
+        // Its stored fields were read by a parser that could not read them right, and a
+        // real change happened at an unknown time: neither is a change of today.
+        await SeedAsync(Stored("Old Name", "Belgium"));
+
+        await EnrichAsync(RsiFixtures.Text("profile-citizen.html"));
+
+        var user = await NewDb().Users.AsNoTracking().SingleAsync(u => u.CitizenId == 100001);
+        user.DisplayName.Should().Be("fixture-pilot");
+        user.ParserVersion.Should().Be(UserProfileHtmlParser.Version);
+        (await NewDb().ChangeEvents.AsNoTracking().CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AProfileLastReadByTheCurrentParser_ReportsItsChanges()
+    {
+        var stored = Stored("Old Name");
+        stored.ParserVersion = UserProfileHtmlParser.Version;
+        await SeedAsync(stored);
+
+        await EnrichAsync(RsiFixtures.Text("profile-citizen.html"));
+
+        (await NewDb().ChangeEvents.AsNoTracking().Select(e => e.ChangeType).ToListAsync())
+            .Should().Equal("display_name_changed");
+    }
+
+    [Fact]
+    public async Task ANewCitizen_IsStoredAsReadByTheCurrentParser()
+    {
+        await EnrichAsync(RsiFixtures.Text("profile-citizen.html"));
+
+        (await NewDb().Users.AsNoTracking().SingleAsync()).ParserVersion.Should().Be(UserProfileHtmlParser.Version);
+    }
+
+    [Fact]
     public async Task ADisplayNameThatCannotBeRead_DoesNotEraseTheKnownOne()
     {
         await SeedAsync(Stored("Known Name"));

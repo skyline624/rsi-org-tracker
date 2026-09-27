@@ -49,6 +49,13 @@ parser (« Les H&amp;eacute;raults 34 », environ 35 000 lignes sur la copie du 
 événement n'est écrit, et les démarrages suivants n'en trouvent plus. La commande
 manuelle `--maintenance repair-org-names [--dry-run]` fait la même chose.
 
+La version 2 du parser de profil ajoute `users.ParserVersion` (toutes les fiches existantes
+passent à 1) : une fois la file de la phase 4 redescendue sous son seuil, le collector
+relit ces fiches au rythme de `Collector__ProfileRefreshPerHour` (3 600 par heure par
+défaut, soit la moitié du budget RSI ; 0 pour arrêter). Sur la copie du 24/09 : 583 351
+fiches, dont 62 % sans nom affiché et 84 % sans date d'enrôlement. Le contrôle
+informatif `profiles-to-read-again` de `verify` donne le nombre restant.
+
 Après un déploiement, `Collector.dll --maintenance verify --since <heure du déploiement UTC>`
 (lecture seule, collector en marche) contrôle la cohérence de ce que la nouvelle version
 écrit, et `--integrity-check --sample 20 --since <même heure>` compare un échantillon

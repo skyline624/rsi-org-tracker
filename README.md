@@ -42,7 +42,10 @@ libéré à la fin de la phase), et la phase 4 tourne en parallèle :
    lignes masquées (R, H) sont comptées dans `org_member_counts`.
 4. **Enrichissement** (`Phase4Worker`, profils `/citizens/{handle}`) : file avec issue
    finale (enrichi, disparu, abandonné), profil « n/a » revu à 14 jours, échec revu
-   après 1 h puis 4 h.
+   après 1 h puis 4 h. Quand la file est calme, le worker relit aussi les profils
+   stockés par une version plus ancienne du parser (`users.ParserVersion`), au rythme
+   de `ProfileRefreshPerHour` (3 600 par heure par défaut, 0 pour arrêter) ; une
+   relecture ne produit aucun événement, elle sert de référence.
 
 Toutes les requêtes vers RSI passent par un budget commun (`RsiRateGate`) : espacement,
 concurrence maximale, pause partagée sur 403/429/503/`ErrApiThrottled`.
@@ -192,7 +195,7 @@ Fichiers `/etc/sc-tracker/{api,web,collector}.env` (modèles dans `deploy/env/`)
 | API | `COLLECTOR_API_Api__AdminApiKey` | clé d'administration pour les scripts (≥ 24 caractères) |
 | API | `COLLECTOR_API_Api__RateLimit__*` | limites par utilisateur, par IP et du login |
 | API | `Discord__BotToken` | intégration Discord |
-| collector | `Collector__*` | réglages de `appsettings.json` (`RateLimitDelaySeconds`, `MaxConcurrentRequests`, `ThrottlePauseSeconds`…) |
+| collector | `Collector__*` | réglages de `appsettings.json` (`RateLimitDelaySeconds`, `MaxConcurrentRequests`, `ThrottlePauseSeconds`, `ProfileRefreshPerHour`…) |
 | web | `API_BASE_URL` | `http://127.0.0.1:5000` |
 | web | `HOSTNAME`, `PORT` | écoute du serveur Next (`127.0.0.1:3000`) |
 | web | `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` | stable d'un build à l'autre |

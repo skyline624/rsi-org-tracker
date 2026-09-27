@@ -24,6 +24,13 @@ public record ProfileParseResult(UserProfileData? Data, ProfileParseOutcome Outc
 /// </summary>
 public class UserProfileHtmlParser
 {
+    /// <summary>
+    /// Recorded on each citizen it reads. Version 1 missed the display name, the
+    /// enlistment date and the location of most profiles; version 2 reads the labelled
+    /// entries and keeps the bio's line breaks.
+    /// </summary>
+    public const int Version = 2;
+
     private readonly ILogger<UserProfileHtmlParser> _logger;
 
     public UserProfileHtmlParser(ILogger<UserProfileHtmlParser> logger)
@@ -175,7 +182,35 @@ public class UserProfileHtmlParser
         return string.IsNullOrWhiteSpace(src) ? null : src.Trim();
     }
 
-    private static string? ExtractBio(HtmlDocument doc) => EntryValue(doc, "Bio");
+    // Marks a <br> while the rest of the whitespace, the page's own line breaks included, collapses.
+    private const string LineBreak = "\u0001";
+
+    /// <summary>
+    /// The bio, one line per line of the player's text: RSI renders its line breaks as
+    /// &lt;br /&gt;, the newlines of the page source are only indentation. At most one
+    /// empty line in a row.
+    /// </summary>
+    private static string? ExtractBio(HtmlDocument doc)
+    {
+        var value = doc.DocumentNode.SelectSingleNode(
+            $"//*[{HasClass("entry")}][*[{HasClass("label")} and normalize-space(.) = 'Bio']]/*[{HasClass("value")}]");
+        if (value == null) return null;
+
+        var copy = value.CloneNode(deep: true);
+        foreach (var br in copy.Descendants("br").ToList())
+        {
+            br.ParentNode.ReplaceChild(doc.CreateTextNode(LineBreak), br);
+        }
+
+        var lines = new List<string>();
+        foreach (var line in HtmlText.Decode(copy.InnerText).Split(LineBreak))
+        {
+            var text = Whitespace.Replace(line, " ").Trim();
+            if (text.Length > 0 || (lines.Count > 0 && lines[^1].Length > 0)) lines.Add(text);
+        }
+        var bio = string.Join('\n', lines).Trim('\n');
+        return bio.Length == 0 ? null : bio;
+    }
 
     // RSI puts the region's comma on its own line ("United States\n , New Jersey").
     private static readonly Regex SpaceBeforeComma = new(@"\s+,", RegexOptions.Compiled);
