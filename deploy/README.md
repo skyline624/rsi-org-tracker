@@ -16,11 +16,14 @@ lien symbolique ; revenir en arrière consiste à rebasculer ce lien.
 ## Déployer
 
 ```bash
-git push vps <branche>                      # depuis le poste de dev
+git push vps main:release                   # depuis le poste de dev
 ssh serv_ovh
 ~/sc-tracker/current/deploy/deploy.sh <sha>               # API + web
 ~/sc-tracker/current/deploy/deploy.sh <sha> --collector   # + collector (migrations tracker.db)
 ```
+
+`main` est la branche extraite du dépôt du serveur (ancienne installation) : git refuse
+de la mettre à jour par un push, d'où la branche `release`. Le script ne se sert que du sha.
 
 Le script publie l'API et le collector en Release, construit le front en mode
 `standalone`, bascule `current`, redémarre les services et vérifie
