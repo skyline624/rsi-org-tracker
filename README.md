@@ -166,7 +166,8 @@ ssh serv_ovh 'cd ~/collector-dotnet/bin/data && sqlite3 tracker.db "PRAGMA busy_
 # Une transaction de lecture ouverte empêche tout checkpoint de réécrire le fichier
 # pendant la copie (l'API peut continuer à écrire dans le WAL). setsid en fait un
 # groupe de processus à part : le PID noté est celui du groupe (sh, sqlite3, sleep).
-ssh serv_ovh 'cd ~/collector-dotnet/bin/data && nohup setsid sh -c "(echo \"BEGIN; SELECT count(*) FROM sqlite_master;\"; sleep 7200) | sqlite3 tracker.db" >/dev/null 2>&1 & echo $! > /tmp/sc-backup-holder.pid'
+# Sans "< /dev/null", il garde l'entrée de la session ouverte et ssh ne rend pas la main.
+ssh serv_ovh 'cd ~/collector-dotnet/bin/data && nohup setsid sh -c "(echo \"BEGIN; SELECT count(*) FROM sqlite_master;\"; sleep 7200) | sqlite3 tracker.db" </dev/null >/dev/null 2>&1 & echo $! > /tmp/sc-backup-holder.pid'
 
 ssh serv_ovh 'cd ~/collector-dotnet/bin/data && cat tracker.db | tee >(sha256sum > /tmp/tracker.db.sha256) | pigz -6 -p 3' \
   | gunzip > backup/tracker.db
