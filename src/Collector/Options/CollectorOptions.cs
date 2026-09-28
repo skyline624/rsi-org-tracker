@@ -47,7 +47,8 @@ public class CollectorOptions
     public int MemberCollectionPageSize { get; set; } = 32;
 
     /// <summary>
-    /// Page size for organization discovery (max ~12).
+    /// Page size asked for organization discovery. RSI answers 32 organizations a page
+    /// whatever is asked.
     /// </summary>
     public int OrganizationPageSize { get; set; } = 12;
 
@@ -57,7 +58,8 @@ public class CollectorOptions
     public int EmptyPagesThreshold { get; set; } = 5;
 
     /// <summary>
-    /// Maximum pages to fetch per sort method during discovery (0 = unlimited).
+    /// Maximum pages to fetch per sort method during discovery (0 = unlimited). RSI serves
+    /// 400 pages of a sort (12 800 organizations) and answers empty pages beyond.
     /// </summary>
     public int DiscoveryMaxPages { get; set; } = 0;
 
