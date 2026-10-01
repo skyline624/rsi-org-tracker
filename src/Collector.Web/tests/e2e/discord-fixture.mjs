@@ -13,7 +13,8 @@ let state;
 function reset(input = {}) {
   state = {
     orgSid: input.orgSid === null ? null : "TEST", guildName: input.guildName ?? null,
-    isRank: true, rankOrder: 10, rsiRankLabel: "Pilote", suggestion: true,
+    isRank: true, rankOrder: 10, rsiRankLabel: "Pilote", suggestion: input.suggestion ?? true,
+    suggestionConfidence: input.suggestionConfidence ?? "medium",
     keys: [], mutations: [], searches: [],
   };
 }
@@ -116,7 +117,7 @@ createServer(async (req, res) => {
     if (path === `/api/discord/guilds/${GUILD}/discrepancies`) return reply(res, 200, { orgSid: state.orgSid, rsiOnlyAvailable: false,
       items: [{ kind: "rank_mismatch", handle: "Pilote42", citizenId: 42, discordUserId: USER, discordName: "Pilote42", discordRank: "Pilote", rsiRank: "Commandant" }],
       totals: { discordActive: 1, discordLinked: 1, rsiVisible: 1, rsiRedacted: 0, rsiHidden: 0, rsiTotalRows: 1, rsiCountsAt: now, rsiBreakdownKnown: true } });
-    if (path === `/api/discord/guilds/${GUILD}/suggestions`) return reply(res, 200, state.suggestion ? [{ discordUserId: USER, discordName: "Pilote42", matchedToken: "Pilote42", handle: "Pilote42", citizenId: 42, displayName: "Pilote 42", confidence: "strong" }] : []);
+    if (path === `/api/discord/guilds/${GUILD}/suggestions`) return reply(res, 200, state.suggestion ? [{ discordUserId: USER, discordName: "Pilote42", matchedToken: "Pilote42", handle: "Pilote42", citizenId: 42, displayName: "Pilote 42", confidence: state.suggestionConfidence }] : []);
     if (path === "/api/discord/link-rejections" && req.method === "POST") { state.suggestion = false; return reply(res, 201, { id: 1 }); }
     if (path === "/api/discord/link-rejections/1" && req.method === "DELETE") { state.suggestion = true; return reply(res, 204); }
     if (path === "/api/discord/links" && req.method === "POST") { state.suggestion = false; return reply(res, 201, { entityId: 1, handle: "Pilote42" }); }

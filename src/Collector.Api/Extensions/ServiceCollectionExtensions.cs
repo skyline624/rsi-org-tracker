@@ -116,6 +116,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DiscordReconciliationService>();
         services.AddScoped<DiscordHandleLookup>();
         services.AddScoped<DiscordSuggestionService>();
+        services.AddSingleton<DiscordAutoLinkQueue>();
+        services.AddHostedService<DiscordAutoLinkService>();
         services.AddScoped<DiscordProfileService>();
         services.AddScoped<DiscordGuildConfigService>();
         services.AddHostedService<DiscordRetentionService>();

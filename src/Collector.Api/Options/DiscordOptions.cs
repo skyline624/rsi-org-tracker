@@ -15,6 +15,14 @@ public sealed class DiscordOptions
     /// <summary>How long the upload journal and departed, unlinked accounts are kept.</summary>
     public RetentionOptions Retention { get; set; } = new();
 
+    /// <summary>Automatic validation of strong Discord-to-RSI suggestions.</summary>
+    public AutoLinkOptions AutoLink { get; set; } = new();
+
+    public sealed class AutoLinkOptions
+    {
+        public bool Enabled { get; set; } = true;
+    }
+
     public sealed class IngestOptions
     {
         /// <summary>Public base URL of the tracker, scheme and host only (<c>https://&lt;IP&gt;</c>).</summary>

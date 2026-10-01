@@ -18,11 +18,13 @@ public sealed class DiscordIngestService
 
     private readonly IDiscordRosterRepository _roster;
     private readonly ILogger<DiscordIngestService> _logger;
+    private readonly DiscordAutoLinkQueue _autoLinks;
 
-    public DiscordIngestService(IDiscordRosterRepository roster, ILogger<DiscordIngestService> logger)
+    public DiscordIngestService(IDiscordRosterRepository roster, ILogger<DiscordIngestService> logger, DiscordAutoLinkQueue autoLinks)
     {
         _roster = roster;
         _logger = logger;
+        _autoLinks = autoLinks;
     }
 
     public async Task<DiscordSyncResponseDto> IngestAsync(
@@ -62,6 +64,7 @@ public sealed class DiscordIngestService
                 "Base du tracker occupée, réessaie dans 30 s.", BusyRetryAfterSeconds, DiscordErrorCodes.Busy);
         }
 
+        _autoLinks.Schedule(guildId);
         return new DiscordSyncResponseDto
         {
             SyncId = result.SyncId,

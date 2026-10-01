@@ -86,6 +86,19 @@ test("a one-character SID can be selected and saved", async ({ page, request }) 
   await expect(search).toHaveValue("Corpo X [X]");
 });
 
+test("strong suggestions refresh after automatic linking without a manual action", async ({ page, request }) => {
+  await request.post(`${fixture}/__fixture/reset`, { data: { suggestionConfidence: "strong" } });
+  await signIn(page, "admin", `/discord/${GUILD}`);
+  await page.getByRole("navigation", { name: "Onglets du serveur" }).getByRole("link", { name: "SUGGESTIONS", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Rattachement automatique en cours…" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Valider", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Ignorer", exact: true })).toHaveCount(0);
+  // The API worker persists the link independently of this page.
+  await request.post(`${fixture}/__fixture/reset`, { data: { suggestion: false } });
+  await expect(page.getByText("Aucune suggestion : chaque membre est lié, ou aucun nom ne correspond à un handle RSI.", { exact: true })).toBeVisible({ timeout: 10_000 });
+  expect((await (await request.get(`${fixture}/__fixture/state`)).json()).mutations).toEqual([]);
+});
+
 test("an obsolete link action explains the failure and allows another attempt", async ({ page, request }) => {
   await signIn(page, "admin", `/discord/${GUILD}`);
   await page.getByRole("navigation", { name: "Onglets du serveur" }).getByRole("link", { name: "SUGGESTIONS", exact: true }).click();

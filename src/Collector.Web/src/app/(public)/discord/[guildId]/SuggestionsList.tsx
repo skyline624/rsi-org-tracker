@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { DiscordText } from "@/components/discord/DiscordText";
@@ -13,12 +13,21 @@ import { acceptSuggestionAction, rejectSuggestionAction, undoRejectionAction } f
 const keyOf = (s: DiscordSuggestionDto) => `${s.discordUserId}:${s.citizenId ?? `h:${s.handle.toLowerCase()}`}`;
 
 /**
- * Link suggestions with « Valider » (creates the link) and « Ignorer » (stops proposing
- * it; the toast offers to undo). The list is read again with router.refresh().
+ * Medium suggestions need validation or rejection. Strong suggestions are linked by the
+ * tracker; refresh while they are pending so their completion appears without a click.
  */
 export function SuggestionsList({ suggestions }: { suggestions: DiscordSuggestionDto[] }) {
   const router = useRouter();
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const hasStrongSuggestions = suggestions.some(s => s.confidence === "strong");
+
+  useEffect(() => {
+    if (!hasStrongSuggestions) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") router.refresh();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [hasStrongSuggestions, router]);
 
   async function accept(s: DiscordSuggestionDto) {
     setBusyKey(keyOf(s));
@@ -106,7 +115,9 @@ export function SuggestionsList({ suggestions }: { suggestions: DiscordSuggestio
                 jeton <DiscordText value={s.matchedToken} />
               </span>
             </span>
-            <span className="flex gap-2">
+            {s.confidence === "strong" ? (
+              <span role="status" className="text-hud-text-dim">Rattachement automatique en cours…</span>
+            ) : <span className="flex gap-2">
               <HudButton type="button" className="px-2 py-1" disabled={busyKey !== null} onClick={() => accept(s)}>
                 {busyKey === key ? "…" : "Valider"}
               </HudButton>
@@ -119,7 +130,7 @@ export function SuggestionsList({ suggestions }: { suggestions: DiscordSuggestio
               >
                 Ignorer
               </HudButton>
-            </span>
+            </span>}
           </li>
         );
       })}

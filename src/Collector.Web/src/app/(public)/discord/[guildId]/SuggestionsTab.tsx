@@ -20,7 +20,7 @@ export async function SuggestionsTab({ ctx, guild }: { ctx: AuthCtx; guild: Disc
       <p className="mb-3 font-mono text-[10px] uppercase tracking-wide text-hud-text-dim">
         {guild.orgSid === null
           ? "Sans corpo reliée, seules les correspondances de confiance moyenne sont proposées."
-          : "Confiance forte : le handle est membre actif de la corpo reliée. Seuls les liens validés comptent."}
+          : "Les correspondances de confiance forte sont rattachées automatiquement : le handle est membre actif de la corpo reliée. Les autres restent à valider."}
       </p>
       <SuggestionsList suggestions={suggestions} />
     </HudPanel>

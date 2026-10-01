@@ -32,6 +32,9 @@ public sealed class DiscordSuggestionService(
 
     private static readonly TimeSpan GateTimeout = TimeSpan.FromSeconds(10);
 
+    public const string AutomaticAuthor = "discord-auto-link";
+    public const int AutomaticBatchSize = 100;
+
     /// <summary>
     /// Key of an RSI person in discord_link_rejections: the citizen id when known, else "h:"
     /// followed by the lower-case handle.
@@ -143,6 +146,43 @@ public sealed class DiscordSuggestionService(
 
         var person = await lookup.ResolvePersonAsync(request.CitizenId, handle, ct)
             ?? throw new NotFoundException($"Aucun citoyen RSI connu sous le handle « {handle} ».");
+
+        var (entityId, _) = await CreateLinkAsync(discordUserId, person,
+            currentUser.UserId ?? 0, currentUser.Username ?? "unknown", ct);
+        return new DiscordLinkCreatedDto { EntityId = entityId, Handle = person.Handle };
+    }
+
+    /// <summary>
+    /// Applies the same suggestions as the site under the write gate. Only active members of
+    /// the mapped RSI org qualify; existing links, ignored pairs, bots and opt-outs are left out
+    /// by GetSuggestionsAsync. Read routes stay read-only and medium matches need validation.
+    /// </summary>
+    public async Task<int> AutoLinkStrongAsync(string guildId, CancellationToken ct)
+    {
+        using var lease = await gate.EnterAsync(ct);
+        if (!await db.DiscordGuilds.AsNoTracking().AnyAsync(g => g.GuildId == guildId && g.OrgSid != null, ct))
+            return 0;
+
+        var strong = (await GetSuggestionsAsync(guildId, ct))
+            .Where(s => s.Confidence == DiscordSuggestionConfidence.Strong)
+            // Keep all suggestions of one account together; creating its first link hides it
+            // from later suggestion reads. Release the write gate between bounded batches.
+            .GroupBy(s => s.DiscordUserId).Take(AutomaticBatchSize).SelectMany(group => group).ToList();
+        var created = 0;
+        foreach (var suggestion in strong)
+        {
+            ct.ThrowIfCancellationRequested();
+            var person = await lookup.ResolvePersonAsync(suggestion.CitizenId, suggestion.Handle, ct);
+            if (person is null) continue;
+            var (_, added) = await CreateLinkAsync(suggestion.DiscordUserId, person, 0, AutomaticAuthor, ct);
+            if (added) created++;
+        }
+        return created;
+    }
+
+    private async Task<(long EntityId, bool Added)> CreateLinkAsync(
+        string discordUserId, RsiPerson person, long authorId, string authorName, CancellationToken ct)
+    {
         var entityId = await resolver.ResolveOrCreateAsync(person.CitizenId, person.Handle, person.DisplayName, ct);
 
         if (await links.GetByEntityProviderValueAsync(entityId, LinkProviders.Discord, discordUserId, ct) is null)
@@ -153,15 +193,15 @@ public sealed class DiscordSuggestionService(
                 TrackedEntityId = entityId,
                 Provider = LinkProviders.Discord,
                 Value = discordUserId,
-                AuthorApiUserId = currentUser.UserId ?? 0,
-                AuthorUsername = currentUser.Username ?? "unknown",
+                AuthorApiUserId = authorId,
+                AuthorUsername = authorName,
                 CreatedAt = now,
                 UpdatedAt = now,
             }, ct);
             await links.SaveChangesAsync(ct);
+            return (entityId, true);
         }
-
-        return new DiscordLinkCreatedDto { EntityId = entityId, Handle = person.Handle };
+        return (entityId, false);
     }
 
     /// <summary>Ignores a suggestion. Idempotent: the same pair returns the existing rejection's id.</summary>

@@ -306,3 +306,18 @@ gateway role/cache fallback correlation or pagination above 1,000 members.
 All A/B/C implementation lots and the confirmed review fixes are present locally. Nothing
 was committed or pushed by this implementation session. Hosted CI has therefore not run on
 these changes; its checks were exercised locally as listed above.
+
+# Automatic strong Discord–RSI links (2026-10-01)
+
+Strong suggestions now create persistent Discord links automatically. The API processes existing
+mapped guilds on startup, schedules a guild after a successful ingest or an org mapping, and sweeps
+mapped guilds every minute to pick up later RSI roster changes. Work runs outside ingest requests
+and releases the Discord write gate between batches of 100 accounts. All strong matches of one
+account stay in the same batch. Medium suggestions still use manual validation; ignored pairs,
+opt-outs, bots, departed accounts and existing links are preserved. Automatic links are attributed
+to `discord-auto-link`. No schema or plugin change is required.
+
+The Suggestions tab refreshes while strong links are pending; manual actions remain for medium
+matches. Validation: 250 Discord API tests passed, including startup/backfill, queued ingest and
+mapping, later RSI changes, batching, cancellation and exclusions. Web type checking and the
+production build passed, as did all 14 isolated Discord browser tests, including automatic refresh.

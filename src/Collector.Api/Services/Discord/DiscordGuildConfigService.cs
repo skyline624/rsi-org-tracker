@@ -19,6 +19,7 @@ public sealed class DiscordGuildConfigService(
     DiscordWriteGate gate,
     CurrentUserAccessor currentUser,
     ActivityLogService activityLog,
+    DiscordAutoLinkQueue autoLinks,
     ILogger<DiscordGuildConfigService> logger)
 {
     public const string MapOrgAction = "discord_map_org";
@@ -66,6 +67,7 @@ public sealed class DiscordGuildConfigService(
             await db.SaveChangesAsync(ct);
         }
 
+        if (orgSid is not null) autoLinks.Schedule(guildId);
         await DiscordAudit.LogAsync(activityLog, currentUser, logger, MapOrgAction, GuildEntityType, guildId, ct);
     }
 

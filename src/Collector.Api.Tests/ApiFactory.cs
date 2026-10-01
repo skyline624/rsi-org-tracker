@@ -64,6 +64,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         // Same variables as /etc/sc-tracker/api.env (deploy/README.md, "Rosters Discord").
         Environment.SetEnvironmentVariable("COLLECTOR_API_Discord__Ingest__PublicUrl", DiscordIngestPublicUrl);
         Environment.SetEnvironmentVariable("COLLECTOR_API_Discord__Ingest__CertificateSha256", DiscordIngestCertificateSha256);
+        // Automatic-link tests run a controlled worker; background passes must not race seeded suggestions.
+        Environment.SetEnvironmentVariable("COLLECTOR_API_Discord__AutoLink__Enabled", "false");
 
         // Every test client shares one partition (no peer address in TestServer); budgets
         // are exercised by dedicated tests with their own limits.
