@@ -11,7 +11,9 @@ export async function SyncsTab({ ctx, guildId }: { ctx: AuthCtx; guildId: string
   return (
     <HudPanel label={`ENVOIS · ${syncs.length} DERNIERS`}>
       <p className="mb-3 font-mono text-[10px] uppercase tracking-wide text-hud-text-dim">
-        Garde-fou : un envoi complet qui ferait partir plus de 25 % des membres est traité comme partiel.
+        Un envoi partiel met à jour les membres reçus sans déclarer de départs.
+        La collecte par rôles ou cache peut omettre des membres ; une recherche exhaustive est nécessaire pour un envoi complet.
+        Les départs massifs d’un envoi complet sont enregistrés et signalés par le tracker.
       </p>
       <SyncsTable rows={syncs} />
     </HudPanel>
