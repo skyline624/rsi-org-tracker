@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { DiscordText } from "@/components/discord/DiscordText";
 import { GuildIcon } from "@/components/discord/GuildIcon";
 import { HudPanel } from "@/components/hud/HudPanel";
@@ -26,21 +25,21 @@ export default async function DiscordPage() {
             Membres envoyés par le plugin Vencord, serveur par serveur, à la demande.
           </p>
         </div>
-        <Link
+        <a
           href="/discord/multi"
           className="hud-clip border border-hud-cyan px-3 py-1.5 font-mono text-xs uppercase tracking-[0.15em] text-hud-cyan hover:bg-hud-cyan/10"
         >
           MULTI-APPARTENANCE
-        </Link>
+        </a>
       </header>
 
       {guilds.length === 0 ? (
         <HudPanel label="SERVEURS DISCORD">
           <p className="py-6 text-center font-mono text-xs text-hud-text-dim">
             Aucun serveur reçu. Installe le plugin :{" "}
-            <Link href="/settings" className="text-hud-cyan hover:text-hud-orange">
+            <a href="/settings" className="text-hud-cyan hover:text-hud-orange">
               {"Paramètres → Clé d'envoi Discord"}
-            </Link>
+            </a>
           </p>
         </HudPanel>
       ) : (
@@ -53,7 +52,7 @@ export default async function DiscordPage() {
               <ul className="flex flex-col divide-y divide-hud-cyan/10">
                 {unmapped.map((g) => (
                   <li key={g.guildId} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                    <Link
+                    <a
                       href={`/discord/${encodeURIComponent(g.guildId)}`}
                       className="flex min-w-0 flex-1 items-center gap-3 font-mono text-sm text-hud-cyan hover:text-hud-orange"
                     >
@@ -62,7 +61,7 @@ export default async function DiscordPage() {
                       <span className="shrink-0 text-[10px] text-hud-text-dim">
                         {formatNumber(g.activeMembers)} actifs
                       </span>
-                    </Link>
+                    </a>
                     <GuildOrgForm guildId={g.guildId} guildName={g.name} currentSid={null} canEdit />
                   </li>
                 ))}

@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { INVALID_ARGUMENTS, handleSchema, idSchema, linkProviderSchema, valid } from "@/lib/validation";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet, apiPost, apiDelete } from "@/lib/api/client";
@@ -34,6 +35,9 @@ export async function createLinkAction(
       { provider, value: v },
       sessionCtx(session),
     );
+    revalidatePath("/users", "layout");
+    revalidatePath("/discord", "layout");
+    revalidatePath("/orgs", "layout");
     return { ok: true, link };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };
@@ -46,6 +50,9 @@ export async function deleteLinkAction(id: number): Promise<LinkResult> {
   if (!valid(idSchema, id)) return { ok: false, error: INVALID_ARGUMENTS };
   try {
     await apiDelete(`/api/links/${id}`, sessionCtx(session));
+    revalidatePath("/users", "layout");
+    revalidatePath("/discord", "layout");
+    revalidatePath("/orgs", "layout");
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Échec." };

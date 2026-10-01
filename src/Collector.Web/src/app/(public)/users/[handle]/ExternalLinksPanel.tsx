@@ -1,8 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { HudPanel } from "@/components/hud/HudPanel";
 import { HudButton } from "@/components/hud/HudButton";
+import { reportDiscordActionError } from "@/lib/discord/action-error";
 import { createLinkAction, deleteLinkAction, type LinkDto } from "./link-actions";
 
 // Manually-added links that resolve to a clickable profile URL.
@@ -37,6 +38,7 @@ export function ExternalLinksPanel({ handle, initialLinks, currentUsername, isAd
   const [provider, setProvider] = useState<string>(PROVIDER_KEYS[0] ?? "discord");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => setLinks(initialLinks), [initialLinks]);
 
   const canModify = (l: LinkDto) => Boolean(isAdmin) || l.authorUsername === currentUsername;
 
@@ -47,28 +49,38 @@ export function ExternalLinksPanel({ handle, initialLinks, currentUsername, isAd
       return;
     }
     setBusy(true);
-    const res = await createLinkAction(handle, p, val);
-    setBusy(false);
-    if (res.ok && res.link) {
-      const created = res.link;
-      // Keep other links (incl. same provider); replace only an identical id.
-      setLinks((prev) => [...prev.filter((l) => l.id !== created.id), created]);
-      setValue("");
-      toast.success("Lien enregistré.");
-    } else {
-      toast.error(res.error ?? "Échec.");
+    try {
+      const res = await createLinkAction(handle, p, val);
+      if (res.ok && res.link) {
+        const created = res.link;
+        // Keep other links (incl. same provider); replace only an identical id.
+        setLinks((prev) => [...prev.filter((l) => l.id !== created.id), created]);
+        setValue("");
+        toast.success("Lien enregistré.");
+      } else {
+        toast.error(res.error ?? "Échec.");
+      }
+    } catch (error) {
+      reportDiscordActionError(error, "Impossible d'enregistrer le lien. Réessaie.");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function remove(l: LinkDto) {
     setBusy(true);
-    const res = await deleteLinkAction(l.id);
-    setBusy(false);
-    if (res.ok) {
-      setLinks((prev) => prev.filter((x) => x.id !== l.id));
-      toast.success("Lien supprimé.");
-    } else {
-      toast.error(res.error ?? "Échec.");
+    try {
+      const res = await deleteLinkAction(l.id);
+      if (res.ok) {
+        setLinks((prev) => prev.filter((x) => x.id !== l.id));
+        toast.success("Lien supprimé.");
+      } else {
+        toast.error(res.error ?? "Échec.");
+      }
+    } catch (error) {
+      reportDiscordActionError(error, "Impossible de supprimer le lien. Réessaie.");
+    } finally {
+      setBusy(false);
     }
   }
 

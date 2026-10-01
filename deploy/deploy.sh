@@ -44,6 +44,7 @@ build_release() {
     actions_key=$(sed -n 's/^NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=//p' /etc/sc-tracker/web.env)
     (cd "$web" && capped corepack pnpm install --frozen-lockfile)
     (cd "$web" && capped env NEXT_OUTPUT=standalone \
+        NEXT_DEPLOYMENT_ID="$sha" \
         NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="$actions_key" corepack pnpm build)
     [[ -f $web/.next/standalone/server.js ]] || die "standalone server.js missing"
     mkdir -p "$staging/web/.next"

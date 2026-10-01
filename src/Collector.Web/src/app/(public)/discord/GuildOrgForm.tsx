@@ -5,10 +5,10 @@ import { toast } from "sonner";
 import { DiscordText } from "@/components/discord/DiscordText";
 import { HudButton } from "@/components/hud/HudButton";
 import { HudInput } from "@/components/hud/HudInput";
-import { searchOrgsAction, type OrgOption } from "@/app/(public)/users/[handle]/membership-actions";
+import { reportDiscordActionError } from "@/lib/discord/action-error";
 import { cleanDiscordText } from "@/lib/discord/format";
 import { sidSchema } from "@/lib/validation";
-import { mapGuildOrgAction } from "./actions";
+import { mapGuildOrgAction, searchGuildOrgsAction, type GuildOrgOption } from "./actions";
 
 interface GuildOrgFormProps {
   guildId: string;
@@ -18,9 +18,9 @@ interface GuildOrgFormProps {
   canEdit: boolean;
 }
 
-const MIN_SEARCH_LENGTH = 2;
+const MIN_SEARCH_LENGTH = 1;
 const MAX_SEARCH_LENGTH = 100;
-const orgLabel = (org: OrgOption) => `${cleanDiscordText(org.name) ?? org.sid} [${org.sid}]`;
+const orgLabel = (org: GuildOrgOption) => `${cleanDiscordText(org.name) ?? org.sid} [${org.sid}]`;
 
 /** Suggest a query from the server name, removing decorations such as ⭐ at its edges. */
 function guildQuery(name: string) {
@@ -40,22 +40,23 @@ function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdi
   const hintId = useId();
   const current = currentSid ? { sid: currentSid, name: currentOrgName ?? currentSid } : null;
   const suggestion = guildQuery(guildName);
-  const [selected, setSelected] = useState<OrgOption | null>(current);
+  const [selected, setSelected] = useState<GuildOrgOption | null>(current);
   const [query, setQuery] = useState(current ? orgLabel(current) : suggestion);
-  const [options, setOptions] = useState<OrgOption[]>([]);
+  const [options, setOptions] = useState<GuildOrgOption[]>([]);
   const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [open, setOpen] = useState(!current && canEdit);
   const [active, setActive] = useState(-1);
   const [busy, setBusy] = useState(false);
   const disabled = !canEdit || busy;
-  const showResults = open && !selected && !disabled;
+  // Looking up a corpo is a read operation; responsibility only restricts saving.
+  const showResults = open && !selected && !busy;
 
   // Ignore earlier searches after typing, choosing an organization, or disabling the form.
   useEffect(() => {
     const text = query.trim();
     setOptions([]);
     setActive(-1);
-    if (selected || disabled || text.length < MIN_SEARCH_LENGTH) {
+    if (selected || busy || text.length < MIN_SEARCH_LENGTH) {
       setPhase("idle");
       return;
     }
@@ -63,19 +64,22 @@ function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdi
     setPhase("loading");
     const timer = setTimeout(async () => {
       try {
-        const found = await searchOrgsAction(text);
+        const found = await searchGuildOrgsAction(text);
         if (!stale) {
           setOptions(found);
           setPhase("ready");
         }
-      } catch {
-        if (!stale) setPhase("error");
+      } catch (error) {
+        if (!stale) {
+          setPhase("error");
+          reportDiscordActionError(error, "Recherche de corpos indisponible. Réessaie.");
+        }
       }
     }, 300);
     return () => { stale = true; clearTimeout(timer); };
-  }, [query, selected, disabled]);
+  }, [query, selected, busy]);
 
-  function choose(org: OrgOption) {
+  function choose(org: GuildOrgOption) {
     setSelected(org);
     setQuery(orgLabel(org));
     setOpen(false);
@@ -83,7 +87,7 @@ function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdi
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (selected || disabled) return;
+    if (selected || busy) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       setOpen(true);
@@ -113,8 +117,8 @@ function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdi
       } else {
         toast.error(res.error ?? "Échec du rattachement.");
       }
-    } catch {
-      toast.error("Impossible d'enregistrer le rattachement. Réessaie.");
+    } catch (error) {
+      reportDiscordActionError(error, "Impossible d'enregistrer le rattachement. Réessaie.");
     } finally {
       setBusy(false);
     }
@@ -154,7 +158,7 @@ function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdi
           }}
           onFocus={() => { if (!selected) setOpen(true); }}
           onKeyDown={onKeyDown}
-          disabled={disabled}
+          disabled={busy}
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={showResults}
@@ -169,7 +173,7 @@ function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdi
               {phase === "loading" ? "Recherche…"
                 : phase === "error" ? "Recherche indisponible. Modifie la recherche pour réessayer."
                 : phase === "ready" && options.length === 0 ? "Aucune corpo trouvée. Essaie un autre nom ou SID."
-                : phase === "idle" ? "Saisis au moins 2 caractères."
+                : phase === "idle" ? "Saisis un nom ou un SID."
                 : query === suggestion ? "Propositions à partir du nom du serveur :" : "Sélectionne une corpo :"}
             </div>
             <ul id={listId} role="listbox" aria-label="Propositions de corpos RSI" className="max-h-56 overflow-y-auto">
@@ -194,7 +198,7 @@ function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdi
         )}
       </div>
       <p id={hintId} className="font-mono text-xs text-hud-text-dim [overflow-wrap:anywhere]">
-        {selected ? `Corpo sélectionnée : ${orgLabel(selected)}.`
+        {selected ? `Corpo sélectionnée : ${orgLabel(selected)}.${selected.sid !== currentSid && canEdit ? ` Clique sur ${currentSid ? "Changer" : "Relier"} pour enregistrer.` : ""}`
           : "Recherche parmi les corpos connues du tracker. Sélectionne une proposition, puis clique sur Relier."}
       </p>
       <div className="flex flex-wrap gap-2">

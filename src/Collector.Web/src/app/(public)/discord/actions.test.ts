@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/headers", () => ({ cookies: async () => ({ set: vi.fn() }), headers: async () => new Headers() }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth/session")>()),
   getSession: vi.fn(),
@@ -10,11 +11,13 @@ vi.mock("@/lib/api/client", () => ({ apiGet: vi.fn(), apiPost: vi.fn(), apiPut: 
 const { getSession } = await import("@/lib/auth/session");
 const { apiDelete, apiGet, apiPost, apiPut } = await import("@/lib/api/client");
 const { ApiError } = await import("@/lib/api/errors");
+const { revalidatePath } = await import("next/cache");
 const { INVALID_ARGUMENTS } = await import("@/lib/validation");
 const {
   acceptSuggestionAction,
   mapGuildOrgAction,
   rejectSuggestionAction,
+  searchGuildOrgsAction,
   undoRejectionAction,
   updateGuildRoleAction,
 } = await import("./actions");
@@ -52,6 +55,7 @@ describe("mapGuildOrgAction", () => {
 
     expect(await mapGuildOrgAction(GUILD, " CORP ")).toEqual({ ok: true, data: summary });
     expect(apiPut).toHaveBeenCalledWith(`/api/discord/guilds/${GUILD}/org`, { orgSid: "CORP" }, ctx);
+    expect(vi.mocked(revalidatePath).mock.calls).toEqual([["/discord", "layout"], ["/orgs", "layout"]]);
   });
 
   it("unmaps the server with null", async () => {
@@ -66,6 +70,7 @@ describe("mapGuildOrgAction", () => {
     vi.mocked(apiPut).mockRejectedValue(new ApiError(403, { title: "Forbidden", status: 403, detail: reason }));
 
     expect(await mapGuildOrgAction(GUILD, "CORP")).toEqual({ ok: false, error: reason });
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });
 
@@ -108,6 +113,7 @@ describe("suggestions", () => {
       { discordUserId: USER, citizenId: 42, handle: "Pilote42" },
       ctx,
     );
+    expect(vi.mocked(revalidatePath).mock.calls).toEqual([["/discord", "layout"], ["/users", "layout"], ["/orgs", "layout"]]);
   });
 
   it("validates a suggestion for a citizen without a known number", async () => {
@@ -138,6 +144,61 @@ describe("suggestions", () => {
 
     expect(await undoRejectionAction(9)).toEqual({ ok: true });
     expect(apiDelete).toHaveBeenCalledWith("/api/discord/link-rejections/9", ctx);
+  });
+});
+
+describe("organization search", () => {
+  it("proposes an exact SID before ten other matching organizations", async () => {
+    const exact = { sid: "NEW", name: "Nouvelle Organisation" };
+    const others = Array.from({ length: 10 }, (_, i) => ({ sid: `AN${i}`, name: `New group ${i}` }));
+    vi.mocked(apiGet).mockImplementation(async path => path === "/api/organizations/NEW" ? exact : { items: others });
+    expect(await searchGuildOrgsAction(" new ")).toEqual([exact, ...others]);
+    expect(apiGet).toHaveBeenCalledWith("/api/organizations/NEW", undefined, ctx);
+    expect(apiGet).toHaveBeenCalledWith("/api/organizations", { search: "new", pageSize: 10 }, ctx);
+  });
+
+  it("finds a single-character SID and deduplicates the listing match", async () => {
+    const org = { sid: "X", name: "Corpo X" };
+    vi.mocked(apiGet).mockImplementation(async path => path === "/api/organizations/X" ? org : { items: [org] });
+    expect(await searchGuildOrgsAction("x")).toEqual([org]);
+  });
+
+  it("searches a full name without making an invalid SID request", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ items: [{ sid: "NEW", name: "Nouvelle Organisation" }] });
+    expect(await searchGuildOrgsAction("Nouvelle Organisation")).toEqual([{ sid: "NEW", name: "Nouvelle Organisation" }]);
+    expect(apiGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to names when the exact SID does not exist", async () => {
+    const org = { sid: "LIBERASTRA", name: "Liberastra" };
+    vi.mocked(apiGet).mockImplementation(async path => {
+      if (path === "/api/organizations/LIBERA") throw new ApiError(404, { title: "Not Found" });
+      return { items: [org] };
+    });
+    expect(await searchGuildOrgsAction("Libera")).toEqual([org]);
+  });
+
+  it("keeps an exact result when the slower broad search fails", async () => {
+    vi.mocked(apiGet).mockImplementation(async path => {
+      if (path === "/api/organizations/X") return { sid: "X", name: "Corpo X" };
+      throw new Error("API timeout");
+    });
+    expect(await searchGuildOrgsAction("X")).toEqual([{ sid: "X", name: "Corpo X" }]);
+  });
+
+  it("does not report API failure as an empty search result", async () => {
+    vi.mocked(apiGet).mockRejectedValue(new Error("private upstream failure"));
+    await expect(searchGuildOrgsAction("Missing")).rejects.toThrow("Recherche de corpos indisponible.");
+  });
+
+  it("makes no API request for invalid input or an unsigned user", async () => {
+    expect(await searchGuildOrgsAction({ query: "X" })).toEqual([]);
+    expect(await searchGuildOrgsAction(" ")).toEqual([]);
+    expect(await searchGuildOrgsAction("x".repeat(101))).toEqual([]);
+    vi.mocked(getSession).mockResolvedValue(null);
+    await expect(searchGuildOrgsAction("X")).rejects.toThrow("Non authentifié.");
+    expectNoApiCall();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });
 

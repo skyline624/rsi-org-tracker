@@ -48,6 +48,66 @@ test("authenticated roster pages render inert names and every guild tab", async 
   expect(await page.evaluate(() => document.cookie)).not.toContain("sct_access");
 });
 
+test("a server opens when its name is clicked on the Discord overview", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("link", { name: /Corsaires <img/ }).first().click();
+  await expect(page).toHaveURL(`/discord/${GUILD}`);
+  await expect(page.getByRole("navigation", { name: "Onglets du serveur" })).toBeVisible();
+});
+
+test("a SID can be typed on the overview and the saved association survives a reload", async ({ page, request }) => {
+  await request.post(`${fixture}/__fixture/reset`, { data: { orgSid: null, guildName: "⭐ LIBERASTRA ⭐" } });
+  await signIn(page);
+  const search = page.getByRole("combobox", { name: "CORPO RSI — NOM OU SID" });
+  await search.click();
+  await search.press("ControlOrMeta+A");
+  await search.pressSequentially("NEW", { delay: 150 });
+  await expect(search).toHaveValue("NEW");
+  await page.getByRole("option", { name: "Nouvelle Organisation Interstellaire [NEW]", exact: true }).click();
+  await page.getByRole("button", { name: "RELIER", exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`${fixture}/__fixture/state`)).json()).orgSid).toBe("NEW");
+  await page.reload();
+  await expect(page.getByRole("combobox", { name: "CORPO RSI — NOM OU SID" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "NEW", exact: true })).toBeVisible();
+});
+
+test("a one-character SID can be selected and saved", async ({ page, request }) => {
+  await request.post(`${fixture}/__fixture/reset`, { data: { orgSid: null, guildName: "" } });
+  await signIn(page, "admin", `/discord/${GUILD}`);
+  await page.getByRole("navigation", { name: "Onglets du serveur" }).getByRole("link", { name: "CONFIG", exact: true }).click();
+  const search = page.getByRole("combobox", { name: "CORPO RSI — NOM OU SID" });
+  await search.pressSequentially("x");
+  const options = page.getByRole("listbox", { name: "Propositions de corpos RSI" }).getByRole("option");
+  await expect(options.first()).toHaveText("Corpo X[X]");
+  await options.first().click();
+  await page.getByRole("button", { name: "RELIER", exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`${fixture}/__fixture/state`)).json()).orgSid).toBe("X");
+  await page.reload();
+  await expect(search).toHaveValue("Corpo X [X]");
+});
+
+test("an obsolete link action explains the failure and allows another attempt", async ({ page, request }) => {
+  await signIn(page, "admin", `/discord/${GUILD}`);
+  await page.getByRole("navigation", { name: "Onglets du serveur" }).getByRole("link", { name: "SUGGESTIONS", exact: true }).click();
+  await page.route(url => url.pathname === `/discord/${GUILD}`, async route => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({ status: 404, headers: { "content-type": "text/plain", "x-nextjs-action-not-found": "1" }, body: "Server action not found." });
+    } else {
+      await route.continue();
+    }
+  }, { times: 1 });
+  await page.getByRole("button", { name: "Valider", exact: true }).click();
+  await expect(page.getByText("Le site a été mis à jour. Actualise la page, puis réessaie.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Valider", exact: true })).toBeEnabled();
+  expect((await (await request.get(`${fixture}/__fixture/state`)).json()).mutations).toEqual([]);
+  await page.getByRole("button", { name: "Actualiser", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Valider", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Valider", exact: true }).click();
+  await expect(page.getByText("Lien validé : Pilote42 → Pilote42.", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Valider", exact: true })).toHaveCount(0);
+});
+
 test("the settings panel creates a scoped key, reveals it once, and revokes it", async ({ page, request }) => {
   await signIn(page, "admin", "/settings");
   await expect(page.getByText("https://tracker.example.test", { exact: true })).toBeVisible();
@@ -91,6 +151,8 @@ test("configuration and suggestion actions send the selected values and refresh"
   await page.getByRole("button", { name: "Valider", exact: true }).click();
   await expect(page.getByText("Lien validé : Pilote42 → Pilote42.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Valider", exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Valider", exact: true })).toHaveCount(0);
   data = await (await request.get(`${fixture}/__fixture/state`)).json();
   expect(data.mutations.at(-1)).toEqual({ path: "/api/discord/links", method: "POST",
     body: { discordUserId: USER, citizenId: 42, handle: "Pilote42" } });
@@ -128,7 +190,7 @@ test("unmapped servers propose organizations from their name without linking aut
   await page.goto(`/discord/${GUILD}?tab=config`);
   await expect(page.getByRole("combobox", { name: "CORPO RSI — NOM OU SID" })).toHaveValue("LIBERASTRA");
   await page.getByRole("option", { name: "Libérastra [LIBERASTRA]", exact: true }).click();
-  await expect(page.getByText("Corpo sélectionnée : Libérastra [LIBERASTRA].", { exact: true })).toBeVisible();
+  await expect(page.getByText("Corpo sélectionnée : Libérastra [LIBERASTRA]. Clique sur Relier pour enregistrer.", { exact: true })).toBeVisible();
   expect((await (await request.get(`${fixture}/__fixture/state`)).json()).mutations).toEqual([]);
   await page.getByRole("button", { name: "RELIER", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "CORPO RSI — NOM OU SID" })).toHaveValue("Libérastra [LIBERASTRA]");
@@ -163,18 +225,25 @@ test("organization search accepts full names and SIDs and requires a selected re
   await search.fill("LIBER2");
   await page.getByRole("option", { name: "LIBERASTRA Exploration [LIBER2]", exact: true }).click();
   await page.getByRole("button", { name: "CHANGER", exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`${fixture}/__fixture/state`)).json()).orgSid).toBe("LIBER2");
+  await page.reload();
   await expect(search).toHaveValue("LIBERASTRA Exploration [LIBER2]");
   const state = await (await request.get(`${fixture}/__fixture/state`)).json();
   expect(state.searches).toContain("nouvelle organisation interstellaire");
   expect(state.mutations.map((mutation: { body: unknown }) => mutation.body)).toEqual([{ orgSid: "NEW" }, { orgSid: "LIBER2" }]);
 });
 
-test("a regular reader sees locked configuration and no administrative controls", async ({ page }) => {
+test("a regular reader can search corpos while saving configuration stays restricted", async ({ page, request }) => {
   await signIn(page, "reader");
   await page.goto(`/discord/${GUILD}?tab=config`);
-  await expect(page.getByRole("combobox", { name: "CORPO RSI — NOM OU SID" })).toBeDisabled();
+  const search = page.getByRole("combobox", { name: "CORPO RSI — NOM OU SID" });
+  await expect(search).toBeEnabled();
   await expect(page.getByLabel("Ordre du rang Pilote")).toBeDisabled();
   await expect(page.getByRole("button", { name: "CHANGER", exact: true })).toBeDisabled();
+  await search.fill("NEW");
+  await page.getByRole("option", { name: "Nouvelle Organisation Interstellaire [NEW]", exact: true }).click();
+  await expect(page.getByRole("button", { name: "CHANGER", exact: true })).toBeDisabled();
+  expect((await (await request.get(`${fixture}/__fixture/state`)).json()).mutations).toEqual([]);
   await expect(page.getByRole("button", { name: "Autoriser un départ massif", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Supprimer et exclure ce serveur", exact: true })).toHaveCount(0);
   await page.goto(`/discord/${GUILD}`);

@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { DiscordText } from "@/components/discord/DiscordText";
 import { GuildIcon } from "@/components/discord/GuildIcon";
 import { RoleDot } from "@/components/discord/RoleDot";
@@ -64,12 +63,12 @@ export function DiscordGuildsTable({ rows }: { rows: DiscordGuildSummaryDto[] })
       sortable: true,
       sortValue: (g) => g.name.toLowerCase(),
       render: (g) => (
-        <Link
+        <a
           href={`/discord/${encodeURIComponent(g.guildId)}`}
           className="inline-flex min-w-0 max-w-full text-hud-cyan hover:text-hud-orange"
         >
           <DiscordText value={g.name} />
-        </Link>
+        </a>
       ),
     },
     {
@@ -80,13 +79,13 @@ export function DiscordGuildsTable({ rows }: { rows: DiscordGuildSummaryDto[] })
       sortValue: (g) => g.orgSid ?? "",
       render: (g) =>
         g.orgSid ? (
-          <Link
+          <a
             href={`/orgs/${encodeURIComponent(g.orgSid)}`}
             title={g.orgName ?? g.orgSid}
             className="block truncate text-hud-cyan hover:text-hud-orange"
           >
             {g.orgSid}
-          </Link>
+          </a>
         ) : (
           <HudBadge tone="orange">NON RELIÉ</HudBadge>
         ),

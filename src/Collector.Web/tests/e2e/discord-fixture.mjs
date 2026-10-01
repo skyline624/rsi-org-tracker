@@ -25,6 +25,7 @@ const orgs = [
   { sid: "NEW", name: "Nouvelle Organisation Interstellaire" },
   { sid: "LIBERASTRA", name: "Libérastra" },
   { sid: "LIBER2", name: "LIBERASTRA Exploration" },
+  { sid: "X", name: "Corpo X" },
 ];
 const rank = () => ({ roleId: ROLE, name: "Pilote", color: "#00aaff" });
 const summary = () => ({
@@ -75,6 +76,10 @@ createServer(async (req, res) => {
       const query = (url.searchParams.get("search") ?? "").toLowerCase();
       state.searches.push(query);
       return reply(res, 200, page(orgs.filter(o => o.sid.toLowerCase().includes(query) || o.name.toLowerCase().includes(query))));
+    }
+    if (path.startsWith("/api/organizations/")) {
+      const org = orgs.find(o => o.sid === path.split("/").at(-1));
+      return org ? reply(res, 200, org) : problem(res, 404, "Corpo inconnue.");
     }
     if (path === "/api/discord/ingest-config") return reply(res, 200, { publicUrl: "https://tracker.example.test", certificateSha256: "AB:".repeat(31) + "AB" });
     if (path === "/api/admin/discord-token") return reply(res, 200, { configured: false });

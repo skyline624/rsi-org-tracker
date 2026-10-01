@@ -1,12 +1,12 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { DiscordText } from "@/components/discord/DiscordText";
 import { HudBadge } from "@/components/hud/HudBadge";
 import { HudButton } from "@/components/hud/HudButton";
 import type { DiscordSuggestionDto } from "@/lib/api/types";
+import { reportDiscordActionError } from "@/lib/discord/action-error";
 import { cleanDiscordText, confidenceBadge } from "@/lib/discord/format";
 import { acceptSuggestionAction, rejectSuggestionAction, undoRejectionAction } from "../actions";
 
@@ -22,42 +22,56 @@ export function SuggestionsList({ suggestions }: { suggestions: DiscordSuggestio
 
   async function accept(s: DiscordSuggestionDto) {
     setBusyKey(keyOf(s));
-    const res = await acceptSuggestionAction(s.discordUserId, s.citizenId, s.handle);
-    setBusyKey(null);
-    if (res.ok) {
-      toast.success(`Lien validé : ${cleanDiscordText(s.discordName) ?? s.discordUserId} → ${res.data?.handle ?? s.handle}.`);
-      router.refresh();
-    } else {
-      toast.error(res.error ?? "Échec.");
+    try {
+      const res = await acceptSuggestionAction(s.discordUserId, s.citizenId, s.handle);
+      if (res.ok) {
+        toast.success(`Lien validé : ${cleanDiscordText(s.discordName) ?? s.discordUserId} → ${res.data?.handle ?? s.handle}.`);
+        router.refresh();
+      } else {
+        toast.error(res.error ?? "Échec.");
+      }
+    } catch (error) {
+      reportDiscordActionError(error, "Impossible d'enregistrer le lien. Réessaie.");
+    } finally {
+      setBusyKey(null);
     }
   }
 
   async function undo(id: number) {
-    const res = await undoRejectionAction(id);
-    if (res.ok) {
-      toast.success("Suggestion rétablie.");
-      router.refresh();
-    } else {
-      toast.error(res.error ?? "Échec.");
+    try {
+      const res = await undoRejectionAction(id);
+      if (res.ok) {
+        toast.success("Suggestion rétablie.");
+        router.refresh();
+      } else {
+        toast.error(res.error ?? "Échec.");
+      }
+    } catch (error) {
+      reportDiscordActionError(error, "Impossible de rétablir la suggestion. Réessaie.");
     }
   }
 
   async function reject(s: DiscordSuggestionDto) {
     setBusyKey(keyOf(s));
-    const res = await rejectSuggestionAction(s.discordUserId, s.citizenId, s.handle);
-    setBusyKey(null);
-    if (!res.ok) {
-      toast.error(res.error ?? "Échec.");
-      return;
+    try {
+      const res = await rejectSuggestionAction(s.discordUserId, s.citizenId, s.handle);
+      if (!res.ok) {
+        toast.error(res.error ?? "Échec.");
+        return;
+      }
+      router.refresh();
+      const rejectionId = res.data?.id;
+      toast.success(
+        `Suggestion ignorée : ${s.handle}.`,
+        rejectionId === undefined
+          ? undefined
+          : { action: { label: "Annuler", onClick: () => void undo(rejectionId) } },
+      );
+    } catch (error) {
+      reportDiscordActionError(error, "Impossible d'ignorer la suggestion. Réessaie.");
+    } finally {
+      setBusyKey(null);
     }
-    router.refresh();
-    const rejectionId = res.data?.id;
-    toast.success(
-      `Suggestion ignorée : ${s.handle}.`,
-      rejectionId === undefined
-        ? undefined
-        : { action: { label: "Annuler", onClick: () => void undo(rejectionId) } },
-    );
   }
 
   if (suggestions.length === 0) {
@@ -82,9 +96,9 @@ export function SuggestionsList({ suggestions }: { suggestions: DiscordSuggestio
               <span aria-hidden className="text-hud-text-dim">
                 →
               </span>
-              <Link href={`/users/${encodeURIComponent(s.handle)}`} className="text-hud-cyan hover:text-hud-orange">
+              <a href={`/users/${encodeURIComponent(s.handle)}`} className="text-hud-cyan hover:text-hud-orange">
                 {s.handle}
-              </Link>
+              </a>
               {s.displayName && <span className="max-w-[12rem] truncate text-hud-text-dim">{s.displayName}</span>}
               {s.citizenId !== null && <HudBadge tone="dim">#{s.citizenId}</HudBadge>}
               <HudBadge tone={badge.tone}>{badge.label}</HudBadge>
