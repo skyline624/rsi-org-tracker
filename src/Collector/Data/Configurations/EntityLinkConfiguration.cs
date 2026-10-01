@@ -14,6 +14,8 @@ public class EntityLinkConfiguration : IEntityTypeConfiguration<EntityLink>
         // Several links per provider are allowed (e.g. multiple Discord accounts);
         // only exact (entity, provider, value) duplicates are rejected.
         builder.HasIndex(l => new { l.TrackedEntityId, l.Provider, l.Value }).IsUnique();
+        // Look up all people linked to a Discord user without scanning links by entity.
+        builder.HasIndex(l => new { l.Provider, l.Value });
 
         builder.Property(l => l.Provider).IsRequired().HasMaxLength(30);
         builder.Property(l => l.Value).IsRequired().HasMaxLength(200);

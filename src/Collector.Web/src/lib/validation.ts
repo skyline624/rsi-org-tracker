@@ -27,6 +27,21 @@ export const passwordSchema = z.string().min(1).max(200);
 /** Discord bot token (admin setting). */
 export const discordTokenSchema = z.string().trim().min(20).max(200);
 
+/** API key name (the API stores up to 100 characters). */
+export const apiKeyNameSchema = z.string().trim().min(1).max(100);
+
+/** Lifetime of a Discord ingest key, in whole days: the API refuses more than 365. */
+export const ingestKeyExpiryDaysSchema = z.number().int().min(1).max(365);
+
+/** Discord id (account, server or role): a snowflake, carried as text from end to end. */
+export const snowflakeSchema = z.string().regex(/^[0-9]{17,20}$/);
+
+/** Order of a Discord rank role (the API accepts 0 to 1000); null keeps or clears it. */
+export const rankOrderSchema = z.number().int().min(0).max(1000).nullable();
+
+/** RSI rank a Discord rank stands for (the API stores up to 100 characters); null clears it. */
+export const rsiRankLabelSchema = z.string().trim().max(100).nullable();
+
 /** Organization search box. */
 export const searchQuerySchema = z.string().max(100);
 

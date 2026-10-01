@@ -1,5 +1,6 @@
 namespace Collector.Api.Models;
 
+/// <summary>A hashed API credential, optionally restricted to a single capability.</summary>
 public class ApiKey
 {
     public long Id { get; set; }
@@ -11,6 +12,9 @@ public class ApiKey
     public DateTime? LastUsedAt { get; set; }
     public DateTime? ExpiresAt { get; set; }
     public bool IsRevoked { get; set; }
+
+    /// <summary>Null grants the owner's usual access; a scope restricts the key to its dedicated authentication scheme.</summary>
+    public string? Scope { get; set; }
 
     public ApiUser ApiUser { get; set; } = null!;
 }

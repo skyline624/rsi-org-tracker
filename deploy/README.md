@@ -165,6 +165,82 @@ Pas de VACUUM : les pages libérées vont dans la freelist (ligne « freelist pa
 `roles_changed` du parser v1 et les départs en rafale des rosters tronqués sont
 seulement mesurés.
 
+## Rosters Discord (plugin Vencord, lot 14)
+
+Le plugin Vencord envoie les membres d'un serveur Discord à une seule route publique,
+`/ingest/discord/`, que nginx relaie vers `/api/ingest/discord/`. Seules les clés
+`discord:ingest` y sont acceptées, et ces clés ne le sont nulle part ailleurs. C'est la
+première route de l'API ouverte sur Internet : n'ajouter la location sur le serveur
+qu'une fois le lot A livré **en entier** (clés limitées et leur schéma
+d'authentification, verrou et limites de l'ingestion, effacements).
+
+1. **Déployer** avec `--collector` :
+   `~/sc-tracker/current/deploy/deploy.sh <sha> --collector`. La migration
+   `AddDiscordRosters` crée les tables `discord_*` et trois index sur des tables
+   existantes (`entity_links`, `users`, `user_handle_history`) : chronométrer d'abord
+   `Collector.dll --migrate` sur une copie de la base. La colonne `Scope` d'`api.db`
+   (migration `AddApiKeyScope`) s'ajoute au démarrage de l'API.
+2. **Empreinte du certificat** :
+
+   ```bash
+   openssl x509 -in /etc/ssl/certs/sc-selfsigned.crt -noout -fingerprint -sha256
+   ```
+
+   La commande affiche `sha256 Fingerprint=AB:CD:…`. Garder la partie après
+   `Fingerprint=` : une valeur avec une espace casserait un `set -a; . api.env`. Le plugin
+   accepte aussi la ligne entière.
+3. **Réglages de l'API**, dans `/etc/sc-tracker/api.env` :
+
+   ```bash
+   COLLECTOR_API_Discord__Ingest__PublicUrl=https://<IP>
+   COLLECTOR_API_Discord__Ingest__CertificateSha256=AB:CD:…
+   ```
+
+   puis `sudo systemctl restart sc-api`. Le panneau Paramètres → Clé d'envoi Discord
+   affiche alors l'URL et l'empreinte, chacune avec un bouton copier ; tant que l'une
+   manque, il renvoie vers l'administrateur. Réglages facultatifs, commentés dans
+   `deploy/env/api.env.example` : `COLLECTOR_API_Api__RateLimit__DiscordIngest__*` (20
+   envois par 600 s et par émetteur) et `COLLECTOR_API_Discord__Retention__*` (journal des
+   envois 365 jours, comptes non liés partis 730 jours).
+4. **nginx**, à la main comme au lot 2 : la version du dépôt ajoute les zones
+   `sc_discord_ingest` et `sc_discord_conn`, et la location `/ingest/discord/` avant
+   `location /`.
+
+   ```bash
+   sudo cp ~/sc-tracker/current/deploy/nginx/sc-tracker.conf /etc/nginx/sites-available/sc-tracker
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+   Retour : l'ancienne version est dans l'historique git
+   (`git show <sha>:deploy/nginx/sc-tracker.conf`), même copie, puis `nginx -t` et `reload`.
+5. **Vérification** depuis le poste local :
+
+   ```bash
+   U=https://<IP>/ingest/discord/guilds/123456789012345678/syncs
+   curl -sk -o /dev/null -w '%{http_code}\n' -X POST "$U"   # 401 : aucune clé
+   curl -sk -o /dev/null -w '%{http_code}\n' "$U"           # 403 : POST seulement
+   ```
+
+**Certificat régénéré** : recalculer l'empreinte (étape 2), remplacer
+`COLLECTOR_API_Discord__Ingest__CertificateSha256` dans `api.env`, puis
+`sudo systemctl restart sc-api`. Tant qu'un émetteur n'a pas recopié la nouvelle empreinte
+depuis le panneau dans son plugin, ses envois échouent sans rien transmettre
+(« Certificat inattendu »). C'est voulu.
+
+**Effacements administratifs** : ces opérations restent réservées à l'API, sans
+contrôle dans l'interface. Un admin appelle les routes depuis le VPS, en boucle
+locale, avec la clé admin statique (réponse attendue : 204) :
+
+```bash
+KEY=$(sudo sed -n 's/^COLLECTOR_API_Api__AdminApiKey=//p' /etc/sc-tracker/api.env)
+A=http://127.0.0.1:5000/api/discord
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -H "x-api-key: $KEY" "$A/accounts/<id du compte>"                # effacer et exclure un compte
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -H "x-api-key: $KEY" "$A/guilds/<id du serveur>?exclude=true"     # supprimer et exclure un serveur
+```
+
+Un envoi complet enregistre aussi les départs massifs ; le tracker les signale
+sans demander d'autorisation supplémentaire. Un envoi partiel ne produit aucun départ.
+
 ## Tests
 
 `deploy/tests/test-rollback.sh` vérifie la bascule et le retour arrière avec

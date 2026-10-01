@@ -1,7 +1,9 @@
 # Rosters Discord des corpos via un plugin Vencord — design
 
 Date : 2026-09-30
-Statut : proposé, en attente de relecture (v2, après revue en 5 angles)
+Statut : implémentation A1–A14, B1–B10 et C1–C10 achevée et validée localement (voir
+`docs/superpowers/plans/2026-09-30-discord-roster-progress.md`) ; recette dans un vrai client
+Discord et déploiement non effectués
 
 ## 1. Objectif
 
@@ -26,7 +28,7 @@ l'envoie au tracker. Le tracker en tire :
 | Liaison Discord ↔ RSI | Suggestions automatiques, puis validation manuelle. Seuls les liens validés comptent. |
 | Visibilité | Utilisateurs connectés du site (déjà le cas pour tout le site). |
 | Droits sur les serveurs | Mixtes : le plugin choisit la méthode serveur par serveur. |
-| Déclenchement | Uniquement sur clic, sur un serveur coché « suivi ». Aucune synchronisation automatique. |
+| Déclenchement | Envoi ponctuel sur clic pour tout serveur ; lots et minuteur facultatif pour les serveurs cochés « suivi ». |
 | Client Discord | Discord desktop + Vencord uniquement. |
 | Transport | HTTPS public sur l'IP du VPS, certificat auto-signé épinglé dans le plugin. |
 | Émetteurs | Tout utilisateur connecté peut créer une clé « envoi Discord », limitée à l'envoi et à durée de vie bornée. |
@@ -36,12 +38,11 @@ l'envoie au tracker. Le tracker en tire :
 
 - Collecte par un bot Discord, même si les admins d'un serveur l'acceptent.
 - Vesktop, l'extension navigateur, le client web.
-- Synchronisation automatique ou périodique.
 - Avatars, Nitro, invitations, présence, messages, permissions.
 - **Départs sur les serveurs sans accès à la recherche de membres** : sur ces serveurs, aucun
   envoi n'est complet, donc aucun départ n'est jamais déduit (§ 5.4, § 9).
-- **Annulation d'un envoi.** Le garde-fou contre les départs massifs (§ 9.3) et la suppression
-  d'un serveur (§ 13.2) suffisent. Une annulation qui restaure l'état précédent n'est pas prévue.
+- **Annulation d'un envoi.** Une annulation qui restaure l'état précédent n'est pas prévue.
+  Les envois complets font foi, y compris lors de départs massifs (§ 9.3).
 - Événements Discord dans le flux `/changes` et dans les statistiques RSI.
 - Fusion de deux `tracked_entities` qui s'avèrent être la même personne.
 - Gestion par un admin des clés des autres utilisateurs : bannir le propriétaire désactive déjà
@@ -115,11 +116,20 @@ vencord/
 |---|---|---|
 | URL du tracker (`https://<IP>`) | texte | réglages Vencord |
 | Empreinte SHA-256 du certificat | texte, normalisé par `normalizeFingerprint` | réglages Vencord |
-| Clé d'API | texte masqué | `@api/DataStore` (IndexedDB), clé `ScTracker_apiKey` |
+| Connexion (URL, empreinte, clé d'API) | clé masquée | `@api/DataStore` (IndexedDB), clé `ScTracker_connection` |
 | Serveurs suivis | `string[]` | réglage `CUSTOM` |
-| Résultat du dernier envoi par serveur | objet | réglage `CUSTOM` |
+| Envoi automatique activé | booléen, faux par défaut | réglage `CUSTOM` |
+| Intervalle automatique | minutes entières, 60 par défaut, 10 à 10 080 | réglage `CUSTOM` |
+| Résultat d'envoi affiché par serveur | objet | mémoire de la session uniquement, aucun réglage persistant |
 
 - La clé ne va jamais dans les réglages : `settings.json` est en clair et Cloud Sync l'envoie.
+  Le stockage local lie la clé à l'URL et à l'empreinte du certificat. Un import ou une
+  synchronisation qui modifie ces réglages bloque l'envoi jusqu'à une nouvelle sauvegarde explicite.
+- Le plugin ne possède aucune base SQLite, aucun historique ni file d'envoi persistante.
+  Les membres et rôles sont rassemblés en mémoire pour la demande courante, puis transmis
+  au tracker. Le tracker assure seul le stockage, les comparaisons et la création d'événements.
+  Seuls la connexion, les serveurs cochés et les préférences du minuteur sont mémorisés ; les anciens `lastResults`
+  sont retirés des réglages au chargement du plugin.
 - L'URL et l'empreinte à saisir sont affichées sur le site, dans le panneau « Clé d'envoi
   Discord » (§ 6.4).
 - `normalizeFingerprint` retire un éventuel préfixe `sha256 Fingerprint=`, les `:` et les
@@ -130,27 +140,36 @@ Le panneau (`COMPONENT`) affiche :
 
 - les champs URL, empreinte et clé ;
 - la liste des serveurs (`SortedGuildStore.getFlattenedGuildIds()`), avec pour chacun une case
-  « suivi », un bouton « Envoyer » (serveurs cochés seulement) et le statut du dernier envoi
+  « suivi », un bouton « Envoyer » (envoi ponctuel même sans cocher) et le statut d'envoi de la session
   (date, complet ou partiel, méthode, nombre, corpo reliée ou non, erreur) ;
-- un bouton **« Envoyer les serveurs cochés »** et un bouton **« Arrêter »**.
+- un bouton **« Envoyer les serveurs cochés »** et un bouton **« Arrêter »** ;
+- un panneau **« Envoi automatique »** : activation, intervalle et date du prochain envoi.
 
 ### 5.3 Déclenchement
 
 - Menu contextuel du serveur (`contextMenus['guild-context']`) :
+  - toujours : « SC Tracker : envoyer ce serveur », qui collecte et envoie ce seul serveur
+    sans modifier la sélection ni le minuteur, même s'il n'est pas coché ;
   - sur un serveur **non coché** : « SC Tracker : suivre ce serveur », qui coche la case sans
     rien envoyer ;
-  - sur un serveur **coché** : « SC Tracker : envoyer les membres » et « SC Tracker : ne plus
-    suivre ».
+  - sur un serveur **coché** : « SC Tracker : ne plus suivre ».
 - Le panneau de réglages : envoi d'un serveur, ou envoi des serveurs cochés l'un après l'autre,
   avec 5 s de pause entre deux.
   - Le lot **s'arrête** au premier 401, 403, 429, 503, `guild_excluded` ou empreinte différente.
     Les serveurs restants sont marqués « non envoyé ».
   - Il **continue** après un 400, un 413 ou un 409 `stale_sync`.
-- Rien d'autre : aucune minuterie, aucun déclenchement à l'ouverture d'un serveur.
+- Minuteur facultatif : premier envoi après l'intervalle configuré, puis nouvel intervalle
+  après la fin du lot. Il utilise la sélection courante et le même runner que l'envoi manuel.
+  Un travail déjà actif saute l'échéance, sans ajouter d'envoi en attente. Aucun rattrapage
+  après fermeture/suspension de Discord ; le prochain horaire reste uniquement en mémoire.
+  La désactivation du plugin retire le timer et ses abonnements. Un redémarrage réarme un
+  intervalle complet si le mode automatique est activé. Aucun déclenchement à l'ouverture
+  d'un serveur.
 - Pendant la collecte, un toast montre la progression. À la fin, il indique le nombre de membres,
   complet ou partiel, la méthode, les événements créés et, si le serveur n'est relié à aucune
   corpo, « Serveur non relié à une corpo : relie-le sur <URL>/discord ».
-- « Arrêter » annule la collecte et **n'envoie rien**.
+- « Arrêter » suspend le mode automatique et annule la collecte avant son envoi. Un upload
+  déjà commencé peut être enregistré par le tracker ; les serveurs suivants sont ignorés.
 
 ### 5.4 Collecte
 
@@ -178,7 +197,9 @@ de recherche de membres, soit d'un chunk gateway reçu pendant cette collecte.
    - Réponse 202 (code 110000, index pas prêt) : attente de `retry_after`, 3 essais au plus, puis
      bascule sur la méthode 2.
    - Réponse 403 : bascule sur la méthode 2.
-   - **Seule méthode qui peut être complète** : `complete = (IDs collectés === total_result_count)`.
+   - **Seule méthode qui peut être complète** : fin normale du parcours et
+     `IDs collectés > 0 && IDs collectés === total_result_count`. Un curseur bloqué/invalide,
+     une erreur, le plafond d'appels ou l'échéance impose `complete: false`, même si les nombres coïncident.
 2. **`role-members`** :
    - IDs candidats : `GET GUILD_ROLE_MEMBER_IDS(guildId, roleId)` pour chaque rôle non géré, hors
      `@everyone` et non vide selon `GET GUILD_ROLE_MEMBER_COUNTS(guildId)` (100 IDs au plus par
@@ -194,6 +215,9 @@ de recherche de membres, soit d'un chunk gateway reçu pendant cette collecte.
   userIds })`, par lots de 100 IDs au plus.
 - Pendant le lot, le plugin écoute `GUILD_MEMBERS_CHUNK_BATCH` et ne garde que les chunks du
   bon `guildId`, reçus après l'envoi.
+- Un nonce propre au lot doit corréler la requête et les chunks. Le passage de ce champ
+  dans le chemin Flux reste à vérifier dans le client réel avant d'intégrer `refresh.ts`.
+  S'abonner avant le dispatch ne suffit pas à distinguer une réponse tardive d'un lot ancien.
 - Un ID est résolu quand il apparaît :
   - dans `chunk.members[].user.id` : il est présent, avec les données du chunk ;
   - dans `chunk.notFound` : il est parti, et on le retire.
@@ -211,8 +235,15 @@ de recherche de membres, soit d'un chunk gateway reçu pendant cette collecte.
   Une réponse 429 impose d'attendre `retry_after`.
 - **Plafond** : 200 appels par serveur. Chaque requête REST et chaque lot gateway compte pour un.
   Au-delà, on envoie ce qui a été collecté, marqué partiel.
+- **Échéance de collecte** : 25 min, commune aux stratégies, aux retries et aux pauses.
+  À l'échéance, la collecte est finalisée comme partielle, avec une marge avant les 30 min
+  acceptées par l'API. Une réponse non annulable arrivée après cette borne ne justifie jamais
+  une durée artificiellement tronquée : si le message est devenu irrecevable, aucun envoi.
 - **Durée** : le plugin mesure `collectionDurationMs` avec `performance.now()`, du début à la fin
   de la collecte.
+- **Annulation** : vérifier le signal après chaque réponse et immédiatement avant IPC.
+  Après une échéance normale, la dernière vérification porte seulement sur l'annulation,
+  afin de permettre l'envoi du résultat partiel. Timers et abonnements sont libérés à toute sortie.
 
 ### 5.5 Envoi
 
@@ -226,6 +257,8 @@ de recherche de membres, soit d'un chunk gateway reçu pendant cette collecte.
   - empreinte normalisée ;
   - `guildId` au format snowflake ;
   - corps de 25 Mio au plus.
+- Un refus d'arguments natifs retourne un résultat local de statut 400 avec un corps
+  ProblemDetails contenant le détail français, sans connexion ni erreur de transport.
 - Il construit lui-même le chemin `/ingest/discord/guilds/{guildId}/syncs`, puis délègue à
   `lib/pinnedPost.ts` :
   - `https.request` avec `agent: false`, pour un socket neuf, et `rejectUnauthorized: false`,
@@ -237,6 +270,8 @@ de recherche de membres, soit d'un chunk gateway reçu pendant cette collecte.
     `x-api-key` ni le corps ne partent ;
   - si elle correspond : `req.end(body)` ;
   - `req.setTimeout(30 000)` est un délai **d'inactivité** du socket, pas un délai total.
+  - un délai de connexion de 15 s, une échéance totale de 10 min et une réponse de 256 Kio
+    au plus bornent aussi DNS/TCP/TLS et une réponse qui s'écoule sans fin ; les timers sont nettoyés.
 - Jamais de `NODE_TLS_REJECT_UNAUTHORIZED` ni de réglage TLS global dans le processus principal
   de Discord.
 - Retour vers le renderer : `{ status, body, headers: { retryAfter? }, error? }`, avec `error`
@@ -383,7 +418,8 @@ créable depuis l'interface.
 
 ```json
 {
-  "syncId": 42, "isBaseline": false, "isComplete": true, "departureGuardTripped": false,
+  "syncId": 42, "isBaseline": false, "isComplete": true,
+  "massDepartureDetected": false, "departureGuardTripped": false,
   "orgSid": "CORP",
   "membersReceived": 1234, "membersOptedOut": 2, "unknownRoleRefs": 0,
   "events": { "joined": 3, "left": 1, "rejoined": 0, "rolesChanged": 5, "nickChanged": 2, "nameChanged": 0 }
@@ -448,7 +484,7 @@ ces tables.
 | FirstSyncAt | DATETIME | `CollectedAt` de l'envoi de base |
 | LastSyncAt, LastCollectedAt | DATETIME | réception et `CollectedAt` du dernier envoi accepté |
 | LastCompleteSyncAt | DATETIME null | `CollectedAt` du dernier envoi complet |
-| AllowMassDepartureOnce | BOOL | levée ponctuelle du garde-fou (§ 9.3) |
+| AllowMassDepartureOnce | BOOL | colonne historique inutilisée, conservée pour compatibilité SQLite |
 | CreatedAt, UpdatedAt | DATETIME | |
 
 **`discord_roles`** : unique (GuildId, RoleId)
@@ -523,7 +559,7 @@ Contenu de `OldValue` et `NewValue` selon `Type` :
 | SubmittedByApiUserId, SubmittedByUsername | |
 | ReceivedAt, CollectedAt, DeclaredCollectedAt | DATETIME |
 | Method | TEXT(20) |
-| DeclaredComplete, IsComplete, IsBaseline, DepartureGuardTripped | BOOL |
+| DeclaredComplete, IsComplete, IsBaseline, MassDepartureDetected | BOOL ; `MassDepartureDetected` utilise la colonne SQLite historique `DepartureGuardTripped` |
 | ExpectedCount | INTEGER null |
 | CollectedCount, OptedOutCount, UnknownRoleRefCount, EventCount | INTEGER |
 | PluginVersion | TEXT(20) |
@@ -646,15 +682,14 @@ arbitre face au collecteur.
 
 - Un membre actif absent de l'envoi reçoit `LeftAt = CollectedAt` et un événement `left`
   (`NotBefore` = `LastSeenAt` précédent, `ObservedAt = CollectedAt`).
-- **Garde-fou.** Si l'envoi ferait partir plus de 25 % des membres actifs, avec au moins 10
-  départs, il est traité comme **partiel** :
-  - aucun départ ;
-  - `DepartureGuardTripped = 1` dans `discord_syncs` et `departureGuardTripped: true` dans la
-    réponse ;
-  - un badge dans l'onglet des envois.
-  - Un admin peut autoriser le **prochain** envoi complet de ce serveur à dépasser le seuil :
-    `POST api/discord/guilds/{guildId}/allow-mass-departure` (AdminOnly), qui pose
-    `AllowMassDepartureOnce`, remis à faux après usage et écrit dans `activity_logs`.
+- **Signal de départs massifs.** Plus de 25 % des membres actifs, avec au moins 10 départs,
+  produit `massDepartureDetected: true` et un badge « DÉPARTS MASSIFS ». Tous les départs
+  sont enregistrés et l'envoi reste **complet**, sans autorisation manuelle.
+  Les comptes exclus ne participent pas au calcul du seuil.
+  La propriété `MassDepartureDetected` réutilise la colonne SQLite historique
+  `DepartureGuardTripped`, sans migration destructive. `AllowMassDepartureOnce` reste
+  uniquement une colonne historique inutilisée. La réponse d'ingestion conserve
+  `departureGuardTripped: false` pour les plugins déjà installés.
 
 **Envoi partiel**
 
@@ -667,7 +702,7 @@ avancent.
 **Serveur**
 
 - Mise à jour du nom, de l'icône, de `MemberCount`, de `LastSyncAt` et de `LastCollectedAt`.
-- Mise à jour de `LastCompleteSyncAt` si l'envoi est complet et n'a pas déclenché le garde-fou.
+- Mise à jour de `LastCompleteSyncAt` si l'envoi est complet, y compris lors de départs massifs.
 
 **Journal** : une ligne `discord_syncs` par envoi accepté.
 
@@ -680,18 +715,19 @@ multi-appartenance, et affichés avec un badge BOT.
 Aucune transaction n'écrit plus de 5 000 lignes, pour ne pas retenir longtemps le verrou d'écriture
 SQLite que partage le collecteur (`busy_timeout` de 5 s, aucun nouvel essai de son côté).
 
-1. La ligne `discord_guilds` est écrite en premier.
-2. Les comptes et membres nouveaux sont insérés en transactions de 5 000 lignes au plus.
-3. Une transaction courte écrit les événements, les membres modifiés, les rôles, le serveur et
-   `discord_syncs`.
-4. Après le commit, les `LastSeenAt` des membres et des comptes présents sont mis à jour par
-   `ExecuteUpdate`, en lots de 5 000 : `SET LastSeenAt = max(LastSeenAt, @CollectedAt)`. Cette
-   mise à jour est monotone et idempotente : une interruption ne fait que vieillir un `NotBefore`,
-   qui reste une borne valide.
+1. Le serveur et un reçu de reprise sont écrits en premier. Un `EventCount` négatif distingue
+   ce reçu des envois finalisés : il n'est pas affiché comme une collecte terminée.
+2. Chaque changement d'état et ses événements sont écrits ensemble, en lots qui comptent aussi
+   les suppressions correctives. Les nouveaux comptes et membres respectent la même borne.
+3. Les `LastSeenAt` sont avancés de façon monotone avant de publier la complétude. Une observation
+   globale plus ancienne provenant d'un autre serveur ne remplace pas un nom plus récent.
+4. Les rôles, les métadonnées du serveur et le reçu sont finalisés après tous les effets.
+   Les anciens marqueurs de reprise restent acceptés, sans autorisation ponctuelle.
 
-Une base interrompue après l'étape 1 est complétée sans faux événement par l'envoi suivant, grâce
-aux règles « inconnu avec `JoinedAt` < `FirstSyncAt` » et « `JoinedAt` nul sans envoi complet
-antérieur ».
+L'envoi suivant clôt un reçu interrompu comme partiel puis poursuit depuis les effets déjà
+validés, sans perdre l'auteur, les dates, la baseline ou les événements antérieurs. Les règles
+« inconnu avec `JoinedAt` < `FirstSyncAt` » et « `JoinedAt` nul sans envoi complet antérieur »
+évitent les faux événements d'arrivée. Le contrat partagé décrit les marqueurs de reprise.
 
 `SQLITE_BUSY` malgré le `busy_timeout` : un nouvel essai de la transaction en cours au bout de
 2 s, puis 503 avec `Retry-After: 30`. Les transactions déjà validées restent valides, et l'envoi
@@ -820,7 +856,6 @@ casse, espaces de début et de fin retirés.
 | `GET api/discord/guilds/{guildId}/syncs?limit=` | journal des envois |
 | `PUT api/discord/guilds/{guildId}/org` `{ orgSid \| null }` | relier la corpo : SID connu dans `organizations`, sinon 400 |
 | `PUT api/discord/guilds/{guildId}/roles/{roleId}` `{ isRank, rankOrder, rsiRankLabel }` | configurer un rang |
-| `POST api/discord/guilds/{guildId}/allow-mass-departure` (**AdminOnly**) | lever le garde-fou pour le prochain envoi complet |
 | `POST api/discord/links` `{ discordUserId, citizenId?, handle }` | valider une suggestion |
 | `POST api/discord/link-rejections` `{ discordUserId, citizenId?, handle }`, `DELETE api/discord/link-rejections/{id}` | ignorer une suggestion, ou annuler ce rejet |
 | `GET api/discord/multi?page=&pageSize=` | multi-appartenance |
@@ -846,7 +881,9 @@ Les DTOs vont dans `Dtos/Discord/DiscordDtos.cs` (records `*Request`, classes `*
 
 **`/discord`** (groupe `(public)`, donc `requireAuthCtx()`) :
 
-- en tête, les serveurs **non reliés**, avec un sélecteur de SID (recherche d'org existante) ;
+- en tête, les serveurs **non reliés**, avec une recherche par nom ou SID parmi les corpos
+  connues du tracker ; le nom du serveur sans ses décorations lance une première recherche ;
+  chaque proposition affiche le nom et le SID, puis doit être sélectionnée avant « Relier » ;
 - un tableau `HudDataGrid` : icône, nom, corpo (lien `/orgs/[sid]`), actifs, rangs, dernier envoi
   (badge complet ou partiel, auteur, date) ;
 - l'icône se construit uniquement à partir de `GuildId` et `IconHash` validés, avec
@@ -866,15 +903,16 @@ Les DTOs vont dans `Dtos/Discord/DiscordDtos.cs` (records `*Request`, classes `*
   - pour un serveur non relié, `gaps` et `suggestions` affichent aussi « Relie d'abord ce serveur
     à une corpo (onglet config) ».
 - `config` :
-  - corpo reliée ;
+  - corpo reliée, avec la même recherche et les mêmes propositions sélectionnables ; la
+    saisie accepte 100 caractères, seul le SID de la proposition choisie est envoyé ;
   - tableau des rôles : case rang, ordre, rang RSI équivalent choisi parmi les `Rank` RSI connus
     de l'org ;
   - modifiable par le responsable ou un admin une fois le serveur relié.
-- `syncs` : journal des envois, badges « garde-fou » et « partiel » ;
-- réservé aux admins :
-  - « Autoriser un départ massif » ;
-  - « Supprimer et exclure ce serveur » et « Supprimer et repartir d'une base » ;
-  - sur chaque membre, « Supprimer et exclure ce compte ».
+- `syncs` : journal des envois, badges « COMPLET », « PARTIEL » et « DÉPARTS MASSIFS ».
+
+L'interface ne propose aucune suppression, remise à zéro ou exclusion de serveur ou de
+membre, même aux admins. Ces opérations n'ont aucune action web associée ; l'administration
+hors interface reste décrite au § 13.2. La route d'autorisation de départ massif est supprimée.
 
 **Autres pages et sections**
 
@@ -903,8 +941,8 @@ invitations, ni présence, ni permissions.
 
 ### 13.2 Effacement et opposition
 
-Ces actions sont réservées aux admins, passent par le verrou d'écriture et sont livrées dès le
-lot A.
+Ces actions sont réservées aux admins, passent par le verrou d'écriture et sont disponibles
+uniquement par administration directe de l'API, sans commande dans l'interface web.
 
 **`DELETE api/discord/accounts/{id}`** :
 
@@ -917,9 +955,9 @@ lot A.
 - supprime le serveur, ses rôles, ses membres, ses événements et ses envois ;
 - supprime aussi, dans la même opération, les comptes **non liés** qui n'ont plus aucune ligne
   `discord_members`, avec leurs événements et leurs rejets ;
-- avec `exclude=true` (« Supprimer et exclure », en cas de retrait de l'accord), le serveur est
+- avec `exclude=true` (en cas de retrait de l'accord), le serveur est
   ajouté à `discord_guild_optouts`, et tout envoi suivant reçoit 409 `guild_excluded` ;
-- avec `exclude=false` (« Supprimer et repartir d'une base »), l'envoi suivant est une nouvelle
+- avec `exclude=false`, l'envoi suivant est une nouvelle
   base.
 
 **Journal** : les actions écrivent dans `activity_logs` **après** la validation des
@@ -934,13 +972,17 @@ lots de 500, sous le verrou d'écriture repris à chaque lot, et relit `entity_l
 supprimer.
 
 - **Journal des envois** : les lignes `discord_syncs` plus vieilles que
-  `Discord:Retention:SyncLogDays` (365 par défaut) sont supprimées.
+  `Discord:Retention:SyncLogDays` (365 par défaut) sont supprimées, sauf les reçus de reprise.
 - **Comptes** : un compte **non lié** est purgé, avec ses membres, événements et rejets, dans
   deux cas (`Discord:Retention:DepartedAccountDays`, 730 par défaut) :
   - chacune de ses lignes `discord_members` vérifie `coalesce(LeftAt, LastSeenAt) < maintenant −
     DepartedAccountDays` ;
   - il n'a aucune ligne `discord_members` et son `LastSeenAt` est plus ancien que ce délai.
-- Le second cas couvre les serveurs uniquement partiels et ceux que plus personne n'envoie.
+- Le `LastSeenAt` du compte doit également être ancien, pour préserver une collecte interrompue
+  après l'observation du compte et avant celle du membre. Le second cas couvre les serveurs
+  uniquement partiels et ceux que plus personne n'envoie.
+- Les événements, rejets et membres sont supprimés par transactions de 5 000 lignes maximum,
+  puis le compte en dernier. Une interruption conserve ainsi un candidat pour le passage suivant.
 
 ### 13.4 Information
 
@@ -1030,7 +1072,7 @@ Toute autre erreur passe par `ExceptionHandlingMiddleware`.
   - opt-out ignoré, et l'envoi reste complet ;
   - `complete` déclaré mais nombres différents ou méthode autre que `member-search` → partiel ;
   - envoi complet vide → 400 ;
-  - garde-fou (plus de 25 % et au moins 10 départs) : déclenchement, puis levée par un admin ;
+  - départs massifs (plus de 25 % et au moins 10 départs) : signal et enregistrement de tous les départs, sans autorisation ;
   - envoi obsolète → 409 ;
   - serveur exclu → 409 ;
   - erreurs 400 (snowflake, `guildId` différent, doublon, icône invalide) ;
@@ -1135,7 +1177,7 @@ Toute autre erreur passe par `ExceptionHandlingMiddleware`.
 
 | Lot | Contenu | Dépend de |
 |---|---|---|
-| A — socle serveur | clés limitées (api.db, schéma `DiscordIngestKey`, politique, correctif du préfixe, panneau Paramètres, `ingest-config`) ; migration tracker.db (tables, index) ; `DiscordWriteGate`, filtre, `DiscordIngestService` et contrôleur ; garde-fou ; effacements et exclusions (§ 13.2) ; nginx, README et variables ; tests | — |
+| A — socle serveur | clés limitées (api.db, schéma `DiscordIngestKey`, politique, correctif du préfixe, panneau Paramètres, `ingest-config`) ; migration tracker.db (tables, index) ; `DiscordWriteGate`, filtre, `DiscordIngestService` et contrôleur ; signal de départs massifs ; effacements et exclusions hors interface (§ 13.2) ; nginx, README et variables ; tests | — |
 | B — plugin | `vencord/` complet, tests, job CI, README (installation, recette, avis RGPD) | contrat du § 7 (lot A) |
 | C — lecture, liaison, UI | API de lecture et d'édition ; suggestions, recoupements, multi, profil croisé ; pages web ; `DiscordRetentionService` ; tests | A |
 
@@ -1148,8 +1190,9 @@ Toute autre erreur passe par `ExceptionHandlingMiddleware`.
 
 ## 18. Risques résiduels
 
-- **CGU Discord.** Le risque de sanction du compte qui envoie est réduit (clic manuel, appels de
-  l'interface officielle, rythme lent) mais pas nul. Il est assumé par l'utilisateur.
+- **CGU Discord.** Le plugin utilise un compte utilisateur, avec envoi sur clic ou par
+  minuteur facultatif. Le risque de sanction mentionné dans le README reste assumé par
+  l'utilisateur ; le minuteur conserve les bornes et l'espacement de la collecte.
 - **Fragilité de Vencord.** Stores, constantes d'endpoints et noms d'événements Flux peuvent
   changer à une mise à jour de Discord. Le job CI vérifie les types contre une version figée, pas
   contre le client du jour. Le plugin doit échouer proprement : erreur affichée, rien d'envoyé.
@@ -1158,9 +1201,10 @@ Toute autre erreur passe par `ExceptionHandlingMiddleware`.
   rôles en cas de 403.
 - **Serveurs sans droits de modération.** Au plus 100 membres par rôle, plus le cache rafraîchi.
   Aucun départ n'y est jamais déduit, et `rsi_only` n'y est pas calculé.
-- **Envois malveillants.** Un détenteur de clé peut encore fausser des pseudos ou des rôles par
-  des envois partiels. C'est limité par l'expiration des clés, le garde-fou contre les départs
-  massifs, l'auteur affiché sur chaque événement et la suppression d'un serveur. Il n'y a pas
-  d'annulation fine (§ 3).
+- **Envois malveillants.** Un détenteur de clé peut fausser des observations. L'expiration et
+  la révocation des clés limitent ses possibilités d'envoi ; chaque événement conserve son auteur.
+  Les envois complets font foi et tous leurs départs sont enregistrés, même massifs.
+  La suppression d'un serveur reste une opération administrative hors interface ; il n'y a
+  pas d'annulation fine (§ 3).
 - **Certificat.** Un certificat régénéré bloque tous les envois jusqu'à la mise à jour de
   l'empreinte. C'est voulu.

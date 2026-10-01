@@ -24,6 +24,13 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     /// <summary>Legacy HS256 secret: still configured, must no longer be accepted.</summary>
     public const string LegacyJwtSecret = "test-jwt-secret-0123456789abcdef0123456789";
 
+    /// <summary>Plugin settings published by <c>GET api/discord/ingest-config</c> (api.env in production).</summary>
+    public const string DiscordIngestPublicUrl = "https://203.0.113.10";
+
+    /// <summary>A fingerprint in the openssl format (32 colon-separated bytes).</summary>
+    public const string DiscordIngestCertificateSha256 =
+        "0F:1E:2D:3C:4B:5A:69:78:87:96:A5:B4:C3:D2:E1:F0:0F:1E:2D:3C:4B:5A:69:78:87:96:A5:B4:C3:D2:E1:F0";
+
     private readonly string _dataDir =
         Path.Combine(Path.GetTempPath(), "sc-tracker-api-tests", Guid.NewGuid().ToString("N"));
 
@@ -54,12 +61,16 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__JwtSecret", LegacyJwtSecret);
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__Jwt__PrivateKeyPath", keyPath);
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__AdminApiKey", AdminApiKey);
+        // Same variables as /etc/sc-tracker/api.env (deploy/README.md, "Rosters Discord").
+        Environment.SetEnvironmentVariable("COLLECTOR_API_Discord__Ingest__PublicUrl", DiscordIngestPublicUrl);
+        Environment.SetEnvironmentVariable("COLLECTOR_API_Discord__Ingest__CertificateSha256", DiscordIngestCertificateSha256);
 
         // Every test client shares one partition (no peer address in TestServer); budgets
         // are exercised by dedicated tests with their own limits.
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__UserPermitLimit", "100000");
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__AnonymousPermitLimit", "100000");
         Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__Login__PermitLimit", "100000");
+        Environment.SetEnvironmentVariable("COLLECTOR_API_Api__RateLimit__DiscordIngest__PermitLimit", "100000");
     }
 
     /// <summary>An HTTP client authenticated as a freshly created account.</summary>

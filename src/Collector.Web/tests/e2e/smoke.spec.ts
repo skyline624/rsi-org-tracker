@@ -6,7 +6,7 @@ import { test, expect, type Page } from "@playwright/test";
  * safe against a deployed site (E2E_BASE_URL).
  */
 
-const PRIVATE_PAGES = ["/", "/orgs", "/users", "/stats", "/changes", "/dashboard", "/orgs/TEST"];
+const PRIVATE_PAGES = ["/", "/orgs", "/users", "/stats", "/changes", "/dashboard", "/orgs/TEST", "/discord", "/discord/multi"];
 
 test.describe("anonymous visitor", () => {
   for (const path of PRIVATE_PAGES) {
@@ -63,8 +63,19 @@ test.describe("signed-in user", () => {
     await expect(page.getByText(/UEE::CITIZEN_REGISTRY/)).toBeVisible();
     await page.goto("/changes");
     await expect(page.getByText(/UEE::LIVE_CHANGELOG/)).toBeVisible();
+    await page.goto("/discord");
+    await expect(page.getByText(/UEE::DISCORD_ROSTERS/)).toBeVisible();
+    await page.goto("/discord/multi");
+    await expect(page.getByText(/UEE::DISCORD_MULTI/)).toBeVisible();
     await page.goto("/dashboard");
     expect(new URL(page.url()).pathname).toBe("/dashboard");
+  });
+
+  test("an unknown Discord server gets the not-found page", async ({ page }) => {
+    await signIn(page);
+    // Not a snowflake: the page answers without calling the API.
+    await page.goto("/discord/NOT_A_SERVER");
+    await expect(page.getByRole("heading", { name: /Not found/i })).toBeVisible();
   });
 
   test("an unknown organization gets the not-found page", async ({ page }) => {

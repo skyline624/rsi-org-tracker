@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
+    "test:e2e:discord": "playwright test --config playwright.discord.config.ts",
     "test:e2e:ui": "playwright test --ui",
     "test": "vitest run"
   },

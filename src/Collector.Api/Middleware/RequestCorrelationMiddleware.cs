@@ -20,7 +20,7 @@ public class RequestCorrelationMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         var correlationId = context.Request.Headers.TryGetValue(HeaderName, out var incoming)
-            && !string.IsNullOrWhiteSpace(incoming)
+            && incoming.Count == 1 && IsValid(incoming.ToString())
                 ? incoming.ToString()
                 : context.TraceIdentifier;
 
@@ -40,4 +40,7 @@ public class RequestCorrelationMiddleware
             await _next(context);
         }
     }
+
+    private static bool IsValid(string value) => value.Length is >= 1 and <= 64
+        && value.All(c => c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '_' or ':' or '-');
 }

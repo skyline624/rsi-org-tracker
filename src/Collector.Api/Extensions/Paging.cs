@@ -14,6 +14,9 @@ public static class Paging
 
     public static int PageSize(int pageSize) => Math.Clamp(pageSize, 1, MaxPageSize);
 
+    /// <summary>Offset for already bounded paging values, without overflowing for a huge page.</summary>
+    public static int Offset(int page, int pageSize) => (int)Math.Min(int.MaxValue, (long)(page - 1) * pageSize);
+
     public static int Limit(int limit) => Math.Clamp(limit, 1, MaxLimit);
 
     public static int Days(int days) => Math.Clamp(days, 1, MaxDays);

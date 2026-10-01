@@ -51,6 +51,7 @@ public class ApiKeysController : ControllerBase
             CreatedAt = dto.CreatedAt,
             ExpiresAt = dto.ExpiresAt,
             IsRevoked = dto.IsRevoked,
+            Scope = dto.Scope,
             RawKey = rawKey,
         };
         return CreatedAtAction(nameof(Get), new { id = dto.Id }, result);

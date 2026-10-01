@@ -8,9 +8,9 @@ arrivées et départs, les changements de rang, de nom et de contenu. Le site es
 
 ```
 Internet ──HTTPS──> nginx ──> Collector.Web (Next.js, 127.0.0.1:3000)
-                                   │  appels serveur avec le JWT de l'utilisateur
-                                   v
-                              Collector.Api (ASP.NET Core, 127.0.0.1:5000)
+                      │            │  appels serveur avec le JWT de l'utilisateur
+   /ingest/discord/   │            v
+   (plugin Vencord)   └─────> Collector.Api (ASP.NET Core, 127.0.0.1:5000)
                                    │                      │
                                tracker.db  <────────  Collector (service .NET)
                                api.db                     │
@@ -19,11 +19,15 @@ Internet ──HTTPS──> nginx ──> Collector.Web (Next.js, 127.0.0.1:3000
 ```
 
 Trois services systemd (`sc-web`, `sc-api`, `sc-collector`) sur un VPS, derrière nginx.
+nginx sert le front et relaie vers l'API une seule route publique, `/ingest/discord/`,
+par laquelle le plugin Vencord envoie les membres des serveurs Discord suivis (voir
+Sécurité).
 Deux bases SQLite en WAL dans le dossier de données (`COLLECTOR_DATA_DIR`) :
 
 - `tracker.db` (≈ 25 Go) : organisations, membres, citoyens, événements, file
   d'enrichissement. Écrite par le collector, qui applique ses migrations EF au démarrage ;
-  l'API y lit et y écrit les annotations (notes, adhésions manuelles, audio, liens).
+  l'API y lit et y écrit les annotations (notes, adhésions manuelles, audio, liens) et,
+  seule, les rosters Discord (tables `discord_*`).
 - `api.db` : comptes, jetons de rafraîchissement, clés API, journal d'activité (API seule).
 
 ### Collector
@@ -58,6 +62,13 @@ concurrence maximale, pause partagée sur 403/429/503/`ErrApiThrottled`.
 - Cookies `httpOnly`, `SameSite=Lax` ; le navigateur ne voit jamais de jeton ni l'API.
 - API en HTTP sur la boucle locale uniquement ; nginx termine TLS et écrase
   `X-Forwarded-For`. Rate limit par utilisateur, par IP et sur le login.
+- Une seule route publique mène à l'API : `/ingest/discord/`, que nginx relaie vers
+  `/api/ingest/discord/` (POST seulement, 10 requêtes par minute et 2 connexions par
+  adresse, 25 Mo au plus). Le plugin Vencord y envoie les membres d'un serveur Discord
+  avec une clé `discord:ingest`, que chaque utilisateur crée dans Paramètres et qui
+  expire au plus tard 365 jours après sa création. La route n'accepte que ces clés (ni
+  JWT, ni clé complète, ni clé admin), et ces clés ne sont acceptées nulle part ailleurs
+  (401).
 - CSP avec nonce, en mode Report-Only pour l'instant.
 
 ## Dépôt
@@ -71,6 +82,7 @@ src/Collector.Api.Tests tests de l'API (WebApplicationFactory)
 deploy/                 déploiement par releases, unités systemd, nginx, durcissement
 scripts/                scripts de développement local
 tools/fixtures/         anonymisation des captures RSI
+vencord/                plugin desktop ScTracker, installer, transport natif et tests
 ```
 
 ## Développement
@@ -112,6 +124,25 @@ dotnet test Collector.sln                       # collector + API
 cd src/Collector.Web && corepack pnpm typecheck && corepack pnpm test && corepack pnpm build
 ```
 
+Le socle du plugin Vencord se teste séparément :
+
+```bash
+cd vencord
+corepack pnpm install --frozen-lockfile
+corepack pnpm typecheck
+corepack pnpm test
+```
+
+Les modules de collecte, le panneau, le transport natif et le point d'entrée Discord sont intégrés.
+Voir [`vencord/README.md`](vencord/README.md) et les
+[plans de reprise](docs/superpowers/plans/2026-09-30-discord-roster-lot-b-plugin.md).
+
+Un envoi Discord complet fait foi : tous les départs sont enregistrés et les départs massifs
+sont signalés dans le journal, sans autorisation manuelle. Un envoi partiel ne déduit aucun
+départ. Le site ne propose aucune suppression, remise à zéro ou exclusion des serveurs et
+membres. Les routes administratives d'effacement restent accessibles directement à un admin
+côté API, sous le verrou d'écriture ; voir la [spécification, § 13.2](docs/superpowers/specs/2026-09-30-discord-vencord-roster-design.md#132-effacement-et-opposition).
+
 Smoke test de bout en bout (Playwright), contre un site qui tourne :
 
 ```bash
@@ -140,7 +171,8 @@ les captures brutes.
 
 - **dotnet** : restauration verrouillée, build Release, tests, absence de migration EF
   manquante pour les deux contextes ;
-- **web** : installation figée, typecheck, vitest, build, démarrage du serveur standalone ;
+- **web** : installation figée, typecheck, vitest, build, démarrage du serveur standalone, smoke anonyme et recette Discord avec API factice ;
+- **vencord** : installation figée, tests du plugin et build/typecheck dans Vencord au ref fixé ;
 - **deploy-scripts** : syntaxe des scripts, exercice de retour arrière, garde des
   scripts de développement.
 
@@ -196,8 +228,11 @@ Fichiers `/etc/sc-tracker/{api,web,collector}.env` (modèles dans `deploy/env/`)
 | API | `ASPNETCORE_ENVIRONMENT` | `Production` (pas de Swagger ni de détail d'erreur) |
 | API | `COLLECTOR_API_Api__Jwt__PrivateKeyPath` | clé RSA ≥ 2048 bits, mode 0600 |
 | API | `COLLECTOR_API_Api__AdminApiKey` | clé d'administration pour les scripts (≥ 24 caractères) |
-| API | `COLLECTOR_API_Api__RateLimit__*` | limites par utilisateur, par IP et du login |
+| API | `COLLECTOR_API_Api__RateLimit__*` | limites par utilisateur, par IP, du login et des envois Discord (`DiscordIngest__PermitLimit`, `DiscordIngest__WindowSeconds` : 20 envois par 600 s) |
 | API | `Discord__BotToken` | intégration Discord |
+| API | `COLLECTOR_API_Discord__Ingest__PublicUrl` | URL publique du tracker (`https://<IP>`) à saisir dans le plugin Vencord, affichée dans Paramètres → Clé d'envoi Discord |
+| API | `COLLECTOR_API_Discord__Ingest__CertificateSha256` | empreinte SHA-256 du certificat de nginx, affichée au même endroit (calcul dans `deploy/README.md`) |
+| API | `COLLECTOR_API_Discord__Retention__*` | conservation Discord en jours : `SyncLogDays` (journal des envois, 365), `DepartedAccountDays` (comptes non liés partis de tous les serveurs, 730) |
 | collector | `Collector__*` | réglages de `appsettings.json` (`RateLimitDelaySeconds`, `MaxConcurrentRequests`, `ThrottlePauseSeconds`, `ProfileRefreshPerHour`…) |
 | web | `API_BASE_URL` | `http://127.0.0.1:5000` |
 | web | `HOSTNAME`, `PORT` | écoute du serveur Next (`127.0.0.1:3000`) |

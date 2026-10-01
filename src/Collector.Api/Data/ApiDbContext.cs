@@ -40,6 +40,7 @@ public class ApiDbContext : DbContext
             e.Property(k => k.Name).IsRequired().HasMaxLength(100);
             e.Property(k => k.KeyHash).IsRequired();
             e.Property(k => k.KeyPrefix).IsRequired().HasMaxLength(16);
+            e.Property(k => k.Scope).HasMaxLength(30);
             e.HasOne(k => k.ApiUser)
                 .WithMany(u => u.ApiKeys)
                 .HasForeignKey(k => k.ApiUserId);

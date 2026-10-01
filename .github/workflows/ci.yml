@@ -51,9 +51,11 @@ jobs:
       # Both contexts have a design-time factory: no host configuration is needed.
       - name: EF model matches migrations
         run: |
-          dotnet tool restore
+          dotnet tool restore --tool-manifest dotnet-tools.json
           dotnet ef migrations has-pending-model-changes --project src/Collector --context TrackerDbContext
           dotnet ef migrations has-pending-model-changes --project src/Collector.Api --context ApiDbContext
+        env:
+          DOTNET_ROLL_FORWARD: Major
 
   web:
     name: Web typecheck, tests & build
@@ -99,6 +101,59 @@ jobs:
             sleep 1
           done
           echo "standalone server did not answer 200 on /login (last: $code)"; exit 1
+
+      - name: Install browser for acceptance tests
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Anonymous private-page smoke on the standalone server
+        run: pnpm test:e2e --grep 'anonymous visitor'
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3100
+
+      - name: Discord browser acceptance with a disposable API fixture
+        run: |
+          cp -a .next/static .next/standalone/.next/static
+          pnpm test:e2e:discord
+        env:
+          E2E_WEB_COMMAND: node .next/standalone/server.js
+
+  vencord:
+    name: Vencord plugin tests & upstream build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vencord
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: vencord/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: vencord/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      - name: Install plugin in the pinned upstream checkout
+        run: |
+          ref=$(tr -d '\r\n' < VENCORD_REF)
+          [[ "$ref" =~ ^[0-9a-f]{40}$ ]]
+          git clone --filter=blob:none --no-checkout https://github.com/Vendicated/Vencord.git "$RUNNER_TEMP/Vencord"
+          git -C "$RUNNER_TEMP/Vencord" checkout --detach "$ref"
+          node install.mjs "$RUNNER_TEMP/Vencord"
+
+      - name: Build and typecheck renderer and native code in Vencord
+        run: |
+          cd "$RUNNER_TEMP/Vencord"
+          npx --yes pnpm@11.9.0 install --frozen-lockfile
+          npx --yes pnpm@11.9.0 build
+          npx --yes pnpm@11.9.0 testTsc
 
   deploy-scripts:
     name: Deploy scripts

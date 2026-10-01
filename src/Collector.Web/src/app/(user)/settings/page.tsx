@@ -2,8 +2,10 @@ import { HudPanel } from "@/components/hud/HudPanel";
 import { HudBadge } from "@/components/hud/HudBadge";
 import { getSession, sessionCtx } from "@/lib/auth/session";
 import { apiGet } from "@/lib/api/client";
+import { getDiscordIngestConfig, listApiKeys } from "@/lib/api/endpoints";
 import { formatDate } from "@/lib/utils/format";
 import { ChangePasswordForm } from "./ChangePasswordForm";
+import { DiscordIngestKeysPanel } from "./DiscordIngestKeysPanel";
 import { DiscordTokenForm } from "./DiscordTokenForm";
 
 export default async function SettingsPage() {
@@ -15,6 +17,12 @@ export default async function SettingsPage() {
         .then((r) => r.configured)
         .catch(() => false)
     : false;
+
+  // Neither is essential to the page: the panel says what is missing instead.
+  const [ingestConfig, apiKeys] = await Promise.all([
+    getDiscordIngestConfig(sessionCtx(session)).catch(() => null),
+    listApiKeys(sessionCtx(session)).catch(() => null),
+  ]);
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -53,13 +61,11 @@ export default async function SettingsPage() {
         </dl>
       </HudPanel>
 
-      <HudPanel label="API KEYS" accent="orange">
-        <p className="py-4 text-center font-mono text-xs text-hud-text-dim">
-          — API key management UI arriving in v2 —
-          <br />
-          Use the /api/api-keys endpoints directly for now.
-        </p>
-      </HudPanel>
+      <DiscordIngestKeysPanel
+        config={ingestConfig}
+        keys={apiKeys}
+        defaultName={`Vencord ${new Date().toISOString().slice(0, 10)}`}
+      />
 
       <HudPanel label="SECURITY">
         <ChangePasswordForm />

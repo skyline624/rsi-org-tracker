@@ -69,9 +69,8 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
 // Rate limiting per signed-in user / per anonymous client IP, plus a login policy.
 builder.Services.AddApiRateLimiting(builder.Configuration);
 
-// The only proxy in front of the API is the web front on the same host: trust the
-// client IP it forwards (X-Forwarded-For) from loopback only, one hop deep, so a
-// remote client can never pick the IP it is rate-limited and logged under.
+// The web front and nginx's dedicated /ingest/discord proxy run on the same host.
+// Trust their X-Forwarded-For from loopback only, one hop deep.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
@@ -128,7 +127,7 @@ var app = builder.Build();
 
 // Apply EF Core migrations on startup (no more EnsureCreated). For pre-existing
 // databases created by the old EnsureCreated path, DatabaseBootstrap adopts the
-// schema as baselined so MigrateAsync becomes a no-op.
+// existing tables and columns as baselined, then applies missing additive migrations.
 using (var scope = app.Services.CreateScope())
 {
     var apiDb = scope.ServiceProvider.GetRequiredService<ApiDbContext>();

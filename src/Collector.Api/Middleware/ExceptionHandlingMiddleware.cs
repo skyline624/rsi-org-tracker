@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Collector.Api.Errors;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 
 namespace Collector.Api.Middleware;
 
@@ -9,7 +11,8 @@ namespace Collector.Api.Middleware;
 /// Global exception middleware converting unhandled exceptions into RFC 7807 Problem Details
 /// responses. Never leaks the raw exception message or stack trace to clients — those are
 /// only emitted via the structured logger. A correlation id (request id) is attached so the
-/// client and the log can be joined after the fact.
+/// client and the log can be joined after the fact. Domain errors can carry a stable
+/// code; temporary failures say when to retry; refused request bodies keep their status.
 /// </summary>
 public class ExceptionHandlingMiddleware
 {
@@ -44,12 +47,26 @@ public class ExceptionHandlingMiddleware
         }
         catch (DomainException ex)
         {
-            // Expected client-side failure (bad credentials, unknown id…): no stack trace.
+            // Expected failure (bad credentials, unknown id, busy tracker…): no stack trace.
             _logger.LogInformation(
                 "{Status} {Title} for {Method} {Path}: {Message} CorrelationId={CorrelationId}",
                 ex.StatusCode, ex.Title, context.Request.Method, context.Request.Path, ex.Message,
                 context.TraceIdentifier);
-            await WriteProblemAsync(context, ex.StatusCode, ex.Title, ex.Message, null);
+            var retryAfter = ex is ServiceUnavailableException unavailable ? unavailable.RetryAfterSeconds : (int?)null;
+            await WriteProblemAsync(context, ex.StatusCode, ex.Title, ex.Message, null, ex.Code, retryAfter);
+        }
+        catch (Microsoft.AspNetCore.Http.BadHttpRequestException ex)
+        {
+            // Kestrel's refusals are client errors. Keep the framework message in the
+            // log only, with no stack trace, even in development.
+            _logger.LogInformation(
+                "{Status} request refused for {Method} {Path}: {Message} CorrelationId={CorrelationId}",
+                ex.StatusCode, context.Request.Method, context.Request.Path, ex.Message,
+                context.TraceIdentifier);
+            var title = ex.StatusCode == StatusCodes.Status413PayloadTooLarge
+                ? "Payload Too Large"
+                : ReasonPhrases.GetReasonPhrase(ex.StatusCode);
+            await WriteProblemAsync(context, ex.StatusCode, title, null, null);
         }
         catch (Exception ex)
         {
@@ -65,7 +82,8 @@ public class ExceptionHandlingMiddleware
     }
 
     private async Task WriteProblemAsync(
-        HttpContext context, int status, string title, string? detail, string? exceptionType)
+        HttpContext context, int status, string title, string? detail, string? exceptionType,
+        string? code = null, int? retryAfterSeconds = null)
     {
         if (context.Response.HasStarted)
         {
@@ -87,9 +105,17 @@ public class ExceptionHandlingMiddleware
         var correlationId = context.TraceIdentifier;
 
         problem.Extensions["correlationId"] = correlationId;
+        if (code is not null)
+        {
+            problem.Extensions["code"] = code;
+        }
 
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/problem+json";
+        if (retryAfterSeconds is { } seconds)
+        {
+            context.Response.Headers["Retry-After"] = seconds.ToString(CultureInfo.InvariantCulture);
+        }
         await context.Response.WriteAsync(
             JsonSerializer.Serialize(problem, SerializerOptions),
             context.RequestAborted);

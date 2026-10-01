@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace Collector.Api.Auth;
 
+/// <summary>Authenticates full API keys and the static admin key, refusing capability-scoped credentials.</summary>
 public class ApiKeyAuthHandler : AuthenticationHandler<ApiKeySchemeOptions>
 {
     private readonly ApiKeyService _apiKeyService;
@@ -52,10 +53,15 @@ public class ApiKeyAuthHandler : AuthenticationHandler<ApiKeySchemeOptions>
             return AuthenticateResult.Success(new AuthenticationTicket(adminPrincipal, Scheme.Name));
         }
 
-        var user = await _apiKeyService.ValidateAsync(rawKey);
-        if (user is null)
+        var validation = await _apiKeyService.ValidateAsync(rawKey, Context.RequestAborted);
+        if (validation is null)
             return AuthenticateResult.Fail("Invalid API key");
 
+        // Refuse scoped keys on every general API route, including future endpoints.
+        if (validation.Scope is not null)
+            return AuthenticateResult.Fail("Scoped key");
+
+        var user = validation.User;
         if (user.IsBanned)
             return AuthenticateResult.Fail("Account is banned");
 

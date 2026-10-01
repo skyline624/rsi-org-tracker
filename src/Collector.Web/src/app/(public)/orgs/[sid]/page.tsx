@@ -7,12 +7,13 @@ import { OrgMembersTable } from "@/components/org/OrgMembersTable";
 import { TimelineChart } from "@/components/charts/lazy";
 import {
   getOrg,
+  getOrgDiscordGuilds,
   getOrgGrowth,
   getOrgMemberChanges,
   getOrgMembersPage,
 } from "@/lib/api/endpoints";
 import { ApiError } from "@/lib/api/errors";
-import type { OrganizationMemberDto, PaginatedResponse } from "@/lib/api/types";
+import type { DiscordOrgGuildDto, OrganizationMemberDto, PaginatedResponse } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
 import { lastChecked } from "@/lib/utils/last-checked";
 import { getSession } from "@/lib/auth/session";
@@ -23,6 +24,7 @@ import { parsePage } from "@/lib/utils/page-param";
 import { OrgNotesSection } from "./OrgNotesSection";
 import { QuickAddMember } from "./QuickAddMember";
 import { ManualMembersPanel, type OrgManualMember } from "./ManualMembersPanel";
+import { OrgDiscordPanel } from "./OrgDiscordPanel";
 import type { OrgNoteDto } from "./org-note-actions";
 
 export const dynamic = "force-dynamic";
@@ -59,7 +61,7 @@ export default async function OrgDetailPage({ params, searchParams }: PageProps)
 
   // Everything else at once: each block degrades to empty rather than failing the page.
   const orgPath = `/api/organizations/${encodeURIComponent(sid)}`;
-  const [session, members, formerMembers, growth, changes, notes, manualMembers] =
+  const [session, members, formerMembers, growth, changes, notes, manualMembers, discordGuilds] =
     await Promise.all([
       getSession(),
       getOrgMembersPage(sid, { status: "active", page: activePage, pageSize: MEMBERS_PAGE_SIZE }, ctx)
@@ -71,6 +73,8 @@ export default async function OrgDetailPage({ params, searchParams }: PageProps)
       apiGet<OrgNoteDto[]>(`${orgPath}/notes`, undefined, ctx).catch(() => [] as OrgNoteDto[]),
       apiGet<OrgManualMember[]>(`${orgPath}/manual-members`, undefined, ctx)
         .catch(() => [] as OrgManualMember[]),
+      // Discord servers mapped to this org; the panel stays hidden when there is none.
+      getOrgDiscordGuilds(ctx, sid).catch(() => [] as DiscordOrgGuildDto[]),
     ]);
 
   const chartData = growth.map((g) => ({
@@ -159,6 +163,8 @@ export default async function OrgDetailPage({ params, searchParams }: PageProps)
       <QuickAddMember sid={sid} />
 
       <ManualMembersPanel members={manualMembers} />
+
+      <OrgDiscordPanel guilds={discordGuilds} />
 
       {/* Members + Changes */}
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">

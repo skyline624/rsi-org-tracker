@@ -22,4 +22,17 @@ public sealed class RateLimitSettings
         public int PermitLimit { get; set; } = 10;
         public int WindowSeconds { get; set; } = 300;
     }
+
+    /// <summary>
+    /// Extra budget for Discord roster writes, per key owner (per IP when anonymous).
+    /// Each sync can be large and a person normally sends only a few per hour.
+    /// </summary>
+    public DiscordIngestLimit DiscordIngest { get; set; } = new();
+
+    /// <summary>The fixed-window budget for Discord roster ingestion.</summary>
+    public sealed class DiscordIngestLimit
+    {
+        public int PermitLimit { get; set; } = 20;
+        public int WindowSeconds { get; set; } = 600;
+    }
 }

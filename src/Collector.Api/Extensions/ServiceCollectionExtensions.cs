@@ -2,6 +2,7 @@ using System.Text;
 using Collector.Api.Auth;
 using Collector.Api.Data;
 using Collector.Api.Services;
+using Collector.Api.Services.Discord;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -45,9 +46,11 @@ public static class ServiceCollectionExtensions
         services.AddAuthentication("Smart")
             .AddPolicyScheme("Smart", "JWT or ApiKey", opts =>
                 opts.ForwardDefaultSelector = ctx =>
-                    ctx.Request.Headers.ContainsKey("Authorization")
-                        ? JwtBearerDefaults.AuthenticationScheme
-                        : "ApiKey")
+                    ctx.Request.Path.StartsWithSegments(DiscordIngestAuth.PathPrefix, StringComparison.OrdinalIgnoreCase)
+                        ? DiscordIngestAuth.SchemeName
+                        : ctx.Request.Headers.ContainsKey("Authorization")
+                            ? JwtBearerDefaults.AuthenticationScheme
+                            : "ApiKey")
             .AddJwtBearer(opts =>
             {
                 opts.TokenValidationParameters = new TokenValidationParameters
@@ -63,7 +66,8 @@ public static class ServiceCollectionExtensions
                     ClockSkew = TimeSpan.FromSeconds(30),
                 };
             })
-            .AddScheme<ApiKeySchemeOptions, ApiKeyAuthHandler>("ApiKey", _ => { });
+            .AddScheme<ApiKeySchemeOptions, ApiKeyAuthHandler>("ApiKey", _ => { })
+            .AddScheme<ApiKeySchemeOptions, DiscordIngestKeyAuthHandler>(DiscordIngestAuth.SchemeName, _ => { });
 
         services.AddAuthorization(opts =>
         {
@@ -73,6 +77,11 @@ public static class ServiceCollectionExtensions
             // Private site: an endpoint without [Authorize] is still authenticated;
             // anonymous ones opt out explicitly with [AllowAnonymous].
             opts.FallbackPolicy = opts.DefaultPolicy;
+            opts.AddPolicy(DiscordIngestAuth.PolicyName,
+                policy => policy
+                    .AddAuthenticationSchemes(DiscordIngestAuth.SchemeName)
+                    .RequireAuthenticatedUser()
+                    .RequireClaim(DiscordIngestAuth.ScopeClaimType, DiscordIngestAuth.IngestScope));
             opts.AddPolicy("AdminOnly",
                 policy => policy
                     .AddAuthenticationSchemes("Smart")
@@ -95,6 +104,21 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(new AudioStorageService(Path.Combine(dataDir, "audio")));
         services.AddHostedService<AudioOrphanSweeper>();
         services.AddOptions<Collector.Api.Options.AudioSettings>().Bind(configuration.GetSection(Collector.Api.Options.AudioSettings.Section));
+
+        // Discord rosters: plugin settings shown to users (Discord:Ingest) and retention (Discord:Retention).
+        services.AddOptions<Collector.Api.Options.DiscordOptions>().Bind(configuration.GetSection(Collector.Api.Options.DiscordOptions.Section));
+
+        services.AddSingleton<DiscordWriteGate>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<DiscordIngestGateFilter>();
+        services.AddScoped<DiscordIngestService>();
+        services.AddScoped<DiscordRosterQueryService>();
+        services.AddScoped<DiscordReconciliationService>();
+        services.AddScoped<DiscordHandleLookup>();
+        services.AddScoped<DiscordSuggestionService>();
+        services.AddScoped<DiscordProfileService>();
+        services.AddScoped<DiscordGuildConfigService>();
+        services.AddHostedService<DiscordRetentionService>();
 
         return services;
     }

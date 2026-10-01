@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using Collector.Api.Auth;
 using Collector.Data;
 using Collector.Models;
 using FluentAssertions;
@@ -20,6 +22,12 @@ public class AuthorizationTests(ApiFactory factory)
         "GET /api/auth/jwks", "POST /api/auth/login", "POST /api/auth/refresh", "POST /api/auth/logout",
     ];
 
+    /// <summary>The only private route that an ingest-scoped key may reach once ingestion is implemented.</summary>
+    private static readonly HashSet<string> IngestRoutes =
+    [
+        "POST /api/ingest/discord/guilds/x/syncs",
+    ];
+
     private static string SamplePath(RoutePattern pattern) =>
         "/" + string.Join("/", pattern.PathSegments.Select(segment => string.Concat(segment.Parts.Select(part => part switch
         {
@@ -30,10 +38,9 @@ public class AuthorizationTests(ApiFactory factory)
             _ => "",
         }))));
 
-    [Fact]
-    public async Task EveryEndpoint_RequiresAuthentication_ExceptTheWhitelist()
+    /// <summary>Enumerates every route to prevent future endpoints from accidentally accepting restricted keys.</summary>
+    private async Task<List<string>> RoutesNotAnswering401Async(HttpClient client, IReadOnlySet<string> skip)
     {
-        var client = factory.CreateClient();
         var endpoints = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>();
         var open = new List<string>();
 
@@ -43,13 +50,42 @@ public class AuthorizationTests(ApiFactory factory)
             foreach (var method in endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? ["GET"])
             {
                 var route = $"{method} {path}";
-                if (Anonymous.Contains(route)) continue;
-                var response = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
+                if (skip.Contains(route)) continue;
+                using var response = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), path));
                 if (response.StatusCode != HttpStatusCode.Unauthorized) open.Add($"{route} -> {(int)response.StatusCode}");
             }
         }
 
+        return open;
+    }
+
+    [Fact]
+    public async Task EveryEndpoint_RequiresAuthentication_ExceptTheWhitelist()
+    {
+        using var client = factory.CreateClient();
+        var open = await RoutesNotAnswering401Async(client, Anonymous);
+
         open.Should().BeEmpty("every non-whitelisted endpoint must answer 401 to an anonymous caller");
+    }
+
+    [Fact]
+    public async Task DiscordIngestKey_IsRefusedEverywhere_ButTheIngestRoute()
+    {
+        using var owner = await factory.SignedInClientAsync($"authz-ingest-{Guid.NewGuid():N}");
+        using var created = await owner.PostAsJsonAsync("/api/api-keys", new
+        {
+            name = "walk",
+            expiresAt = DateTime.UtcNow.AddDays(30),
+            scope = DiscordIngestAuth.IngestScope,
+        });
+        created.StatusCode.Should().Be(HttpStatusCode.Created);
+        var rawKey = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("rawKey").GetString()!;
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("x-api-key", rawKey);
+
+        var open = await RoutesNotAnswering401Async(client, new HashSet<string>(Anonymous.Concat(IngestRoutes)));
+
+        open.Should().BeEmpty("a discord:ingest key must authenticate nowhere but on the ingest route");
     }
 
     [Theory]

@@ -6,6 +6,7 @@ const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  testMatch: "smoke.spec.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -13,6 +14,8 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL,
+    // An installed Chrome/Edge can be used locally when Playwright's Chromium is absent.
+    channel: process.env.E2E_BROWSER_CHANNEL,
     trace: "on-first-retry",
     ignoreHTTPSErrors: true,
   },

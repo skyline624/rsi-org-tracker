@@ -66,6 +66,8 @@ interface HudDataGridProps<T> {
    * Initial page size. Defaults to the first value in `pageSizeOptions`.
    */
   defaultPageSize?: number;
+  /** Keep wide columns readable on narrow screens; overflow stays inside the grid. */
+  minWidth?: number;
 }
 
 type SortState = { key: string; dir: "asc" | "desc" } | null;
@@ -109,6 +111,7 @@ export function HudDataGrid<T>({
   paginated = false,
   pageSizeOptions = [10, 25, 50, 100],
   defaultPageSize,
+  minWidth,
 }: HudDataGridProps<T>) {
   // When both `controlledSort` and `onSortChange` are supplied the grid runs
   // in "server sort" mode: it stops sorting locally and just reflects whatever
@@ -169,7 +172,7 @@ export function HudDataGrid<T>({
 
   return (
     <div className="w-full overflow-x-auto">
-      <div className="min-w-full font-mono text-xs">
+      <div className="min-w-full font-mono text-xs" style={minWidth === undefined ? undefined : { minWidth }}>
         {/* header */}
         <div className="flex border-b border-hud-cyan/30 pb-2 text-[10px] uppercase tracking-[0.15em] text-hud-text-dim">
           {columns.map((c) => {

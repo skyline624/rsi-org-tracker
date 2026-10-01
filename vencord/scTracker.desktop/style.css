@@ -1,0 +1,13 @@
+.sc-tracker-controls { color: var(--text-default); display: flex; flex-direction: column; gap: 12px; }
+.sc-tracker-controls p, .sc-tracker-controls small { line-height: 1.5; }
+.sc-tracker-controls > label { display: flex; flex-direction: column; gap: 6px; }
+.sc-tracker-controls input:not([type="checkbox"]) { background: var(--background-surface-high); border: 1px solid var(--border-subtle); border-radius: 4px; color: var(--text-default); padding: 8px; }
+.sc-tracker-controls button { background: var(--button-secondary-background); border-radius: 4px; color: var(--button-secondary-text); cursor: pointer; padding: 8px 12px; }
+.sc-tracker-controls button:disabled { cursor: default; opacity: .5; }
+.sc-tracker-controls ul { display: flex; flex-direction: column; gap: 16px; list-style: none; margin: 0; padding: 0; }
+.sc-tracker-controls li { border-top: 1px solid var(--border-subtle); padding-top: 12px; overflow-wrap: anywhere; }
+.sc-tracker-guild, .sc-tracker-actions { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+.sc-tracker-timer { border: 1px solid var(--border-subtle); border-radius: 4px; display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.sc-tracker-timer label { display: flex; gap: 6px; }
+.sc-tracker-timer label:has(input[type="number"]) { flex-direction: column; }
+.sc-tracker-timer p { margin: 0; }

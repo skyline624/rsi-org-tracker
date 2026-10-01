@@ -1,6 +1,9 @@
 using Collector.Api.Auth;
 using Collector.Api.Dtos.Links;
 using Collector.Data.Repositories;
+using Collector.Discord;
+using Collector.Api.Services.Discord;
+using Collector.Api.Errors;
 using Collector.Models;
 using Collector.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -19,19 +22,25 @@ public class LinksController : ControllerBase
     private readonly IUserRepository _users;
     private readonly IEntityResolver _resolver;
     private readonly CurrentUserAccessor _currentUser;
+    private readonly DiscordWriteGate _discordGate;
+    private readonly IDiscordRosterRepository _discordRosters;
 
     public LinksController(
         IEntityLinkRepository links,
         ITrackedEntityRepository entities,
         IUserRepository users,
         IEntityResolver resolver,
-        CurrentUserAccessor currentUser)
+        CurrentUserAccessor currentUser,
+        DiscordWriteGate discordGate,
+        IDiscordRosterRepository discordRosters)
     {
         _links = links;
         _entities = entities;
         _users = users;
         _resolver = resolver;
         _currentUser = currentUser;
+        _discordGate = discordGate;
+        _discordRosters = discordRosters;
     }
 
     [HttpGet("users/{handle}/links")]
@@ -51,6 +60,17 @@ public class LinksController : ControllerBase
         if (!LinkProviders.IsValid(provider)) return BadRequest(new { message = "Fournisseur inconnu." });
         var value = req.Value.Trim();
         if (value.Length == 0) return BadRequest(new { message = "Valeur vide." });
+        if (provider == LinkProviders.Discord && !DiscordSnowflake.IsValid(value))
+            return BadRequest(new { message = "L'identifiant Discord doit faire de 17 à 20 chiffres." });
+
+        // Serialize this existing route too: erasure and retention must never race a new link.
+        using var lease = provider == LinkProviders.Discord
+            ? await _discordGate.TryEnterAsync(TimeSpan.FromSeconds(10), ct)
+                ?? throw new ServiceUnavailableException("Écritures Discord en cours, réessaie dans 30 s.", 30)
+            : null;
+
+        if (provider == LinkProviders.Discord && (await _discordRosters.GetOptedOutAsync([value], ct)).Contains(value))
+            throw new ForbiddenException("Ce compte Discord est exclu du suivi.");
 
         var user = await _users.GetByHandleAsync(handle, ct);
         var entityId = await _resolver.ResolveOrCreateAsync(user?.CitizenId, handle, user?.DisplayName, ct);

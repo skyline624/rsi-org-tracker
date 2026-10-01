@@ -1,0 +1,17 @@
+{
+  "name": "sc-tracker-vencord",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ScTracker Vencord plugin: pure modules, their tests and the installer",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^5.0.1"
+  },
+  "packageManager": "pnpm@10.27.0"
+}

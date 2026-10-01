@@ -23,6 +23,15 @@ public class TrackerDbContext : DbContext
     public DbSet<OrgNote> OrgNotes { get; set; } = null!;
     public DbSet<EntityLink> EntityLinks { get; set; } = null!;
     public DbSet<OrgMemberCount> OrgMemberCounts { get; set; } = null!;
+    public DbSet<DiscordGuild> DiscordGuilds { get; set; } = null!;
+    public DbSet<DiscordRole> DiscordRoles { get; set; } = null!;
+    public DbSet<DiscordAccount> DiscordAccounts { get; set; } = null!;
+    public DbSet<DiscordMember> DiscordMembers { get; set; } = null!;
+    public DbSet<DiscordMemberEvent> DiscordMemberEvents { get; set; } = null!;
+    public DbSet<DiscordSync> DiscordSyncs { get; set; } = null!;
+    public DbSet<DiscordOptOut> DiscordOptOuts { get; set; } = null!;
+    public DbSet<DiscordGuildOptOut> DiscordGuildOptOuts { get; set; } = null!;
+    public DbSet<DiscordLinkRejection> DiscordLinkRejections { get; set; } = null!;
 
     public TrackerDbContext(DbContextOptions<TrackerDbContext> options)
         : base(options)

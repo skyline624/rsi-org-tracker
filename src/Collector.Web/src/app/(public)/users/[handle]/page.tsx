@@ -17,6 +17,7 @@ import { ApiError } from "@/lib/api/errors";
 import type { OrganizationMemberDto } from "@/lib/api/types";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
 import { UserAnnotations } from "./UserAnnotations";
+import { DiscordServersSection } from "./DiscordServersSection";
 import { apiGet } from "@/lib/api/client";
 import { requireAuthCtx, withAuthRedirect } from "@/lib/auth/server-api";
 
@@ -41,6 +42,21 @@ function Annotations(props: { handle: string; canSetCitizenId: boolean }) {
   );
 }
 
+/** The Discord cross profile makes its own API call: the rest of the page renders first. */
+function DiscordServers({ handle }: { handle: string }) {
+  return (
+    <Suspense
+      fallback={
+        <HudPanel label="DISCORD · SERVEURS">
+          <div className="py-6 text-center font-mono text-xs text-hud-text-dim">— loading —</div>
+        </HudPanel>
+      }
+    >
+      <DiscordServersSection handle={handle} />
+    </Suspense>
+  );
+}
+
 export default async function UserDetailPage({ params }: PageProps) {
   const { handle } = await params;
   const ctx = await requireAuthCtx();
@@ -60,6 +76,7 @@ export default async function UserDetailPage({ params }: PageProps) {
         return (
           <div className="flex flex-col gap-8">
             <PartialUserProfile handle={handle} orgs={knownOrgs} />
+            <DiscordServers handle={handle} />
             <Annotations handle={handle} canSetCitizenId />
           </div>
         );
@@ -75,6 +92,7 @@ export default async function UserDetailPage({ params }: PageProps) {
         return (
           <div className="flex flex-col gap-8">
             <PartialUserProfile handle={handle} orgs={[]} />
+            <DiscordServers handle={handle} />
             <Annotations handle={handle} canSetCitizenId />
           </div>
         );
@@ -255,6 +273,8 @@ export default async function UserDetailPage({ params }: PageProps) {
           )}
         </HudPanel>
       </section>
+
+      <DiscordServers handle={handle} />
 
       <Annotations handle={handle} canSetCitizenId={!user.citizenId} />
     </div>
