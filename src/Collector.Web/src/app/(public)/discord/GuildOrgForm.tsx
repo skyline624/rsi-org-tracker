@@ -25,6 +25,7 @@ const orgLabel = (org: GuildOrgOption) => `${cleanDiscordText(org.name) ?? org.s
 /** Suggest a query from the server name, removing decorations such as ⭐ at its edges. */
 function guildQuery(name: string) {
   return (cleanDiscordText(name) ?? "")
+    .normalize("NFKC")
     .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")
     .trim().slice(0, MAX_SEARCH_LENGTH);
 }

@@ -26,6 +26,7 @@ const orgs = [
   { sid: "LIBERASTRA", name: "Libérastra" },
   { sid: "LIBER2", name: "LIBERASTRA Exploration" },
   { sid: "X", name: "Corpo X" },
+  { sid: "AURELIS", name: "Aurelis Ops" },
 ];
 const rank = () => ({ roleId: ROLE, name: "Pilote", color: "#00aaff" });
 const summary = () => ({
@@ -72,6 +73,16 @@ createServer(async (req, res) => {
     try { actor = (await jwtVerify((req.headers.authorization ?? "").replace(/^Bearer /, ""), publicKey)).payload; }
     catch { return reply(res, 401, { status: 401, title: "Unauthorized" }); }
     if (req.method !== "GET") state.mutations.push({ path, method: req.method, body: body ?? null });
+    if (path === "/api/organizations/suggestions") {
+      const raw = url.searchParams.get("query") ?? "";
+      state.searches.push(raw.toLowerCase());
+      const compact = text => text.normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+      const query = compact(raw);
+      const options = query ? orgs.filter(o => compact(o.sid).includes(query) || compact(o.name).includes(query)) : [];
+      options.sort((a, b) => Number(b.sid.toLowerCase() === raw.trim().toLowerCase()) - Number(a.sid.toLowerCase() === raw.trim().toLowerCase())
+        || Number(compact(b.name) === query) - Number(compact(a.name) === query) || a.sid.localeCompare(b.sid));
+      return reply(res, 200, options.slice(0, 10));
+    }
     if (path === "/api/organizations") {
       const query = (url.searchParams.get("search") ?? "").toLowerCase();
       state.searches.push(query);

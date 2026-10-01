@@ -78,27 +78,17 @@ export interface GuildOrgOption {
   name: string;
 }
 
-/** An exact SID must remain selectable even when ten other names match the search. */
+/** The lookup ranks exact SIDs first and tolerates Discord's decorative names. */
 export async function searchGuildOrgsAction(query: unknown): Promise<GuildOrgOption[]> {
   const parsed = searchQuerySchema.safeParse(query);
   if (!parsed.success || !parsed.data.trim()) return [];
   const session = await getSession();
   if (!session) throw new Error(NOT_SIGNED_IN);
-  const text = parsed.data.trim();
-  const ctx = sessionCtx(session);
-  const sid = sidSchema.safeParse(text);
-  const [exact, found] = await Promise.allSettled([
-    sid.success
-      ? apiGet<GuildOrgOption>(`/api/organizations/${encodeURIComponent(sid.data.toUpperCase())}`, undefined, ctx)
-      : Promise.resolve(null),
-    apiGet<{ items: GuildOrgOption[] }>("/api/organizations", { search: text, pageSize: 10 }, ctx),
-  ]);
-  const first = exact.status === "fulfilled" && exact.value ? [exact.value] : [];
-  if (found.status === "rejected" && first.length === 0)
+  try {
+    return await apiGet<GuildOrgOption[]>("/api/organizations/suggestions", { query: parsed.data.trim() }, sessionCtx(session));
+  } catch {
     throw new Error("Recherche de corpos indisponible. Réessaie.");
-  const options = [...first, ...(found.status === "fulfilled" ? found.value.items ?? [] : [])];
-  return options.filter((org, index) => options.findIndex(other => other.sid === org.sid) === index)
-    .map(({ sid, name }) => ({ sid, name }));
+  }
 }
 
 /** The target of a suggestion: the Discord account, the citizen number when known, the RSI handle. */

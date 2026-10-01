@@ -200,6 +200,28 @@ test("unmapped servers propose organizations from their name without linking aut
   });
 });
 
+test("Aurelis Ops is proposed from decorated Discord names and typed variants, then saved explicitly", async ({ page, request }) => {
+  await request.post(`${fixture}/__fixture/reset`, { data: { orgSid: null, guildName: "⭐ 𝐀𝐔𝐑𝐄𝐋𝐈𝐒-𝐎𝐏𝐒 ⭐" } });
+  await signIn(page);
+  const search = page.getByRole("combobox", { name: "CORPO RSI — NOM OU SID" });
+  const option = page.getByRole("option", { name: "Aurelis Ops [AURELIS]", exact: true });
+  await expect(search).toHaveValue("AURELIS-OPS");
+  await expect(option).toBeVisible();
+  await page.goto(`/discord/${GUILD}?tab=config`);
+  for (const query of ["Aurelis Ops", "AURELIS-OPS", "AURELISOPS", "𝐀𝐔𝐑𝐄𝐋𝐈𝐒-𝐎𝐏𝐒", "AURELIS"]) {
+    await search.fill(query);
+    await expect.poll(async () => (await (await request.get(`${fixture}/__fixture/state`)).json()).searches).toContain(query.toLowerCase());
+    await expect(option).toBeVisible();
+    await expect(page.getByRole("button", { name: "RELIER", exact: true })).toBeDisabled();
+  }
+  expect((await (await request.get(`${fixture}/__fixture/state`)).json()).mutations).toEqual([]);
+  await option.click();
+  await page.getByRole("button", { name: "RELIER", exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`${fixture}/__fixture/state`)).json()).orgSid).toBe("AURELIS");
+  await page.reload();
+  await expect(search).toHaveValue("Aurelis Ops [AURELIS]");
+});
+
 test("organization search accepts full names and SIDs and requires a selected result", async ({ page, request }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await request.post(`${fixture}/__fixture/reset`, { data: { orgSid: null, guildName: "" } });

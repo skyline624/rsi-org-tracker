@@ -148,42 +148,26 @@ describe("suggestions", () => {
 });
 
 describe("organization search", () => {
-  it("proposes an exact SID before ten other matching organizations", async () => {
+  it("uses the ranked name/SID lookup with the signed-in user's credentials", async () => {
     const exact = { sid: "NEW", name: "Nouvelle Organisation" };
-    const others = Array.from({ length: 10 }, (_, i) => ({ sid: `AN${i}`, name: `New group ${i}` }));
-    vi.mocked(apiGet).mockImplementation(async path => path === "/api/organizations/NEW" ? exact : { items: others });
+    const others = Array.from({ length: 9 }, (_, i) => ({ sid: `AN${i}`, name: `New group ${i}` }));
+    vi.mocked(apiGet).mockResolvedValue([exact, ...others]);
     expect(await searchGuildOrgsAction(" new ")).toEqual([exact, ...others]);
-    expect(apiGet).toHaveBeenCalledWith("/api/organizations/NEW", undefined, ctx);
-    expect(apiGet).toHaveBeenCalledWith("/api/organizations", { search: "new", pageSize: 10 }, ctx);
-  });
-
-  it("finds a single-character SID and deduplicates the listing match", async () => {
-    const org = { sid: "X", name: "Corpo X" };
-    vi.mocked(apiGet).mockImplementation(async path => path === "/api/organizations/X" ? org : { items: [org] });
-    expect(await searchGuildOrgsAction("x")).toEqual([org]);
-  });
-
-  it("searches a full name without making an invalid SID request", async () => {
-    vi.mocked(apiGet).mockResolvedValue({ items: [{ sid: "NEW", name: "Nouvelle Organisation" }] });
-    expect(await searchGuildOrgsAction("Nouvelle Organisation")).toEqual([{ sid: "NEW", name: "Nouvelle Organisation" }]);
+    expect(apiGet).toHaveBeenCalledWith("/api/organizations/suggestions", { query: "new" }, ctx);
     expect(apiGet).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to names when the exact SID does not exist", async () => {
-    const org = { sid: "LIBERASTRA", name: "Liberastra" };
-    vi.mocked(apiGet).mockImplementation(async path => {
-      if (path === "/api/organizations/LIBERA") throw new ApiError(404, { title: "Not Found" });
-      return { items: [org] };
-    });
-    expect(await searchGuildOrgsAction("Libera")).toEqual([org]);
+  it("finds a single-character SID", async () => {
+    const org = { sid: "X", name: "Corpo X" };
+    vi.mocked(apiGet).mockResolvedValue([org]);
+    expect(await searchGuildOrgsAction("x")).toEqual([org]);
   });
 
-  it("keeps an exact result when the slower broad search fails", async () => {
-    vi.mocked(apiGet).mockImplementation(async path => {
-      if (path === "/api/organizations/X") return { sid: "X", name: "Corpo X" };
-      throw new Error("API timeout");
-    });
-    expect(await searchGuildOrgsAction("X")).toEqual([{ sid: "X", name: "Corpo X" }]);
+  it.each(["Aurelis Ops", "AURELIS-OPS", "𝐀𝐔𝐑𝐄𝐋𝐈𝐒-𝐎𝐏𝐒"])("forwards %s to the normalized lookup", async query => {
+    const org = { sid: "AURELIS", name: "Aurelis Ops" };
+    vi.mocked(apiGet).mockResolvedValue([org]);
+    expect(await searchGuildOrgsAction(query)).toEqual([org]);
+    expect(apiGet).toHaveBeenCalledWith("/api/organizations/suggestions", { query }, ctx);
   });
 
   it("does not report API failure as an empty search result", async () => {
