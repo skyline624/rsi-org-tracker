@@ -119,8 +119,12 @@ public class ChangeDetector : IChangeDetector
                 orgSid, null, timestamp));
         }
 
+        // The listing fields below change only from a known value to another known one: a
+        // first value read (2026-09-28: ~7 000 orgs whose last snapshot had them empty, as
+        // many events per field) or a value missing from one listing is not a change.
+
         // Detect recruiting status change
-        if (previous.Recruiting != current.Recruiting)
+        if (previous.Recruiting.HasValue && current.Recruiting.HasValue && previous.Recruiting != current.Recruiting)
         {
             events.Add(CreateEvent(
                 "organization", orgSid, "recruiting_changed",
@@ -129,7 +133,7 @@ public class ChangeDetector : IChangeDetector
         }
 
         // Detect roleplay status change
-        if (previous.Roleplay != current.Roleplay)
+        if (previous.Roleplay.HasValue && current.Roleplay.HasValue && previous.Roleplay != current.Roleplay)
         {
             events.Add(CreateEvent(
                 "organization", orgSid, "roleplay_changed",
@@ -138,7 +142,7 @@ public class ChangeDetector : IChangeDetector
         }
 
         // Detect archetype change
-        if (previous.Archetype != current.Archetype)
+        if (Known(previous.Archetype) && Known(current.Archetype) && previous.Archetype != current.Archetype)
         {
             events.Add(CreateEvent(
                 "organization", orgSid, "archetype_changed",
@@ -147,7 +151,7 @@ public class ChangeDetector : IChangeDetector
         }
 
         // Detect language change
-        if (previous.Lang != current.Lang)
+        if (Known(previous.Lang) && Known(current.Lang) && previous.Lang != current.Lang)
         {
             events.Add(CreateEvent(
                 "organization", orgSid, "language_changed",
@@ -157,6 +161,8 @@ public class ChangeDetector : IChangeDetector
 
         return events;
     }
+
+    private static bool Known(string? value) => !string.IsNullOrWhiteSpace(value);
 
     public IReadOnlyList<ChangeEvent> DetectMemberChanges(
         string orgSid,

@@ -279,6 +279,50 @@ public class ChangeDetectorTests
     }
 
     [Fact]
+    public void DetectOrganizationChanges_AListingFieldReadForTheFirstTime_IsNotAChange()
+    {
+        // 2026-09-28: the first discovery pass reading each sort to page 400 met ~7 000 orgs
+        // whose last listing snapshot had these fields empty, and wrote ~27 000 events.
+        var previous = new OrganizationSnapshot { Sid = "TEST", Name = "Test Org", Members = 10 };
+        var current = previous with { Archetype = "PMC", Lang = "French", Recruiting = true, Roleplay = false };
+
+        _detector.DetectOrganizationChanges(previous, current, "TEST").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void DetectOrganizationChanges_AListingFieldNoLongerRead_IsNotAChange()
+    {
+        // RSI listings sometimes come without the recruiting flag: True -> empty -> True
+        // used to write two events.
+        var previous = new OrganizationSnapshot
+        {
+            Sid = "TEST", Name = "Test Org", Members = 10, Archetype = "PMC", Lang = "French", Recruiting = true, Roleplay = true,
+        };
+        var current = previous with { Archetype = "", Lang = null, Recruiting = null, Roleplay = null };
+
+        _detector.DetectOrganizationChanges(previous, current, "TEST").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void DetectOrganizationChanges_AKnownListingFieldThatChanges_IsAnEvent()
+    {
+        var previous = new OrganizationSnapshot
+        {
+            Sid = "TEST", Name = "Test Org", Members = 10, Archetype = "PMC", Lang = "French", Recruiting = true, Roleplay = true,
+        };
+        var current = previous with { Archetype = "Corporation", Lang = "English", Recruiting = false, Roleplay = false };
+
+        _detector.DetectOrganizationChanges(previous, current, "TEST").Select(e => (e.ChangeType, e.OldValue, e.NewValue))
+            .Should().BeEquivalentTo(new[]
+            {
+                ("recruiting_changed", "True", "False"),
+                ("roleplay_changed", "True", "False"),
+                ("archetype_changed", "PMC", "Corporation"),
+                ("language_changed", "French", "English"),
+            });
+    }
+
+    [Fact]
     public void DetectOrganizationChanges_MemberCountChanged_DetectsChange()
     {
         // Arrange

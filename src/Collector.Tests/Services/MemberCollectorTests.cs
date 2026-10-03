@@ -184,6 +184,23 @@ public sealed class MemberCollectorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OrgGone_IsCountedAtZero()
+    {
+        // verify on 2026-10-03: 17 dissolved orgs kept the counters of their last complete
+        // read, so their empty roster looked like members lost on the way.
+        _roster = _ => Roster(RosterStatus.Complete, 2, "alpha", "bravo");
+        await CollectAsync("GONE");
+
+        _roster = _ => MemberCollectionResult.Gone;
+        await CollectAsync("GONE");
+
+        var (_, db) = Create();
+        var latest = await db.OrgMemberCounts.AsNoTracking().Where(c => c.OrgSid == "GONE")
+            .OrderByDescending(c => c.CollectedAt).FirstAsync();
+        (latest.TotalRows, latest.VisibleCount, latest.RedactedCount, latest.HiddenCount).Should().Be((0, 0, 0, 0));
+    }
+
+    [Fact]
     public async Task MembersCount_IsRsiTotalRows_MaskedRowsIncluded()
     {
         var (_, seed) = Create();

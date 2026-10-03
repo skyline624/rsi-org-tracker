@@ -323,15 +323,31 @@ public sealed class DataVerificationServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ACitizenUpdatedWithoutDisplayName_OrWithABadLocation_IsFound()
+    public async Task ACitizenUpdatedWithoutEnlistmentDate_OrWithABadLocation_IsFound()
     {
         await ChangeAsync(db => db.Users.Add(new User
         {
-            CitizenId = 3, UserHandle = "charlie", CreatedAt = Read, UpdatedAt = Read, Enlisted = Read, Location = "United States , Texas",
+            CitizenId = 3, UserHandle = "charlie", DisplayName = "Charlie", CreatedAt = Read, UpdatedAt = Read,
+            Location = "United States , Texas",
         }));
 
         (await CountAsync("citizen-profile-incomplete")).Should().Be(1);
         (await CountAsync("location-format")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ACitizenWithoutDisplayName_IsOnlyReported()
+    {
+        // RSI does have profiles with an empty display name (verify on 2026-10-03: an
+        // auto-generated "Name-Xxxxxxxx" account), every profile has an enlistment date.
+        await ChangeAsync(db => db.Users.Add(new User
+        {
+            CitizenId = 3, UserHandle = "charlie", CreatedAt = Read, UpdatedAt = Read, Enlisted = Read,
+        }));
+
+        (await CountAsync("citizen-profile-incomplete")).Should().Be(0);
+        var noName = (await VerifyAsync()).Single(r => r.Name == "citizen-without-display-name");
+        (noName.Informational, noName.Count).Should().Be((true, 1L));
     }
 
     [Fact]

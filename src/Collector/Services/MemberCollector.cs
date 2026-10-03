@@ -386,23 +386,27 @@ public class MemberCollector : IMemberCollector
     /// </summary>
     private async Task RecordCountersAsync(string orgSid, MemberCollectionResult roster, CancellationToken ct)
     {
-        // RSI answering 0 rows is a glitch, not a count: only ErrInvalidOrganization empties an org.
-        if (roster.Status is RosterStatus.Unreachable or RosterStatus.OrgGone || roster.TotalRows <= 0) return;
+        // RSI answering 0 rows is a glitch, not a count: only ErrInvalidOrganization empties
+        // an org, and a dissolved org is counted at zero (its roster is flushed below).
+        var gone = roster.Status == RosterStatus.OrgGone;
+        if (roster.Status == RosterStatus.Unreachable || (!gone && roster.TotalRows <= 0)) return;
 
         var complete = roster.Status == RosterStatus.Complete;
         var now = DateTime.UtcNow;
         try
         {
-            var (written, previous) = await _countRepo.RecordIfChangedAsync(new OrgMemberCount
-            {
-                OrgSid = orgSid,
-                CollectedAt = now,
-                TotalRows = roster.TotalRows,
-                // Distinct members: a row read twice while the roster shifted counts once.
-                VisibleCount = complete ? roster.Members.Count : null,
-                RedactedCount = complete ? roster.RedactedRows : null,
-                HiddenCount = complete ? roster.HiddenRows : null,
-            }, ct);
+            var (written, previous) = await _countRepo.RecordIfChangedAsync(gone
+                ? new OrgMemberCount { OrgSid = orgSid, CollectedAt = now, TotalRows = 0, VisibleCount = 0, RedactedCount = 0, HiddenCount = 0 }
+                : new OrgMemberCount
+                {
+                    OrgSid = orgSid,
+                    CollectedAt = now,
+                    TotalRows = roster.TotalRows,
+                    // Distinct members: a row read twice while the roster shifted counts once.
+                    VisibleCount = complete ? roster.Members.Count : null,
+                    RedactedCount = complete ? roster.RedactedRows : null,
+                    HiddenCount = complete ? roster.HiddenRows : null,
+                }, ct);
 
             // RSI's totalrows is the member count; Phase 1's listing only has a cached copy.
             if (written && previous != null && previous.TotalRows != roster.TotalRows)

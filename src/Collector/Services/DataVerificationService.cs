@@ -240,11 +240,13 @@ public sealed class DataVerificationService
             "SELECT UserHandle, COUNT(*) FROM users GROUP BY UserHandle COLLATE NOCASE HAVING COUNT(*) > 1",
             Informational: true),
         new("citizen-profile-incomplete",
-            "a citizen updated from a profile without a display name or enlistment date (every profile has both)",
-            """
-            SELECT CitizenId, UserHandle FROM users
-            WHERE UpdatedAt >= $since AND (DisplayName IS NULL OR Enlisted IS NULL)
-            """),
+            "a citizen updated from a profile without an enlistment date (every profile has one)",
+            "SELECT CitizenId, UserHandle FROM users WHERE UpdatedAt >= $since AND Enlisted IS NULL"),
+        // Some RSI profiles really have an empty display name (auto-generated accounts).
+        new("citizen-without-display-name",
+            "a citizen updated from a profile without a display name: empty on RSI, or not read",
+            "SELECT CitizenId, UserHandle FROM users WHERE UpdatedAt >= $since AND DisplayName IS NULL",
+            Informational: true),
         new("location-format",
             "a location not written as \"Country, Region\"",
             "SELECT CitizenId, Location FROM users WHERE UpdatedAt >= $since AND Location LIKE '% ,%'"),
