@@ -1,7 +1,7 @@
 # Commandes `/tracker` dans le bot Discord Liberastra — design
 
 Date : 2026-10-03
-Statut : design validé en conversation, spécification à relire
+Statut : design validé, spécification relue ; plan : `docs/superpowers/plans/2026-10-03-discord-tracker-commands.md`
 
 ## 1. Objectif
 
@@ -21,7 +21,7 @@ par les administrateurs du serveur.
 |---|---|
 | Où vivent les commandes | Dans le bot Liberastra existant (serveur `panda`), pas dans le tracker |
 | Accès aux données | Route HTTPS dédiée sur le VPS du tracker (`/bot-api/`), filtrée par l'IP de `panda`, clé d'API obligatoire |
-| Clé | Nouvelle portée `bot-read` : lecture seule, valable uniquement sur `/api/bot/` ; le reste de l'API refuse toute clé à portée (règle existante) |
+| Clé | Nouvelle portée `bot:read` : lecture seule, valable uniquement sur `/api/bot/` ; le reste de l'API refuse toute clé à portée (règle existante) |
 | TLS | Le bot vérifie l'empreinte SHA-256 du certificat (auto-signé) du VPS ; la vérification TLS n'est jamais désactivée |
 | Commandes | Groupe `/tracker` : `joueur`, `historique`, `recherche`, `org`, `membres`, `mouvements` |
 | Accès | Par sous-commande et par rôle, stocké dans la base du bot, réglé par `/tracker-acces` ; fermé par défaut ; la permission Discord Administrateur passe toujours |
@@ -44,7 +44,7 @@ par les administrateurs du serveur.
 ```
 Discord ──slash command──▶ bot Liberastra (panda, .NET 10, Discord.Net)
                               │  1. contrôle d'accès (rôle ↔ sous-commande, SQLite du bot)
-                              │  2. HTTPS + x-api-key (bot-read) + empreinte du certificat
+                              │  2. HTTPS + x-api-key (bot:read) + empreinte du certificat
                               ▼
                  VPS : nginx  /bot-api/  (allow 185.146.193.199 ; deny all ; limit_req)
                               │
@@ -57,20 +57,25 @@ Discord ──slash command──▶ bot Liberastra (panda, .NET 10, Discord.Net
 
 ## 5. Côté tracker
 
-### 5.1 Portée de clé `bot-read`
+### 5.1 Portée de clé `bot:read`
 
-- `ApiKeyScopes.BotRead = "bot-read"`, à côté de `ApiKeyScopes.DiscordIngest`.
+- `ApiKeyScopes.BotRead = "bot:read"`, à côté de `ApiKeyScopes.DiscordIngest`.
 - Nouveau schéma d'authentification `BotReadKeyAuthHandler`, sur le modèle de
   `DiscordIngestKeyAuthHandler` : en-tête `x-api-key`, clé valide, non révoquée, non expirée,
-  **portée exactement `bot-read`**, compte non banni. Il pose les claims de l'utilisateur et
-  `scope=bot-read`.
+  **portée exactement `bot:read`**, compte non banni. Il pose les claims de l'utilisateur et
+  `scope=bot:read`.
 - `ApiKeyAuthHandler` (schéma général) continue de refuser toute clé à portée : la clé du bot
   ne vaut rien ailleurs que sur `/api/bot/`.
-- Le contrôleur du bot n'accepte **que** ce schéma (`[Authorize(AuthenticationSchemes = "BotRead")]`) :
+- Le contrôleur du bot n'accepte **que** ce schéma (schéma `BotReadKey`, politique `BotRead`,
+  sur le modèle de `DiscordIngest` ; le sélecteur `Smart` envoie `/api/bot` à ce schéma) :
   ni JWT, ni clé ordinaire, ni clé d'administration.
-- Création : par un administrateur, pour un compte dédié non administrateur `liberastra-bot`,
-  via la création de clé existante (le champ `Scope` est déjà accepté). La clé en clair n'est
-  montrée qu'une fois ; elle n'est copiée que dans le `.env` de `panda`.
+- Comme `discord:ingest`, une clé `bot:read` doit avoir une date d'expiration, à 365 jours au
+  plus : elle se renouvelle au moins une fois par an.
+- Création : le site ne gère plus les clés d'API, et le compte du bot ne se connecte jamais.
+  Une route d'administration `POST /api/admin/users/{id}/api-keys` (politique `AdminOnly`)
+  crée une clé **à portée** (jamais une clé complète) pour un autre compte, ici le compte
+  dédié non administrateur `liberastra-bot`. La clé en clair n'est montrée qu'une fois ; elle
+  n'est copiée que dans le `.env` de `panda`.
 
 ### 5.2 Routes `/api/bot/`
 
@@ -80,8 +85,8 @@ normalisés comme sur le site : SID en majuscules ; pseudo comparé sans casse.
 | Route | Paramètres | Réponse |
 |---|---|---|
 | `search` | `q` : 2 à 50 caractères | `{ orgs: [{ sid, name, membersCount }], players: [{ handle, displayName }] }`, 10 au plus de chaque |
-| `players/{handle}` | — | `{ handle, displayName, citizenId, enlisted, location, profileRead, currentOrgs: [{ sid, name, rank, stars, since }], lastSeen }` |
-| `players/{handle}/history` | — | `{ handle, orgs: [{ sid, name, rank, firstSeen, lastSeen, active }], handles: [{ handle, firstSeen, lastSeen }], events: [{ at, type, orgSid, old, new }] }` (15 derniers événements) |
+| `players/{handle}` | — | `{ handle, displayName, citizenId, enlisted, location, profileRead, currentOrgs: [{ sid, name, rank, stars, since, lastSeen, active }], lastSeen }` |
+| `players/{handle}/history` | — | `{ handle, orgs: [{ sid, name, rank, stars, since, lastSeen, active }], handles: [{ handle, firstSeen, lastSeen }], events: [{ at, type, orgSid, old, new }] }` (15 derniers événements) |
 | `orgs/{sid}` | — | `{ sid, name, archetype, lang, recruiting, roleplay, membersCount, counts: { total, visible, redacted, hidden, at } \| null, trend30d: { from, to } \| null, membersReadAt }` |
 | `orgs/{sid}/members` | `page` ≥ 1 | `{ sid, page, pageSize: 25, total, items: [{ handle, displayName, rank, stars, since }] }` (membres actifs) |
 | `orgs/{sid}/movements` | `days` : 1 à 90 (7 par défaut) | `{ sid, days, joined: [{ handle, at }], left: [{ handle, at }], truncated }` (50 au plus de chaque) |
@@ -90,6 +95,9 @@ Sources, pour rester identiques au site :
 
 - `search` : la recherche d'utilisateurs existante (2 caractères minimum, comptage plafonné) et la
   recherche d'orgs par nom ou SID (jokers échappés) ;
+- pseudo saisi : d'abord tel quel dans `users`, puis sans tenir compte de la casse dans les
+  rosters (index `UserHandle` en NOCASE), puis comme ancien pseudo (`user_handle_history`),
+  qui mène au pseudo actuel du citoyen ;
 - `players/{handle}` : la fiche citoyen (`users`) ; si le joueur n'a pas de fiche mais figure
   dans des rosters, réponse partielle (`profileRead: false`), comme la fiche partielle du site ;
   404 seulement s'il n'est nulle part ;
@@ -97,8 +105,8 @@ Sources, pour rester identiques au site :
   apparition, comme `GET /api/users/{handle}/organizations` ;
 - `handles` : `user_handle_history` du citoyen ; `events` : `change_events` du pseudo ;
 - `orgs/{sid}` : le dernier instantané d'annonce, le dernier `org_member_counts` (visibles,
-  masquées R et H), et `trend30d` = effectif de la plus ancienne lecture des 30 derniers jours
-  et de la plus récente (même calcul que la courbe du site) ;
+  masquées R et H), et `trend30d` = effectif RSI (`TotalRows`, masqués compris) d'il y a
+  30 jours (dernier comptage à cette date, sinon le plus ancien) et effectif actuel ;
 - `members` : `GetLatestPageAsync(sid, active: true, page, 25)` ;
 - `movements` : `change_events` de l'org, types `member_joined` et `member_left`,
   `Timestamp >= now - days`, triés du plus récent ; une requête dédiée, servie par un index
@@ -109,7 +117,8 @@ Sources, pour rester identiques au site :
 Le bot envoie à chaque requête :
 
 - `X-Discord-User` : l'identifiant Discord de la personne (chiffres, 17 à 20) ;
-- `X-Bot-Command` : la sous-commande (une des six).
+- `X-Bot-Command` : la sous-commande (une des six), ou `autocomplete` pour les suggestions de
+  saisie. Les requêtes `autocomplete` ne sont pas inscrites au journal (une par frappe).
 
 L'API inscrit une ligne dans `activity_logs`, sans changer son schéma :
 
@@ -159,7 +168,7 @@ Nouvelle section `TrackerApi` dans `BotConfig` et `.env` :
 | Variable | Exemple |
 |---|---|
 | `TrackerApi__BaseUrl` | `https://141.95.51.193/bot-api/` |
-| `TrackerApi__ApiKey` | la clé `bot-read` |
+| `TrackerApi__ApiKey` | la clé `bot:read` |
 | `TrackerApi__CertSha256` | empreinte SHA-256 (hexadécimal) du certificat servi par le VPS |
 
 Une valeur manquante désactive le groupe `/tracker` (message « commande non configurée »),
@@ -248,7 +257,7 @@ cible, résultat (`ok`, `introuvable`, `refusé`, `indisponible`). Les refus d'a
 
 ### 8.1 Tracker (`Collector.Api.Tests`)
 
-- La clé `bot-read` est acceptée sur chaque route `/api/bot/*`, refusée partout ailleurs (401).
+- La clé `bot:read` est acceptée sur chaque route `/api/bot/*`, refusée partout ailleurs (401).
 - Une clé ordinaire, la clé d'administration, un JWT : refusés sur `/api/bot/*`.
 - Une clé `discord-ingest` : refusée sur `/api/bot/*`, et inversement.
 - En-têtes `X-Discord-User` / `X-Bot-Command` absents ou invalides : 400.
@@ -281,7 +290,7 @@ Chaque étape qui touche un serveur attend l'accord explicite de l'utilisateur.
    pas de migration de `tracker.db`) ; installation du nouveau bloc nginx (`nginx -t` puis
    rechargement).
 2. **Compte et clé** : création du compte `liberastra-bot` (non administrateur) et de sa clé
-   `bot-read` ; relevé de l'empreinte SHA-256 du certificat du VPS ; les trois valeurs sont
+   `bot:read` ; relevé de l'empreinte SHA-256 du certificat du VPS ; les trois valeurs sont
    écrites dans le `.env` de `panda`, jamais dans un dépôt.
 3. **Mise à jour du dépôt du bot** :
    - branche `server-sync` partie de `13ec14a` (`main` de GitHub au 2026-10-03) avec les
