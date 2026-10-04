@@ -241,6 +241,24 @@ curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -H "x-api-key: $KEY" "$A/guil
 Un envoi complet enregistre aussi les départs massifs ; le tracker les signale
 sans demander d'autorisation supplémentaire. Un envoi partiel ne produit aucun départ.
 
+## Bot Discord Liberastra (`/bot-api/`)
+
+Le bot Liberastra (serveur `panda`, 185.146.193.199) lit le tracker par `/bot-api/`, réservé à
+cette IP par nginx, avec une clé à portée `bot:read` (valable sur `/api/bot/` seulement,
+365 jours au plus). Mise en place :
+
+1. Compte dédié non administrateur `liberastra-bot` (mot de passe aléatoire, jamais utilisé).
+2. Clé : `POST /api/admin/users/<id>/api-keys` avec
+   `{"name":"liberastra-bot","expiresAt":"<date à moins d'un an>","scope":"bot:read"}`
+   (clé d'administration de `api.env`, depuis le serveur). La clé n'est affichée qu'une fois :
+   la copier directement dans `/root/discord/Liberastra-Bot-Discord/.env` de `panda`
+   (`TrackerApi__ApiKey`).
+3. Empreinte du certificat pour `TrackerApi__CertSha256` :
+   `openssl x509 -in <certificat nginx> -noout -fingerprint -sha256`.
+4. Renouvellement : avant l'expiration, nouvelle clé, mise à jour du `.env`, redémarrage du bot,
+   puis révocation de l'ancienne. Si l'IP de `panda` change, mettre à jour `allow` dans le bloc
+   `/bot-api/`.
+
 ## Tests
 
 `deploy/tests/test-rollback.sh` vérifie la bascule et le retour arrière avec
