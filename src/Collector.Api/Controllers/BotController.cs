@@ -52,4 +52,58 @@ public sealed class BotController(
             orgHits.Select(o => new BotOrgHitDto(o.Sid, o.Name, counts.GetValueOrDefault(o.Sid))).ToList(),
             players.Items.Select(p => new BotPlayerHitDto(p.UserHandle, p.DisplayName)).ToList()));
     }
+
+    [HttpGet("players/{handle}")]
+    public async Task<ActionResult<BotPlayerDto>> Player(string handle, CancellationToken ct)
+    {
+        var resolved = await users.ResolveHandleAsync(handle, ct)
+            ?? throw new NotFoundException($"Joueur « {handle} » inconnu du tracker.");
+        var user = await db.Users.AsNoTracking()
+            .Where(u => u.UserHandle == resolved)
+            .OrderByDescending(u => u.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+        var rows = await users.GetMembershipsAsync(resolved, includeInactive: true, ct);
+        if (user is null && rows.Count == 0)
+            throw new NotFoundException($"Joueur « {handle} » inconnu du tracker.");
+
+        var latestRow = rows.MaxBy(r => r.Latest.Timestamp);
+        return Ok(new BotPlayerDto(
+            resolved,
+            user?.DisplayName ?? latestRow?.Latest.DisplayName,
+            user?.CitizenId,
+            user?.Enlisted,
+            user?.Location,
+            ProfileRead: user is not null,
+            rows.Where(r => r.Latest.IsActive).OrderBy(r => r.Latest.OrgSid).Select(ToMembership).ToList(),
+            latestRow?.Latest.Timestamp));
+    }
+
+    [HttpGet("players/{handle}/history")]
+    public async Task<ActionResult<BotHistoryDto>> History(string handle, CancellationToken ct)
+    {
+        var resolved = await users.ResolveHandleAsync(handle, ct)
+            ?? throw new NotFoundException($"Joueur « {handle} » inconnu du tracker.");
+        var rows = await users.GetMembershipsAsync(resolved, includeInactive: true, ct);
+
+        var citizenId = await db.Users.AsNoTracking()
+            .Where(u => u.UserHandle == resolved)
+            .Select(u => (int?)u.CitizenId)
+            .FirstOrDefaultAsync(ct)
+            ?? (await handleHistory.GetByHandleAsync(resolved, ct))?.CitizenId;
+        var handles = citizenId is null
+            ? new List<BotHandleDto>()
+            : (await handleHistory.GetByCitizenIdAsync(citizenId.Value, ct))
+                .Select(h => new BotHandleDto(h.UserHandle, h.FirstSeen, h.LastSeen)).ToList();
+        var events = (await changes.GetByUserHandleAsync(resolved, HistoryEvents, ct))
+            .Select(e => new BotEventDto(e.Timestamp, e.ChangeType, e.OrgSid, e.OldValue, e.NewValue)).ToList();
+
+        return Ok(new BotHistoryDto(
+            resolved,
+            rows.OrderByDescending(r => r.Latest.IsActive).ThenByDescending(r => r.Latest.Timestamp).Select(ToMembership).ToList(),
+            handles,
+            events));
+    }
+
+    private static BotMembershipDto ToMembership(MembershipRow r) => new(
+        r.Latest.OrgSid, r.OrgName, r.Latest.Rank, r.Latest.Stars, r.FirstSeen, r.Latest.Timestamp, r.Latest.IsActive);
 }
