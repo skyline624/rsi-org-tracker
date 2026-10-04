@@ -89,7 +89,7 @@ public class BotPlayerTests(ApiFactory factory)
             db.OrganizationMembers.Add(new OrganizationMember { OrgSid = now, UserHandle = handle, Timestamp = DateTime.UtcNow, IsActive = true });
             db.OrganizationMembers.Add(new OrganizationMember { OrgSid = before, UserHandle = handle, Timestamp = DateTime.UtcNow.AddMonths(-3), IsActive = false });
             for (var i = 0; i < 20; i++)
-                db.ChangeEvents.Add(new ChangeEvent { Timestamp = DateTime.UtcNow.AddMinutes(-i), EntityType = "member", EntityId = handle, ChangeType = "rank_changed", OrgSid = now, UserHandle = handle, OldValue = "a", NewValue = "b" });
+                db.ChangeEvents.Add(new ChangeEvent { Timestamp = DateTime.UtcNow.AddMinutes(-i), EntityType = "member", EntityId = handle, ChangeType = "rank_changed", OrgSid = now, UserHandle = handle, OldValue = "a", NewValue = $"v{i}" });
         });
 
         var (status, body) = await GetAsync($"/api/bot/players/{handle}/history", "historique");
@@ -99,7 +99,56 @@ public class BotPlayerTests(ApiFactory factory)
             .Should().Equal((now, true), (before, false));
         body.GetProperty("handles").EnumerateArray().Select(h => h.GetProperty("handle").GetString())
             .Should().BeEquivalentTo(new[] { former, handle });
-        body.GetProperty("events").GetArrayLength().Should().Be(15);
+        // The 15 newest of the 20 seeded events (v0 is the newest), newest first.
+        body.GetProperty("events").EnumerateArray().Select(e => e.GetProperty("new").GetString())
+            .Should().Equal(Enumerable.Range(0, 15).Select(i => $"v{i}"));
+    }
+
+    [Fact]
+    public async Task TheHistory_OrdersOrgsOfTheSameStatusAndDate_BySid()
+    {
+        var handle = NewHandle();
+        var (first, second) = (NewSid(), NewSid());
+        var stamp = DateTime.UtcNow.AddDays(-5);
+        await SeedAsync(factory, db =>
+        {
+            // Inserted in the reverse of the expected order, so insertion order cannot pass for the tie-breaker.
+            foreach (var sid in new[] { first, second }.OrderByDescending(s => s))
+                db.OrganizationMembers.Add(new OrganizationMember { OrgSid = sid, UserHandle = handle, Timestamp = stamp, IsActive = false });
+        });
+
+        var (status, body) = await GetAsync($"/api/bot/players/{handle}/history", "historique");
+
+        status.Should().Be(HttpStatusCode.OK);
+        body.GetProperty("orgs").EnumerateArray().Select(o => o.GetProperty("sid").GetString())
+            .Should().Equal(new[] { first, second }.OrderBy(s => s));
+    }
+
+    [Fact]
+    public async Task AHandleHeldByTwoCitizens_IsReportedForTheMostRecentlyUpdatedOne_ByBothRoutes()
+    {
+        var handle = NewHandle();
+        var (formerOfOld, formerOfNew) = (NewHandle(), NewHandle());
+        var (oldCitizen, newCitizen) = (Random.Shared.Next(1, int.MaxValue / 2), Random.Shared.Next(int.MaxValue / 2, int.MaxValue));
+        await SeedAsync(factory, db =>
+        {
+            // The citizen who gave the handle up is inserted first: it is the row a query without ordering would return.
+            db.Users.Add(new User { CitizenId = oldCitizen, UserHandle = handle, CreatedAt = DateTime.UtcNow.AddYears(-1), UpdatedAt = DateTime.UtcNow.AddDays(-30) });
+            db.Users.Add(new User { CitizenId = newCitizen, UserHandle = handle, CreatedAt = DateTime.UtcNow.AddMonths(-1), UpdatedAt = DateTime.UtcNow });
+            db.UserHandleHistories.Add(new UserHandleHistory { CitizenId = oldCitizen, UserHandle = formerOfOld, FirstSeen = DateTime.UtcNow.AddYears(-1), LastSeen = DateTime.UtcNow.AddMonths(-6) });
+            db.UserHandleHistories.Add(new UserHandleHistory { CitizenId = oldCitizen, UserHandle = handle, FirstSeen = DateTime.UtcNow.AddMonths(-6), LastSeen = DateTime.UtcNow.AddDays(-30) });
+            db.UserHandleHistories.Add(new UserHandleHistory { CitizenId = newCitizen, UserHandle = formerOfNew, FirstSeen = DateTime.UtcNow.AddMonths(-1), LastSeen = DateTime.UtcNow.AddDays(-20) });
+            db.UserHandleHistories.Add(new UserHandleHistory { CitizenId = newCitizen, UserHandle = handle, FirstSeen = DateTime.UtcNow.AddDays(-20), LastSeen = DateTime.UtcNow });
+        });
+
+        var (playerStatus, player) = await GetAsync($"/api/bot/players/{handle}", "joueur");
+        var (historyStatus, history) = await GetAsync($"/api/bot/players/{handle}/history", "historique");
+
+        playerStatus.Should().Be(HttpStatusCode.OK);
+        historyStatus.Should().Be(HttpStatusCode.OK);
+        player.GetProperty("citizenId").GetInt32().Should().Be(newCitizen);
+        history.GetProperty("handles").EnumerateArray().Select(h => h.GetProperty("handle").GetString())
+            .Should().BeEquivalentTo(new[] { formerOfNew, handle });
     }
 
     [Fact]

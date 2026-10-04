@@ -4,6 +4,7 @@ using Collector.Api.Errors;
 using Collector.Api.Services;
 using Collector.Data;
 using Collector.Data.Repositories;
+using Collector.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -58,10 +59,7 @@ public sealed class BotController(
     {
         var resolved = await users.ResolveHandleAsync(handle, ct)
             ?? throw new NotFoundException($"Joueur « {handle} » inconnu du tracker.");
-        var user = await db.Users.AsNoTracking()
-            .Where(u => u.UserHandle == resolved)
-            .OrderByDescending(u => u.UpdatedAt)
-            .FirstOrDefaultAsync(ct);
+        var user = await LatestUserAsync(resolved, ct);
         var rows = await users.GetMembershipsAsync(resolved, includeInactive: true, ct);
         if (user is null && rows.Count == 0)
             throw new NotFoundException($"Joueur « {handle} » inconnu du tracker.");
@@ -85,10 +83,7 @@ public sealed class BotController(
             ?? throw new NotFoundException($"Joueur « {handle} » inconnu du tracker.");
         var rows = await users.GetMembershipsAsync(resolved, includeInactive: true, ct);
 
-        var citizenId = await db.Users.AsNoTracking()
-            .Where(u => u.UserHandle == resolved)
-            .Select(u => (int?)u.CitizenId)
-            .FirstOrDefaultAsync(ct)
+        var citizenId = (await LatestUserAsync(resolved, ct))?.CitizenId
             ?? (await handleHistory.GetByHandleAsync(resolved, ct))?.CitizenId;
         var handles = citizenId is null
             ? new List<BotHandleDto>()
@@ -99,10 +94,22 @@ public sealed class BotController(
 
         return Ok(new BotHistoryDto(
             resolved,
-            rows.OrderByDescending(r => r.Latest.IsActive).ThenByDescending(r => r.Latest.Timestamp).Select(ToMembership).ToList(),
+            rows.OrderByDescending(r => r.Latest.IsActive).ThenByDescending(r => r.Latest.Timestamp).ThenBy(r => r.Latest.OrgSid)
+                .Select(ToMembership).ToList(),
             handles,
             events));
     }
+
+    /// <summary>
+    /// The users row holding a handle. Several rows can share one (a handle given up and taken
+    /// by another citizen): the one whose profile was read last holds it now. Player and History
+    /// both go through here so they always speak of the same citizen.
+    /// </summary>
+    private Task<User?> LatestUserAsync(string handle, CancellationToken ct) =>
+        db.Users.AsNoTracking()
+            .Where(u => u.UserHandle == handle)
+            .OrderByDescending(u => u.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
 
     private static BotMembershipDto ToMembership(MembershipRow r) => new(
         r.Latest.OrgSid, r.OrgName, r.Latest.Rank, r.Latest.Stars, r.FirstSeen, r.Latest.Timestamp, r.Latest.IsActive);
