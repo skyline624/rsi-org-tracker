@@ -3,10 +3,12 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Json;
 using Collector.Api.Auth;
+using Collector.Api.Data;
 using Collector.Api.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -28,7 +30,7 @@ public class BotReadKeyAuthTests(ApiFactory factory)
         return await context.AuthenticateAsync(scheme);
     }
 
-    private static async Task<string> CreateKeyAsync(HttpClient owner, string? scope, int days = 30)
+    private static async Task<(long Id, string RawKey)> CreateKeyWithIdAsync(HttpClient owner, string? scope, int days = 30)
     {
         var response = await owner.PostAsJsonAsync("/api/api-keys", new
         {
@@ -37,7 +39,17 @@ public class BotReadKeyAuthTests(ApiFactory factory)
             scope,
         });
         response.StatusCode.Should().Be(HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
-        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("rawKey").GetString()!;
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return (body.GetProperty("id").GetInt64(), body.GetProperty("rawKey").GetString()!);
+    }
+
+    private static async Task<string> CreateKeyAsync(HttpClient owner, string? scope, int days = 30) =>
+        (await CreateKeyWithIdAsync(owner, scope, days)).RawKey;
+
+    private async Task WithDbAsync(Func<ApiDbContext, Task> action)
+    {
+        using var scope = factory.Services.CreateScope();
+        await action(scope.ServiceProvider.GetRequiredService<ApiDbContext>());
     }
 
     private Task<HttpClient> OwnerAsync() => factory.SignedInClientAsync($"bot-auth-{Guid.NewGuid():N}");
@@ -52,6 +64,46 @@ public class BotReadKeyAuthTests(ApiFactory factory)
         result.Succeeded.Should().BeTrue(result.Failure?.Message);
         result.Principal!.FindFirstValue(BotReadAuth.ScopeClaimType).Should().Be(ApiKeyScopes.BotRead);
         result.Principal!.IsInRole("Admin").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RevokedOrExpiredBotKey_IsRefused()
+    {
+        var owner = await OwnerAsync();
+        var (revokedId, revoked) = await CreateKeyWithIdAsync(owner, ApiKeyScopes.BotRead);
+        var (expiredId, expired) = await CreateKeyWithIdAsync(owner, ApiKeyScopes.BotRead);
+        (await owner.DeleteAsync($"/api/api-keys/{revokedId}")).StatusCode.Should().Be(HttpStatusCode.NoContent);
+        await WithDbAsync(db => db.ApiKeys.Where(k => k.Id == expiredId)
+            .ExecuteUpdateAsync(s => s.SetProperty(k => k.ExpiresAt, (DateTime?)DateTime.UtcNow.AddMinutes(-1))));
+
+        var revokedResult = await AuthenticateAsync(BotReadAuth.SchemeName, BotPath, revoked);
+        var expiredResult = await AuthenticateAsync(BotReadAuth.SchemeName, BotPath, expired);
+
+        revokedResult.Succeeded.Should().BeFalse();
+        revokedResult.Failure!.Message.Should().Be("Invalid API key");
+        expiredResult.Succeeded.Should().BeFalse();
+        expiredResult.Failure!.Message.Should().Be("Invalid API key");
+    }
+
+    [Fact]
+    public async Task BotKeyOfABannedOwner_IsRefused()
+    {
+        var username = $"bot-auth-{Guid.NewGuid():N}";
+        var owner = await factory.SignedInClientAsync(username);
+        var key = await CreateKeyAsync(owner, ApiKeyScopes.BotRead);
+        await WithDbAsync(db => db.ApiUsers.Where(u => u.Username == username)
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.IsBanned, true)));
+
+        var result = await AuthenticateAsync(BotReadAuth.SchemeName, BotPath, key);
+
+        result.Succeeded.Should().BeFalse();
+        result.Failure!.Message.Should().Be("Account is banned");
+    }
+
+    [Fact]
+    public async Task NoKey_IsNoResult_ByTheBotScheme()
+    {
+        (await AuthenticateAsync(BotReadAuth.SchemeName, BotPath, apiKey: null)).None.Should().BeTrue();
     }
 
     [Theory]
