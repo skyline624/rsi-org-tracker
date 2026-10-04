@@ -26,4 +26,17 @@ public class ApiKeyDto
 public class CreatedApiKeyDto : ApiKeyDto
 {
     public string RawKey { get; set; } = null!;
+
+    public static CreatedApiKeyDto From(ApiKeyDto dto, string rawKey) => new()
+    {
+        Id = dto.Id,
+        Name = dto.Name,
+        KeyPrefix = dto.KeyPrefix,
+        CreatedAt = dto.CreatedAt,
+        LastUsedAt = dto.LastUsedAt,
+        ExpiresAt = dto.ExpiresAt,
+        IsRevoked = dto.IsRevoked,
+        Scope = dto.Scope,
+        RawKey = rawKey,
+    };
 }

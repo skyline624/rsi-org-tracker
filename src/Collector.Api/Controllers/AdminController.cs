@@ -7,6 +7,7 @@ using Collector.Api.Dtos.ApiKeys;
 using Collector.Api.Dtos.Auth;
 using Collector.Api.Dtos.Common;
 using Collector.Api.Services;
+using Collector.Api.Services.Discord;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +25,7 @@ public class AdminController : ControllerBase
     private readonly DiscordTokenStore _discordTokens;
     private readonly ApiKeyService _apiKeyService;
     private readonly CurrentUserAccessor _currentUser;
+    private readonly ILogger<AdminController> _logger;
 
     public AdminController(
         ApiDbContext db,
@@ -31,7 +33,8 @@ public class AdminController : ControllerBase
         AuthService authService,
         DiscordTokenStore discordTokens,
         ApiKeyService apiKeyService,
-        CurrentUserAccessor currentUser)
+        CurrentUserAccessor currentUser,
+        ILogger<AdminController> logger)
     {
         _db = db;
         _activityLog = activityLog;
@@ -39,6 +42,7 @@ public class AdminController : ControllerBase
         _discordTokens = discordTokens;
         _apiKeyService = apiKeyService;
         _currentUser = currentUser;
+        _logger = logger;
     }
 
     [HttpGet("users")]
@@ -154,21 +158,14 @@ public class AdminController : ControllerBase
             throw new NotFoundException($"Compte {id} introuvable.");
 
         var (rawKey, dto) = await _apiKeyService.CreateAsync(id, request, ct);
-        await _activityLog.LogAsync("admin_create_scoped_key", _currentUser.UserId, "user", id.ToString(),
-            _currentUser.IpAddress, ct);
 
-        var result = new CreatedApiKeyDto
-        {
-            Id = dto.Id,
-            Name = dto.Name,
-            KeyPrefix = dto.KeyPrefix,
-            CreatedAt = dto.CreatedAt,
-            ExpiresAt = dto.ExpiresAt,
-            IsRevoked = dto.IsRevoked,
-            Scope = dto.Scope,
-            RawKey = rawKey,
-        };
-        return StatusCode(StatusCodes.Status201Created, result);
+        // The key is already committed and its raw value is shown only once, so the audit entry
+        // must neither depend on the client staying connected nor change the response. The
+        // static admin key has no api_users row, which DiscordAudit logs as a null user.
+        await DiscordAudit.LogAsync(_activityLog, _currentUser, _logger, "admin_create_scoped_key", "user",
+            id.ToString(), CancellationToken.None);
+
+        return StatusCode(StatusCodes.Status201Created, CreatedApiKeyDto.From(dto, rawKey));
     }
 
     [HttpGet("logs")]

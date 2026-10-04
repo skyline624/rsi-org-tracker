@@ -43,18 +43,7 @@ public class ApiKeysController : ControllerBase
         var userId = _currentUser.UserId ?? throw new AuthenticationFailedException("Authentication required");
         var (rawKey, dto) = await _apiKeyService.CreateAsync(userId, request, ct);
 
-        var result = new CreatedApiKeyDto
-        {
-            Id = dto.Id,
-            Name = dto.Name,
-            KeyPrefix = dto.KeyPrefix,
-            CreatedAt = dto.CreatedAt,
-            ExpiresAt = dto.ExpiresAt,
-            IsRevoked = dto.IsRevoked,
-            Scope = dto.Scope,
-            RawKey = rawKey,
-        };
-        return CreatedAtAction(nameof(Get), new { id = dto.Id }, result);
+        return CreatedAtAction(nameof(Get), new { id = dto.Id }, CreatedApiKeyDto.From(dto, rawKey));
     }
 
     [HttpDelete("{id:long}")]
