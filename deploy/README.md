@@ -257,9 +257,12 @@ cette IP par nginx, avec une clé à portée `bot:read` (valable sur `/api/bot/`
    `openssl x509 -in /etc/ssl/certs/sc-selfsigned.crt -noout -fingerprint -sha256`.
    La commande affiche `sha256 Fingerprint=AB:CD:…` ; garder la partie après `Fingerprint=`
    (une valeur avec espace casserait un `set -a; . api.env`).
-4. **Installation** : copier la version du dépôt dans le serveur,
+4. **Installation** : comparer d'abord la version du dépôt avec celle du serveur,
+   `diff /etc/nginx/sites-available/sc-tracker ~/sc-tracker/current/deploy/nginx/sc-tracker.conf` :
+   la copie écrase le fichier en place, et toute retouche faite à la main sur le serveur (absente
+   du dépôt) serait perdue — la reporter d'abord dans le dépôt. Puis copier la version du dépôt,
    `sudo cp ~/sc-tracker/current/deploy/nginx/sc-tracker.conf /etc/nginx/sites-available/sc-tracker`,
-   puis `sudo nginx -t && sudo systemctl reload nginx`.
+   et `sudo nginx -t && sudo systemctl reload nginx`.
    Vérifications (depuis le poste local) :
    - `curl -sk -o /dev/null -w '%{http_code}' https://<IP>/bot-api/search?q=ab` depuis une IP autre que panda : réponse 403.
    - `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5000/api/bot/search?q=ab` depuis le serveur : réponse 401 (absence de clé).
