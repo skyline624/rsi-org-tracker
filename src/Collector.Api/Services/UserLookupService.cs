@@ -1,7 +1,5 @@
 using Collector.Api.Dtos.Common;
 using Collector.Api.Dtos.Users;
-using Collector.Api.Errors;
-using Collector.Api.Extensions;
 using Collector.Data;
 using Collector.Data.Repositories;
 using Collector.Models;
@@ -148,9 +146,14 @@ public sealed class UserLookupService(TrackerDbContext db, IOrganizationReposito
     }
 
     /// <summary>
-    /// The handle as the tracker stores it, for a handle typed by someone: as typed in
-    /// users; else ignoring case in rosters (IX_organization_members_UserHandle_NoCase);
-    /// else a former handle of a citizen, which leads to the current one. Null if unknown.
+    /// The handle as the tracker stores it, for a handle typed by someone. Order:
+    /// users as typed; users ignoring case; a former handle of a citizen (handle
+    /// history, ignoring case), which leads to the current one; rosters ignoring case
+    /// (IX_organization_members_UserHandle_NoCase). Null if unknown.
+    /// History comes before rosters because a renamed citizen's old handle normally stays
+    /// in organization_members snapshots: reading rosters first would return the former
+    /// spelling and never reach the current one. A former handle whose citizen has no
+    /// users row falls through to the rosters.
     /// </summary>
     public async Task<string?> ResolveHandleAsync(string input, CancellationToken ct)
     {
@@ -163,23 +166,30 @@ public sealed class UserLookupService(TrackerDbContext db, IOrganizationReposito
             .FirstOrDefaultAsync(ct);
         if (exact != null) return exact;
 
-        var roster = await db.OrganizationMembers.AsNoTracking()
-            .Where(m => EF.Functions.Collate(m.UserHandle, "NOCASE") == handle)
-            .OrderByDescending(m => m.Timestamp)
-            .Select(m => m.UserHandle)
+        var anyCase = await db.Users.AsNoTracking()
+            .Where(u => EF.Functions.Collate(u.UserHandle, "NOCASE") == handle)
+            .Select(u => u.UserHandle)
             .FirstOrDefaultAsync(ct);
-        if (roster != null) return roster;
+        if (anyCase != null) return anyCase;
 
         var citizenId = await db.UserHandleHistories.AsNoTracking()
             .Where(h => EF.Functions.Collate(h.UserHandle, "NOCASE") == handle)
             .OrderByDescending(h => h.LastSeen)
             .Select(h => (int?)h.CitizenId)
             .FirstOrDefaultAsync(ct);
-        if (citizenId is null) return null;
+        if (citizenId != null)
+        {
+            var current = await db.Users.AsNoTracking()
+                .Where(u => u.CitizenId == citizenId)
+                .Select(u => u.UserHandle)
+                .FirstOrDefaultAsync(ct);
+            if (current != null) return current;
+        }
 
-        return await db.Users.AsNoTracking()
-            .Where(u => u.CitizenId == citizenId)
-            .Select(u => u.UserHandle)
+        return await db.OrganizationMembers.AsNoTracking()
+            .Where(m => EF.Functions.Collate(m.UserHandle, "NOCASE") == handle)
+            .OrderByDescending(m => m.Timestamp)
+            .Select(m => m.UserHandle)
             .FirstOrDefaultAsync(ct);
     }
 }
