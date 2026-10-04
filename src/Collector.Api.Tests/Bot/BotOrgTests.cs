@@ -131,6 +131,16 @@ public class BotOrgTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task AMembersPageAbove10000_IsA400()
+    {
+        var sid = NewSid();
+        await SeedAsync(factory, db => db.Organizations.Add(new Organization { Sid = sid, Name = "Far Pages", Timestamp = DateTime.UtcNow, MembersCount = 1 }));
+
+        (await GetAsync($"/api/bot/orgs/{sid}/members?page=10000", "membres")).Status.Should().Be(HttpStatusCode.OK);
+        (await GetAsync($"/api/bot/orgs/{sid}/members?page=10001", "membres")).Status.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task AnOrgRequest_IsWrittenToTheActivityLog_UnderTheSidAsTyped()
     {
         var sid = NewSid();

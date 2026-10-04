@@ -78,6 +78,29 @@ public class BotAccessTests(ApiFactory factory)
             .Should().Be(HttpStatusCode.BadRequest);
     }
 
+    [Theory]
+    [InlineData("/api/bot/players/{0}")]
+    [InlineData("/api/bot/players/{0}/history")]
+    [InlineData("/api/bot/orgs/{0}")]
+    [InlineData("/api/bot/orgs/{0}/members")]
+    [InlineData("/api/bot/orgs/{0}/movements")]
+    public async Task Autocomplete_IsAcceptedOnTheSearchOnly(string route)
+    {
+        // Autocompletion is never logged: any other route would let reads escape the activity log.
+        var key = await CreateBotKeyAsync(factory);
+        var sid = NewSid();
+        var handle = NewHandle();
+        await SeedAsync(factory, db =>
+        {
+            db.Organizations.Add(new Organization { Sid = sid, Name = "Autocomplete Only", Timestamp = DateTime.UtcNow, MembersCount = 1 });
+            db.OrganizationMembers.Add(new OrganizationMember { OrgSid = sid, UserHandle = handle, Timestamp = DateTime.UtcNow, IsActive = true });
+        });
+        var url = string.Format(route, route.Contains("players") ? handle : sid);
+
+        (await SendAsync(Get(url, key, "autocomplete"))).StatusCode.Should().Be(HttpStatusCode.BadRequest, url);
+        (await SendAsync(Get($"/api/bot/search?q={sid}", key, "autocomplete"))).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
     [Fact]
     public async Task ASearch_IsWrittenToTheActivityLog_AnAutocompleteIsNot()
     {

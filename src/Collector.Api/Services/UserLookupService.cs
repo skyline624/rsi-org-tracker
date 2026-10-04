@@ -10,11 +10,31 @@ namespace Collector.Api.Services;
 /// <summary>The latest roster row of a handle in one org, the org's latest name, and the handle's first appearance there.</summary>
 public sealed record MembershipRow(OrganizationMember Latest, string? OrgName, DateTime? FirstSeen);
 
+/// <summary>A player found by the bot's search: the handle and display name, nothing else.</summary>
+public sealed class PlayerNameHit
+{
+    public string UserHandle { get; set; } = null!;
+    public string? DisplayName { get; set; }
+}
+
 /// <summary>Player queries shared by the site (UsersController) and the Discord bot (BotController).</summary>
 public sealed class UserLookupService(TrackerDbContext db, IOrganizationRepository orgRepo)
 {
     public const int MinSearchLength = 2;
     public const int MaxCountedMatches = 1001;
+
+    // Name matching shared by the site's search and the bot's. {0} = substring pattern,
+    // {1} = prefix pattern (see Patterns). Enriched citizens: handle or display name.
+    private const string UsersByName =
+        @"UserHandle LIKE {0} ESCAPE '\' OR (DisplayName IS NOT NULL AND DisplayName LIKE {0} ESCAPE '\')";
+
+    // Roster-only members (no users row), by handle prefix, each handle's latest row only.
+    private const string RosterOnlyByPrefix = @"
+            FROM organization_members m
+            WHERE m.UserHandle LIKE {1}
+              AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle)
+              AND NOT EXISTS (SELECT 1 FROM organization_members o
+                              WHERE o.UserHandle = m.UserHandle AND o.Timestamp > m.Timestamp)";
 
     /// <summary>
     /// Searches enriched citizens AND roster-only members (handles tracked in
@@ -32,19 +52,7 @@ public sealed class UserLookupService(TrackerDbContext db, IOrganizationReposito
             return PaginatedResponse<UserProfileDto>.Create(Array.Empty<UserProfileDto>(), page, pageSize, 0);
         }
 
-        // Enriched side: substring match (full scan of the smaller `users` table is cheap).
-        // Escape %/_ so user input can't pivot into wildcards (requires the ESCAPE clause).
-        var escaped = search.Replace("%", "\\%").Replace("_", "\\_");
-        var substring = $"%{escaped}%";
-
-        // Non-enriched side: PREFIX match only. SQLite can use an index for a LIKE prefix
-        // solely when the column collates NOCASE *and* there's no ESCAPE clause — that's
-        // what IX_organization_members_UserHandle_NoCase exists for. A substring there
-        // would force a full scan of the ~12M-row snapshot table (tens of seconds). '%'
-        // can't appear in a handle, so stripping it (not escaping) keeps the prefix clean;
-        // an empty prefix becomes a guaranteed no-match rather than a match-all scan.
-        var prefixTerm = search.Trim().Replace("%", "");
-        var prefix = prefixTerm.Length == 0 ? "" : prefixTerm + "%";
+        var (substring, prefix) = Patterns(search);
 
         // Numeric term → also match by citizen id (enriched users + tracked entities).
         // -1 can never match a real citizen id (all are > 0), so a non-numeric term is a no-op here.
@@ -54,16 +62,12 @@ public sealed class UserLookupService(TrackerDbContext db, IOrganizationReposito
         const string union = @"
             SELECT CitizenId, UserHandle, DisplayName, UrlImage, Bio, Location, Enlisted, UpdatedAt, 1 AS IsEnriched
             FROM users
-            WHERE UserHandle LIKE {0} ESCAPE '\' OR (DisplayName IS NOT NULL AND DisplayName LIKE {0} ESCAPE '\')
+            WHERE " + UsersByName + @"
                OR CitizenId = {2}
             UNION ALL
             SELECT 0 AS CitizenId, m.UserHandle, m.DisplayName, m.UrlImage,
-                   NULL AS Bio, NULL AS Location, NULL AS Enlisted, m.Timestamp AS UpdatedAt, 0 AS IsEnriched
-            FROM organization_members m
-            WHERE m.UserHandle LIKE {1}
-              AND NOT EXISTS (SELECT 1 FROM users u WHERE u.UserHandle = m.UserHandle)
-              AND NOT EXISTS (SELECT 1 FROM organization_members o
-                              WHERE o.UserHandle = m.UserHandle AND o.Timestamp > m.Timestamp)
+                   NULL AS Bio, NULL AS Location, NULL AS Enlisted, m.Timestamp AS UpdatedAt, 0 AS IsEnriched"
+            + RosterOnlyByPrefix + @"
             UNION ALL
             SELECT COALESCE(e.CitizenId, 0) AS CitizenId, e.CurrentHandle AS UserHandle, e.DisplayName,
                    NULL AS UrlImage, NULL AS Bio, NULL AS Location, NULL AS Enlisted, e.UpdatedAt, 0 AS IsEnriched
@@ -106,6 +110,49 @@ public sealed class UserLookupService(TrackerDbContext db, IOrganizationReposito
         }
 
         return PaginatedResponse<UserProfileDto>.Create(items, page, pageSize, total);
+    }
+
+    /// <summary>
+    /// The Discord bot's player search: handles and display names only, by the site's rules
+    /// (enriched citizens by substring, roster-only handles by prefix). Unlike the site, it
+    /// never reads staff notes nor tracked entities, and counts nothing. Each half stops at
+    /// <paramref name="limit"/> rows in handle order, so the union never sorts every match.
+    /// </summary>
+    public async Task<IReadOnlyList<PlayerNameHit>> SearchPlayersForBotAsync(string text, int limit, CancellationToken ct)
+    {
+        if (text.Trim().Length < MinSearchLength) return Array.Empty<PlayerNameHit>();
+        var (substring, prefix) = Patterns(text);
+
+        const string sql = @"
+            SELECT UserHandle, DisplayName FROM (
+                SELECT * FROM (
+                    SELECT UserHandle, DisplayName FROM users
+                    WHERE " + UsersByName + @"
+                    ORDER BY UserHandle COLLATE NOCASE LIMIT {2})
+                UNION ALL
+                SELECT * FROM (
+                    SELECT m.UserHandle, m.DisplayName" + RosterOnlyByPrefix + @"
+                    ORDER BY m.UserHandle COLLATE NOCASE LIMIT {2}))
+            ORDER BY UserHandle COLLATE NOCASE LIMIT {2}";
+
+        return await db.Database.SqlQueryRaw<PlayerNameHit>(sql, substring, prefix, limit).ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// {0}: substring pattern for enriched citizens, a full scan of the smaller `users` table
+    /// (cheap). %/_ are escaped so input can't pivot into wildcards (requires the ESCAPE clause).
+    /// {1}: PREFIX pattern for roster handles. SQLite can use an index for a LIKE prefix
+    /// solely when the column collates NOCASE *and* there's no ESCAPE clause — that's
+    /// what IX_organization_members_UserHandle_NoCase exists for. A substring there
+    /// would force a full scan of the ~12M-row snapshot table (tens of seconds). '%'
+    /// can't appear in a handle, so stripping it (not escaping) keeps the prefix clean;
+    /// an empty prefix becomes a guaranteed no-match rather than a match-all scan.
+    /// </summary>
+    private static (string Substring, string Prefix) Patterns(string search)
+    {
+        var escaped = search.Replace("%", "\\%").Replace("_", "\\_");
+        var prefixTerm = search.Trim().Replace("%", "");
+        return ($"%{escaped}%", prefixTerm.Length == 0 ? "" : prefixTerm + "%");
     }
 
     /// <summary>Each org of the handle with its latest row; former ones only when asked.</summary>

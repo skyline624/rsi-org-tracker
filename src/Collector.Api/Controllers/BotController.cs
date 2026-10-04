@@ -1,5 +1,6 @@
 using Collector.Api.Auth;
 using Collector.Api.Dtos.Bot;
+using Collector.Api.Dtos.Organizations;
 using Collector.Api.Errors;
 using Collector.Api.Services;
 using Collector.Data;
@@ -29,29 +30,36 @@ public sealed class BotController(
 {
     public const int SearchMax = 10;
     public const int MembersPageSize = 25;
+    public const int MaxMembersPage = 10000;
     public const int MaxMovements = 50;
     public const int HistoryEvents = 15;
 
+    /// <summary>Values of the search's optional <c>kind</c>: one half only (autocompletion needs no more).</summary>
+    public const string SearchOrgs = "orgs";
+    public const string SearchPlayers = "players";
+
     [HttpGet("search")]
-    public async Task<ActionResult<BotSearchDto>> Search([FromQuery] string? q, CancellationToken ct)
+    public async Task<ActionResult<BotSearchDto>> Search([FromQuery] string? q, [FromQuery] string? kind, CancellationToken ct)
     {
         var text = (q ?? "").Trim();
         if (text.Length is < 2 or > 50)
             throw new ValidationException("La recherche fait de 2 à 50 caractères.");
+        var (withOrgs, withPlayers) = kind switch
+        {
+            null => (true, true),
+            SearchOrgs => (true, false),
+            SearchPlayers => (false, true),
+            _ => throw new ValidationException($"kind vaut {SearchOrgs} ou {SearchPlayers}, ou est absent."),
+        };
 
-        var orgHits = await orgs.SuggestAsync(text, ct);
-        var sids = orgHits.Select(o => o.Sid).ToList();
-        var counts = (await orgs.LatestOrgs().AsNoTracking()
-                .Where(o => sids.Contains(o.Sid))
-                .Select(o => new { o.Sid, o.MembersCount })
-                .ToListAsync(ct))
-            .DistinctBy(o => o.Sid)
-            .ToDictionary(o => o.Sid, o => o.MembersCount);
-        var players = await users.SearchAsync(text, 1, SearchMax, ct);
+        var orgHits = withOrgs ? await orgs.SuggestAsync(text, ct) : Array.Empty<OrganizationSuggestionDto>();
+        var counts = await LatestMembersCountsAsync(orgHits.Select(o => o.Sid).ToList(), ct);
+        // Handles and display names only: the site's search also reads staff notes (spec § 5.2).
+        var players = withPlayers ? await users.SearchPlayersForBotAsync(text, SearchMax, ct) : Array.Empty<PlayerNameHit>();
 
         return Ok(new BotSearchDto(
             orgHits.Select(o => new BotOrgHitDto(o.Sid, o.Name, counts.GetValueOrDefault(o.Sid))).ToList(),
-            players.Items.Select(p => new BotPlayerHitDto(p.UserHandle, p.DisplayName)).ToList()));
+            players.Select(p => new BotPlayerHitDto(p.UserHandle, p.DisplayName)).ToList()));
     }
 
     [HttpGet("players/{handle}")]
@@ -144,8 +152,8 @@ public sealed class BotController(
     [HttpGet("orgs/{sid}/members")]
     public async Task<ActionResult<BotMembersPageDto>> Members(string sid, [FromQuery] int page = 1, CancellationToken ct = default)
     {
-        if (page < 1)
-            throw new ValidationException("La page commence à 1.");
+        if (page is < 1 or > MaxMembersPage)
+            throw new ValidationException($"La page va de 1 à {MaxMembersPage}.");
         sid = await KnownSidAsync(sid, ct);
         var (items, total) = await members.GetLatestPageAsync(sid, true, page, MembersPageSize, ct);
 
@@ -194,6 +202,20 @@ public sealed class BotController(
             .Where(u => u.UserHandle == handle)
             .OrderByDescending(u => u.UpdatedAt)
             .FirstOrDefaultAsync(ct);
+
+    /// <summary>
+    /// The latest snapshot's MembersCount of each SID (at most SearchMax), one lookup each on
+    /// the (Sid, Timestamp) index — never the whole-table LatestOrgs aggregate. No SID, no query.
+    /// </summary>
+    private async Task<Dictionary<string, int>> LatestMembersCountsAsync(List<string> sids, CancellationToken ct)
+    {
+        if (sids.Count == 0) return new Dictionary<string, int>();
+        return await db.Organizations.AsNoTracking()
+            .Where(o => sids.Contains(o.Sid)
+                && o.Timestamp == db.Organizations.Where(l => l.Sid == o.Sid).Max(l => l.Timestamp))
+            .Select(o => new { o.Sid, o.MembersCount })
+            .ToDictionaryAsync(o => o.Sid, o => o.MembersCount, ct);
+    }
 
     private static string NormalizeSid(string sid)
     {
