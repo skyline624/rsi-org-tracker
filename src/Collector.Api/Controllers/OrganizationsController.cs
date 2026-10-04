@@ -2,13 +2,13 @@ using Collector.Api.Errors;
 using Collector.Api.Dtos.Organizations;
 using Collector.Api.Dtos.Common;
 using Collector.Api.Extensions;
+using Collector.Api.Services;
 using Collector.Data;
 using Collector.Data.Repositories;
 using Collector.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Text;
 
 namespace Collector.Api.Controllers;
 
@@ -20,76 +20,25 @@ public class OrganizationsController : ControllerBase
     private readonly TrackerDbContext _db;
     private readonly IOrganizationMemberRepository _memberRepo;
     private readonly IChangeEventRepository _changeRepo;
+    private readonly OrganizationLookupService _lookup;
 
     public OrganizationsController(
         TrackerDbContext db,
         IOrganizationMemberRepository memberRepo,
-        IChangeEventRepository changeRepo)
+        IChangeEventRepository changeRepo,
+        OrganizationLookupService lookup)
     {
         _db = db;
         _memberRepo = memberRepo;
         _changeRepo = changeRepo;
+        _lookup = lookup;
     }
-
-    // Efficient "latest snapshot per org" using INNER JOIN with MAX(Timestamp). The
-    // list needs no long text: they are not read (the detail page fetches them).
-    private IQueryable<Organization> LatestOrgs() =>
-        _db.Organizations.FromSqlRaw("""
-            SELECT o.Id, o.Sid, o.Timestamp, o.Name, o.UrlImage, o.UrlCorpo,
-                   o.Archetype, o.Lang, o.Commitment, o.Recruiting, o.Roleplay,
-                   o.MembersCount, NULL AS Description, NULL AS History,
-                   NULL AS Manifesto, NULL AS Charter,
-                   o.FocusPrimaryName, o.FocusPrimaryImage, o.FocusSecondaryName,
-                   o.FocusSecondaryImage, o.ContentCollected, o.Source
-            FROM organizations AS o
-            INNER JOIN (
-                SELECT Sid, MAX(Timestamp) AS MaxTs
-                FROM organizations GROUP BY Sid
-            ) AS g ON o.Sid = g.Sid AND o.Timestamp = g.MaxTs
-            """);
 
     /// <summary>Small name/SID lookup for explicit organization selection, independent of list pagination.</summary>
     [HttpGet("suggestions")]
     public async Task<ActionResult<IReadOnlyList<OrganizationSuggestionDto>>> GetSuggestions(
         [FromQuery] string? query, CancellationToken ct)
-    {
-        if (query?.Length > 100)
-            throw new ValidationException("La recherche doit contenir au maximum 100 caractères.");
-
-        // Discord often uses mathematical letters and decorative separators. FormKC
-        // turns those letters into ordinary ones; punctuation is irrelevant for lookup.
-        var normalized = (query ?? "").Normalize(NormalizationForm.FormKC).Trim();
-        var compact = new StringBuilder();
-        foreach (var rune in normalized.EnumerateRunes())
-            if (Rune.IsLetterOrDigit(rune)) compact.Append(rune);
-        if (compact.Length == 0) return Ok(Array.Empty<OrganizationSuggestionDto>());
-
-        // Only letters/digits enter LIKE, so user input cannot become a wildcard.
-        var text = compact.ToString();
-        var pattern = $"%{text}%";
-        var prefix = $"{text}%";
-        var sid = normalized.ToUpperInvariant();
-        var candidates = LatestOrgs().AsNoTracking().Select(o => new
-        {
-            o.Sid,
-            o.Name,
-            CompactSid = o.Sid.Replace("-", "").Replace("_", ""),
-            CompactName = o.Name.Replace(" ", "").Replace("-", "").Replace("_", "")
-                .Replace("'", "").Replace("’", "").Replace(".", "").Replace("/", "")
-                .Replace("\u00a0", "").Replace("–", "").Replace("—", "").Replace("‑", ""),
-        });
-        var items = await candidates
-            .Where(o => EF.Functions.Like(o.CompactSid, pattern) || EF.Functions.Like(o.CompactName, pattern))
-            .OrderByDescending(o => o.Sid == sid)
-            .ThenByDescending(o => EF.Functions.Like(o.CompactName, text))
-            .ThenByDescending(o => EF.Functions.Like(o.CompactSid, prefix))
-            .ThenByDescending(o => EF.Functions.Like(o.CompactName, prefix))
-            .ThenBy(o => o.Sid)
-            .Take(10)
-            .Select(o => new OrganizationSuggestionDto(o.Sid, o.Name))
-            .ToListAsync(ct);
-        return Ok(items);
-    }
+        => Ok(await _lookup.SuggestAsync(query, ct));
 
     [HttpGet]
     public async Task<ActionResult<PaginatedResponse<OrganizationDto>>> GetAll(
@@ -106,7 +55,7 @@ public class OrganizationsController : ControllerBase
     {
         page = Paging.Page(page);
         pageSize = Paging.PageSize(pageSize);
-        var query = LatestOrgs();
+        var query = _lookup.LatestOrgs();
 
         if (!string.IsNullOrWhiteSpace(search))
         {
