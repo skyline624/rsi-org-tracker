@@ -100,6 +100,15 @@ public sealed class QueryPlanTests : IAsyncLifetime
             .And.NotContain("TEMP B-TREE");
     }
 
+    [Fact]
+    public async Task OrgMovements_SeekTheOrgSidTimestampIndex()
+    {
+        var plan = await PlanAsync(ChangeEventRepository.MovementsQuery(
+            _db.ChangeEvents, "TEST", DateTime.UtcNow.AddDays(-7), "member_left").Take(51));
+
+        plan.Should().Contain("IX_change_events_OrgSid_Timestamp").And.NotContain("TEMP B-TREE");
+    }
+
     public async Task DisposeAsync()
     {
         await _db.DisposeAsync();

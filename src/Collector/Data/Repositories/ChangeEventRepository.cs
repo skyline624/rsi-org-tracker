@@ -25,6 +25,18 @@ public class ChangeEventRepository : Repository<ChangeEvent>, IChangeEventReposi
             .ToListAsync(ct);
     }
 
+    /// <summary>
+    /// One type of membership event of an org since a date, newest first, through the
+    /// (OrgSid, Timestamp) index; the type is filtered on the rows it returns.
+    /// </summary>
+    public static IQueryable<ChangeEvent> MovementsQuery(
+        IQueryable<ChangeEvent> source, string orgSid, DateTime since, string changeType)
+        => source
+            // "+ ''" keeps SQLite off IX_change_events_ChangeType_Timestamp, which it prefers
+            // otherwise: that index would read every event of the type for all orgs.
+            .Where(c => c.OrgSid == orgSid && c.Timestamp >= since && c.ChangeType + "" == changeType)
+            .OrderByDescending(c => c.Timestamp);
+
     // The UserHandle index narrows this to the handle's own events.
     public Task<int> DeleteDeparturesSinceAsync(string orgSid, string userHandle, DateTime since, CancellationToken ct = default)
         => DbSet

@@ -100,6 +100,90 @@ public sealed class BotController(
             events));
     }
 
+    [HttpGet("orgs/{sid}")]
+    public async Task<ActionResult<BotOrgDto>> Org(string sid, CancellationToken ct)
+    {
+        sid = NormalizeSid(sid);
+        var org = await db.Organizations.AsNoTracking()
+            .Where(o => o.Sid == sid)
+            .OrderByDescending(o => o.Timestamp)
+            .FirstOrDefaultAsync(ct)
+            ?? throw new NotFoundException($"Organisation « {sid} » inconnue du tracker.");
+
+        var latest = await db.OrgMemberCounts.AsNoTracking()
+            .Where(c => c.OrgSid == sid)
+            .OrderByDescending(c => c.CollectedAt)
+            .FirstOrDefaultAsync(ct);
+        BotTrendDto? trend = null;
+        if (latest != null)
+        {
+            // RSI's total 30 days ago: the last count at that date, else the oldest one.
+            var monthAgo = DateTime.UtcNow.AddDays(-30);
+            var baseline = await db.OrgMemberCounts.AsNoTracking()
+                    .Where(c => c.OrgSid == sid && c.CollectedAt <= monthAgo)
+                    .OrderByDescending(c => c.CollectedAt)
+                    .FirstOrDefaultAsync(ct)
+                ?? await db.OrgMemberCounts.AsNoTracking()
+                    .Where(c => c.OrgSid == sid)
+                    .OrderBy(c => c.CollectedAt)
+                    .FirstAsync(ct);
+            trend = new BotTrendDto(baseline.TotalRows, latest.TotalRows);
+        }
+        var readAt = await db.DiscoveredOrganizations.AsNoTracking()
+            .Where(d => d.Sid == sid)
+            .Select(d => d.LastMembersCollectedAt)
+            .FirstOrDefaultAsync(ct);
+
+        return Ok(new BotOrgDto(
+            org.Sid, org.Name, org.Archetype, org.Lang, org.Recruiting, org.Roleplay, org.MembersCount,
+            latest is null ? null : new BotCountsDto(latest.TotalRows, latest.VisibleCount, latest.RedactedCount, latest.HiddenCount, latest.CollectedAt),
+            trend,
+            readAt));
+    }
+
+    [HttpGet("orgs/{sid}/members")]
+    public async Task<ActionResult<BotMembersPageDto>> Members(string sid, [FromQuery] int page = 1, CancellationToken ct = default)
+    {
+        if (page < 1)
+            throw new ValidationException("La page commence à 1.");
+        sid = await KnownSidAsync(sid, ct);
+        var (items, total) = await members.GetLatestPageAsync(sid, true, page, MembersPageSize, ct);
+
+        // "Since": first appearance of each member of the page in this org.
+        var handles = items.Select(i => i.UserHandle).ToList();
+        var since = await db.OrganizationMembers.AsNoTracking()
+            .Where(m => m.OrgSid == sid && handles.Contains(m.UserHandle))
+            .GroupBy(m => m.UserHandle)
+            .Select(g => new { Handle = g.Key, First = g.Min(m => m.Timestamp) })
+            .ToDictionaryAsync(x => x.Handle, x => x.First, ct);
+
+        return Ok(new BotMembersPageDto(sid, page, MembersPageSize, total, items
+            .Select(m => new BotMemberDto(m.UserHandle, m.DisplayName, m.Rank, m.Stars,
+                since.TryGetValue(m.UserHandle, out var first) ? first : null))
+            .ToList()));
+    }
+
+    [HttpGet("orgs/{sid}/movements")]
+    public async Task<ActionResult<BotMovementsDto>> Movements(string sid, [FromQuery] int days = 7, CancellationToken ct = default)
+    {
+        if (days is < 1 or > 90)
+            throw new ValidationException("Le nombre de jours va de 1 à 90.");
+        sid = await KnownSidAsync(sid, ct);
+        var since = DateTime.UtcNow.AddDays(-days);
+
+        async Task<List<BotMovementDto>> ReadAsync(string type) =>
+            (await ChangeEventRepository.MovementsQuery(db.ChangeEvents.AsNoTracking(), sid, since, type)
+                .Take(MaxMovements + 1)
+                .ToListAsync(ct))
+            .Select(e => new BotMovementDto(e.UserHandle ?? e.EntityId, e.Timestamp))
+            .ToList();
+
+        var joined = await ReadAsync("member_joined");
+        var left = await ReadAsync("member_left");
+        var truncated = joined.Count > MaxMovements || left.Count > MaxMovements;
+        return Ok(new BotMovementsDto(sid, days, joined.Take(MaxMovements).ToList(), left.Take(MaxMovements).ToList(), truncated));
+    }
+
     /// <summary>
     /// The users row holding a handle. Several rows can share one (a handle given up and taken
     /// by another citizen): the one whose profile was read last holds it now. Player and History
@@ -110,6 +194,21 @@ public sealed class BotController(
             .Where(u => u.UserHandle == handle)
             .OrderByDescending(u => u.UpdatedAt)
             .FirstOrDefaultAsync(ct);
+
+    private static string NormalizeSid(string sid)
+    {
+        var normalized = sid.Trim().ToUpperInvariant();
+        if (normalized.Length == 0) throw new ValidationException("SID vide.");
+        return normalized;
+    }
+
+    private async Task<string> KnownSidAsync(string sid, CancellationToken ct)
+    {
+        var normalized = NormalizeSid(sid);
+        if (!await db.Organizations.AsNoTracking().AnyAsync(o => o.Sid == normalized, ct))
+            throw new NotFoundException($"Organisation « {normalized} » inconnue du tracker.");
+        return normalized;
+    }
 
     private static BotMembershipDto ToMembership(MembershipRow r) => new(
         r.Latest.OrgSid, r.OrgName, r.Latest.Rank, r.Latest.Stars, r.FirstSeen, r.Latest.Timestamp, r.Latest.IsActive);
