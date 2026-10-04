@@ -95,9 +95,12 @@ Sources, pour rester identiques au site :
 
 - `search` : la recherche d'utilisateurs existante (2 caractères minimum, comptage plafonné) et la
   recherche d'orgs par nom ou SID (jokers échappés) ;
-- pseudo saisi : d'abord tel quel dans `users`, puis sans tenir compte de la casse dans les
-  rosters (index `UserHandle` en NOCASE), puis comme ancien pseudo (`user_handle_history`),
-  qui mène au pseudo actuel du citoyen ;
+- pseudo saisi : d'abord tel quel dans `users`, puis sans tenir compte de la casse dans
+  `users`, puis comme ancien pseudo (`user_handle_history`, sans casse), qui mène au pseudo
+  actuel du citoyen, enfin sans tenir compte de la casse dans les rosters (index `UserHandle`
+  en NOCASE) pour les joueurs sans fiche. L'historique passe avant les rosters : l'ancien
+  pseudo d'un citoyen renommé reste dans les anciens instantanés de roster et ne doit pas
+  masquer son pseudo actuel ;
 - `players/{handle}` : la fiche citoyen (`users`) ; si le joueur n'a pas de fiche mais figure
   dans des rosters, réponse partielle (`profileRead: false`), comme la fiche partielle du site ;
   404 seulement s'il n'est nulle part ;
