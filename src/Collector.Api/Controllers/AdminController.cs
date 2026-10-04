@@ -1,7 +1,9 @@
+using Collector.Api.Auth;
 using Collector.Api.Extensions;
 using Collector.Api.Errors;
 using Collector.Api.Data;
 using Collector.Api.Dtos.Admin;
+using Collector.Api.Dtos.ApiKeys;
 using Collector.Api.Dtos.Auth;
 using Collector.Api.Dtos.Common;
 using Collector.Api.Services;
@@ -20,17 +22,23 @@ public class AdminController : ControllerBase
     private readonly ActivityLogService _activityLog;
     private readonly AuthService _authService;
     private readonly DiscordTokenStore _discordTokens;
+    private readonly ApiKeyService _apiKeyService;
+    private readonly CurrentUserAccessor _currentUser;
 
     public AdminController(
         ApiDbContext db,
         ActivityLogService activityLog,
         AuthService authService,
-        DiscordTokenStore discordTokens)
+        DiscordTokenStore discordTokens,
+        ApiKeyService apiKeyService,
+        CurrentUserAccessor currentUser)
     {
         _db = db;
         _activityLog = activityLog;
         _authService = authService;
         _discordTokens = discordTokens;
+        _apiKeyService = apiKeyService;
+        _currentUser = currentUser;
     }
 
     [HttpGet("users")]
@@ -130,6 +138,37 @@ public class AdminController : ControllerBase
         _db.ApiUsers.Remove(user);
         await _db.SaveChangesAsync(ct);
         return NoContent();
+    }
+
+    /// <summary>
+    /// A scoped key for another account, for a service that never signs in (the Discord
+    /// bot's bot:read key). Full keys stay created by their owner only.
+    /// </summary>
+    [HttpPost("users/{id:long}/api-keys")]
+    public async Task<ActionResult<CreatedApiKeyDto>> CreateScopedKey(
+        long id, [FromBody] CreateApiKeyRequest request, CancellationToken ct)
+    {
+        if (request.Scope is null)
+            throw new ValidationException("Seule une clé à portée peut être créée pour un autre compte.");
+        if (!await _db.ApiUsers.AnyAsync(u => u.Id == id, ct))
+            throw new NotFoundException($"Compte {id} introuvable.");
+
+        var (rawKey, dto) = await _apiKeyService.CreateAsync(id, request, ct);
+        await _activityLog.LogAsync("admin_create_scoped_key", _currentUser.UserId, "user", id.ToString(),
+            _currentUser.IpAddress, ct);
+
+        var result = new CreatedApiKeyDto
+        {
+            Id = dto.Id,
+            Name = dto.Name,
+            KeyPrefix = dto.KeyPrefix,
+            CreatedAt = dto.CreatedAt,
+            ExpiresAt = dto.ExpiresAt,
+            IsRevoked = dto.IsRevoked,
+            Scope = dto.Scope,
+            RawKey = rawKey,
+        };
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 
     [HttpGet("logs")]
