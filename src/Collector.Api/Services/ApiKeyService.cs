@@ -104,20 +104,20 @@ public class ApiKeyService
         return true;
     }
 
-    /// <summary>Requires a bounded expiry for an ingest credential while retaining full keys' optional expiry.</summary>
+    /// <summary>Requires a bounded expiry for every scoped credential while retaining full keys' optional expiry.</summary>
     private static void ValidateScope(string? scope, DateTime? expiresAt, DateTime now)
     {
         if (!ApiKeyScopes.IsValid(scope))
             throw new ValidationException("Unknown API key scope.");
-        if (scope != ApiKeyScopes.DiscordIngest) return;
+        if (scope is null) return;
 
         if (expiresAt is null)
-            throw new ValidationException("A discord:ingest key needs an expiry date.");
+            throw new ValidationException($"A {scope} key needs an expiry date.");
         if (expiresAt <= now)
             throw new ValidationException("The expiry date must be in the future.");
         if (expiresAt > now.AddDays(ApiKeyScopes.MaxDiscordIngestLifetimeDays))
             throw new ValidationException(
-                $"A discord:ingest key expires within {ApiKeyScopes.MaxDiscordIngestLifetimeDays} days.");
+                $"A {scope} key expires within {ApiKeyScopes.MaxDiscordIngestLifetimeDays} days.");
     }
 
     /// <summary>JSON dates with offsets arrive as local values; dates without a zone are treated as UTC.</summary>

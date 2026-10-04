@@ -48,9 +48,11 @@ public static class ServiceCollectionExtensions
                 opts.ForwardDefaultSelector = ctx =>
                     ctx.Request.Path.StartsWithSegments(DiscordIngestAuth.PathPrefix, StringComparison.OrdinalIgnoreCase)
                         ? DiscordIngestAuth.SchemeName
-                        : ctx.Request.Headers.ContainsKey("Authorization")
-                            ? JwtBearerDefaults.AuthenticationScheme
-                            : "ApiKey")
+                        : ctx.Request.Path.StartsWithSegments(BotReadAuth.PathPrefix, StringComparison.OrdinalIgnoreCase)
+                            ? BotReadAuth.SchemeName
+                            : ctx.Request.Headers.ContainsKey("Authorization")
+                                ? JwtBearerDefaults.AuthenticationScheme
+                                : "ApiKey")
             .AddJwtBearer(opts =>
             {
                 opts.TokenValidationParameters = new TokenValidationParameters
@@ -67,7 +69,8 @@ public static class ServiceCollectionExtensions
                 };
             })
             .AddScheme<ApiKeySchemeOptions, ApiKeyAuthHandler>("ApiKey", _ => { })
-            .AddScheme<ApiKeySchemeOptions, DiscordIngestKeyAuthHandler>(DiscordIngestAuth.SchemeName, _ => { });
+            .AddScheme<ApiKeySchemeOptions, DiscordIngestKeyAuthHandler>(DiscordIngestAuth.SchemeName, _ => { })
+            .AddScheme<ApiKeySchemeOptions, BotReadKeyAuthHandler>(BotReadAuth.SchemeName, _ => { });
 
         services.AddAuthorization(opts =>
         {
@@ -82,6 +85,11 @@ public static class ServiceCollectionExtensions
                     .AddAuthenticationSchemes(DiscordIngestAuth.SchemeName)
                     .RequireAuthenticatedUser()
                     .RequireClaim(DiscordIngestAuth.ScopeClaimType, DiscordIngestAuth.IngestScope));
+            opts.AddPolicy(BotReadAuth.PolicyName,
+                policy => policy
+                    .AddAuthenticationSchemes(BotReadAuth.SchemeName)
+                    .RequireAuthenticatedUser()
+                    .RequireClaim(BotReadAuth.ScopeClaimType, BotReadAuth.Scope));
             opts.AddPolicy("AdminOnly",
                 policy => policy
                     .AddAuthenticationSchemes("Smart")
