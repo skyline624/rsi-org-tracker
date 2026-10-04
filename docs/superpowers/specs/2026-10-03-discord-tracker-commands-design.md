@@ -36,7 +36,8 @@ par les administrateurs du serveur.
   plus tard, pas demandé.
 - Écriture depuis Discord (notes, membres manuels, liens) : la clé est en lecture seule.
 - Affiliations masquées d'un joueur : le tracker ne les connaît pas (lot 14 non fait).
-- Autres serveurs Discord que celui de Liberastra (`Discord__GuildId`).
+- Autres serveurs Discord que celui de Liberastra (`Discord__GuildId`) : quand il est réglé,
+  `/tracker`, son autocomplétion et `/tracker-acces` refusent tout autre serveur.
 - Pagination par boutons : `membres` prend une option `page`.
 
 ## 4. Vue d'ensemble
@@ -84,7 +85,7 @@ normalisés comme sur le site : SID en majuscules ; pseudo comparé sans casse.
 
 | Route | Paramètres | Réponse |
 |---|---|---|
-| `search` | `q` : 2 à 50 caractères | `{ orgs: [{ sid, name, membersCount }], players: [{ handle, displayName }] }`, 10 au plus de chaque |
+| `search` | `q` : 2 à 50 caractères ; `kind` facultatif : `orgs` ou `players` (sinon les deux) | `{ orgs: [{ sid, name, membersCount }], players: [{ handle, displayName }] }`, 10 au plus de chaque |
 | `players/{handle}` | — | `{ handle, displayName, citizenId, enlisted, location, profileRead, currentOrgs: [{ sid, name, rank, stars, since, lastSeen, active }], lastSeen }` |
 | `players/{handle}/history` | — | `{ handle, orgs: [{ sid, name, rank, stars, since, lastSeen, active }], handles: [{ handle, firstSeen, lastSeen }], events: [{ at, type, orgSid, old, new }] }` (15 derniers événements) |
 | `orgs/{sid}` | — | `{ sid, name, archetype, lang, recruiting, roleplay, membersCount, counts: { total, visible, redacted, hidden, at } \| null, trend30d: { from, to } \| null, membersReadAt }` |
@@ -93,8 +94,11 @@ normalisés comme sur le site : SID en majuscules ; pseudo comparé sans casse.
 
 Sources, pour rester identiques au site :
 
-- `search` : la recherche d'utilisateurs existante (2 caractères minimum, comptage plafonné) et la
-  recherche d'orgs par nom ou SID (jokers échappés) ;
+- `search` : la recherche d'orgs du site par nom ou SID (jokers échappés), l'effectif venant du
+  dernier instantané de chaque org trouvée ; pour les joueurs, une recherche propre au bot sur le
+  pseudo et le nom affiché seulement (fiches et rosters), sans les notes internes ni les fiches
+  manuelles du site, que Discord ne doit pas permettre de sonder ; l'autocomplétion ne demande
+  que la moitié utile (`kind`) ;
 - pseudo saisi : d'abord tel quel dans `users`, puis sans tenir compte de la casse dans
   `users`, puis comme ancien pseudo (`user_handle_history`, sans casse), qui mène au pseudo
   actuel du citoyen, enfin sans tenir compte de la casse dans les rosters (index `UserHandle`
@@ -202,8 +206,10 @@ Module `TrackerCommands` : `[Group("tracker", "Recherches dans le tracker d'orga
 
 - Toutes les réponses sont éphémères, différées (`DeferAsync(ephemeral: true)`) puis complétées,
   pour tenir dans le délai de 3 s de Discord.
-- L'autocomplétion appelle `search` (au moins 2 caractères). Elle ne renvoie rien à quelqu'un
-  qui n'a pas accès à la sous-commande concernée.
+- L'autocomplétion appelle `search` (au moins 2 caractères, `kind=orgs` ou `kind=players`, 2,5 s
+  au plus). Elle ne renvoie rien à quelqu'un qui n'a pas accès à la sous-commande concernée.
+- Pseudo et SID saisis sont vérifiés (`[A-Za-z0-9_-]`, 60 caractères au plus) : sinon
+  « Introuvable », sans requête au tracker.
 - La mise en forme vit dans un `TrackerEmbeds` à part (tronquée aux limites de Discord :
   25 champs, 1 024 caractères par champ, 6 000 par embed).
 
