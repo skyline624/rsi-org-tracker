@@ -249,15 +249,29 @@ cette IP par nginx, avec une clé à portée `bot:read` (valable sur `/api/bot/`
 
 1. Compte dédié non administrateur `liberastra-bot` (mot de passe aléatoire, jamais utilisé).
 2. Clé : `POST /api/admin/users/<id>/api-keys` avec
-   `{"name":"liberastra-bot","expiresAt":"<date à moins d'un an>","scope":"bot:read"}`
+   `{"name":"liberastra-bot","expiresAt":"<ISO 8601 date max. 365 jours devant>","scope":"bot:read"}`
    (clé d'administration de `api.env`, depuis le serveur). La clé n'est affichée qu'une fois :
    la copier directement dans `/root/discord/Liberastra-Bot-Discord/.env` de `panda`
    (`TrackerApi__ApiKey`).
 3. Empreinte du certificat pour `TrackerApi__CertSha256` :
-   `openssl x509 -in <certificat nginx> -noout -fingerprint -sha256`.
-4. Renouvellement : avant l'expiration, nouvelle clé, mise à jour du `.env`, redémarrage du bot,
-   puis révocation de l'ancienne. Si l'IP de `panda` change, mettre à jour `allow` dans le bloc
-   `/bot-api/`.
+   `openssl x509 -in /etc/ssl/certs/sc-selfsigned.crt -noout -fingerprint -sha256`.
+   La commande affiche `sha256 Fingerprint=AB:CD:…` ; garder la partie après `Fingerprint=`
+   (une valeur avec espace casserait un `set -a; . api.env`).
+4. **Installation** : copier la version du dépôt dans le serveur,
+   `sudo cp ~/sc-tracker/current/deploy/nginx/sc-tracker.conf /etc/nginx/sites-available/sc-tracker`,
+   puis `sudo nginx -t && sudo systemctl reload nginx`.
+   Vérifications (depuis le poste local) :
+   - `curl -sk -o /dev/null -w '%{http_code}' https://<IP>/bot-api/search?q=ab` depuis une IP autre que panda : réponse 403.
+   - `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5000/api/bot/search?q=ab` depuis le serveur : réponse 401 (absence de clé).
+5. **Renouvellement** (avant l'expiration) : créer une nouvelle clé avec le même appel admin, la
+   mettre dans le `.env` de panda (`TrackerApi__ApiKey`), puis `systemctl restart liberastra`.
+   L'ancienne clé reste valide jusqu'à son expiration (aucune route ne révoque une clé d'un autre compte).
+6. **Urgence** (clé compromise) : interdire le compte par `PUT /api/admin/users/<id>` avec
+   `{"isBanned":true}` (clé d'administration de `api.env`), ce qui refuse toutes ses clés immédiatement.
+   Puis effacer le compte : `DELETE /api/admin/users/<id>`, recréer `liberastra-bot` et sa clé, mettre
+   à jour le `.env` et redémarrer le bot (tous les appels avec la clé administrateur, depuis le serveur).
+   La suppression du compte efface toutes ses clés.
+7. Si l'IP de `panda` change, mettre à jour `allow` dans le bloc `/bot-api/`.
 
 ## Tests
 
