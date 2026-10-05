@@ -248,7 +248,7 @@ cette IP par nginx, avec une clé à portée `bot:read` (valable sur `/api/bot/`
 365 jours au plus). Mise en place :
 
 1. Compte dédié non administrateur `liberastra-bot` (mot de passe aléatoire, jamais utilisé).
-2. Clé : depuis le poste local, `deploy/create-bot-key.sh` fait les étapes 2 et 3 d'un coup (clé,
+2. Clé : depuis le poste local, `deploy\create-bot-key.bat` (Windows, invite de commandes ou double-clic) fait les étapes 2 et 3 d'un coup (clé,
    empreinte, écriture dans le `.env` de panda, sans afficher la clé), puis
    `ssh panda systemctl restart liberastra`. À la main : `POST /api/admin/users/<id>/api-keys` avec
    `{"name":"liberastra-bot","expiresAt":"<ISO 8601 date max. 365 jours devant>","scope":"bot:read"}`
@@ -268,7 +268,7 @@ cette IP par nginx, avec une clé à portée `bot:read` (valable sur `/api/bot/`
    Vérifications (depuis le poste local) :
    - `curl -sk -o /dev/null -w '%{http_code}' https://<IP>/bot-api/search?q=ab` depuis une IP autre que panda : réponse 403.
    - `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5000/api/bot/search?q=ab` depuis le serveur : réponse 401 (absence de clé).
-5. **Renouvellement** (avant l'expiration) : relancer `deploy/create-bot-key.sh` (il propose de
+5. **Renouvellement** (avant l'expiration) : relancer `deploy\create-bot-key.bat` (il propose de
    remplacer les réglages existants), ou créer une nouvelle clé avec le même appel admin et la
    mettre dans le `.env` de panda (`TrackerApi__ApiKey`), puis `systemctl restart liberastra`.
    L'ancienne clé reste valide jusqu'à son expiration (aucune route ne révoque une clé d'un autre compte).
