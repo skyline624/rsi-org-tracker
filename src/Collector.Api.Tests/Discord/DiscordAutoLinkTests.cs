@@ -107,6 +107,73 @@ public sealed class DiscordAutoLinkTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task ADeletedAutomaticLink_IsNotCreatedAgain_NorSuggested()
+    {
+        var n = Next();
+        var sid = $"AL{n}";
+        await _seed.SeedRosterAsync(sid, $"Gone{n}", Cid(n), null);
+        await SeedUserAsync(Cid(n), $"Gone{n}");
+        var guild = await _seed.SeedGuildAsync(sid);
+        var account = await _seed.SeedMemberAsync(guild, $"account{n}", nick: $"Gone{n}");
+        (await AutoLinkAsync(guild)).Should().Be(1);
+        var linkId = await _seed.ReadAsync(db => db.EntityLinks
+            .Where(l => l.Provider == LinkProviders.Discord && l.Value == account).Select(l => l.Id).SingleAsync());
+
+        using var admin = await factory.SignedInClientAsync($"auto-link-unlink-{n}", isAdmin: true);
+        (await admin.DeleteAsync($"/api/links/{linkId}")).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        (await AutoLinkAsync(guild)).Should().Be(0);
+        (await HasLinkAsync(account)).Should().BeFalse();
+        var suggestions = await admin.GetFromJsonAsync<JsonElement>($"/api/discord/guilds/{guild}/suggestions");
+        suggestions.EnumerateArray().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ADeletedLink_StaysRefused_WhenTheRosterRowHasNoCitizenId()
+    {
+        // The person behind the link is known by citizen id, but the strong match comes from a
+        // roster row without one: the refusal must also hold under the handle.
+        var n = Next();
+        var sid = $"AL{n}";
+        await _seed.SeedRosterAsync(sid, $"Bare{n}", null, null);
+        var guild = await _seed.SeedGuildAsync(sid);
+        var account = await _seed.SeedMemberAsync(guild, $"account{n}", nick: $"Bare{n}");
+        var person = await _seed.SeedPersonAsync(Cid(n), $"Bare{n}", null, account);
+        var linkId = await _seed.ReadAsync(db => db.EntityLinks
+            .Where(l => l.TrackedEntityId == person && l.Value == account).Select(l => l.Id).SingleAsync());
+
+        using var admin = await factory.SignedInClientAsync($"auto-link-bare-{n}", isAdmin: true);
+        (await admin.DeleteAsync($"/api/links/{linkId}")).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        (await AutoLinkAsync(guild)).Should().Be(0);
+        (await HasLinkAsync(account)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DeletingAnotherProvidersLink_RefusesNoDiscordPair()
+    {
+        var n = Next();
+        var uexId = $"uex-{n}";
+        var person = await _seed.SeedPersonAsync(Cid(n), $"Trader{n}", null);
+        var linkId = await _seed.ReadAsync(async db =>
+        {
+            var link = new EntityLink
+            {
+                TrackedEntityId = person, Provider = LinkProviders.Uex, Value = uexId,
+                AuthorApiUserId = 0, AuthorUsername = "seed", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            db.EntityLinks.Add(link);
+            await db.SaveChangesAsync();
+            return link.Id;
+        });
+
+        using var admin = await factory.SignedInClientAsync($"auto-link-uex-{n}", isAdmin: true);
+        (await admin.DeleteAsync($"/api/links/{linkId}")).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        (await _seed.ReadAsync(db => db.DiscordLinkRejections.AnyAsync(r => r.DiscordUserId == uexId))).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task TheWorkerLinksExistingMembersOnStartup_AndDrainsSeveralBatches()
     {
         var n = Next();

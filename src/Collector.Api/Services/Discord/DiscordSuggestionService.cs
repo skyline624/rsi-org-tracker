@@ -231,6 +231,48 @@ public sealed class DiscordSuggestionService(
         return row.Id;
     }
 
+    /// <summary>
+    /// Deletes a Discord link and refuses its pair in the same save, under the write gate:
+    /// without the refusal the automatic linker would create a strong link again within a
+    /// minute. The pair is refused under the citizen id and under the handle, because the
+    /// strong match may come from a roster row that has no citizen id. The caller checks
+    /// who may delete the link.
+    /// </summary>
+    public async Task UnlinkAsync(long linkId, CancellationToken ct)
+    {
+        using var lease = await EnterGateAsync(ct);
+        var link = await db.EntityLinks.FirstOrDefaultAsync(l => l.Id == linkId, ct);
+        if (link is null) return;
+
+        var person = await db.TrackedEntities.AsNoTracking()
+            .Where(e => e.Id == link.TrackedEntityId)
+            .Select(e => new { e.CitizenId, e.CurrentHandle })
+            .FirstOrDefaultAsync(ct);
+        var keys = new List<string>();
+        if (person?.CitizenId is int cid) keys.Add(CitizenKey(cid, ""));
+        if (!string.IsNullOrWhiteSpace(person?.CurrentHandle) && person.CurrentHandle.Trim().Length <= MaxHandleLength)
+            keys.Add(HandleKey(person.CurrentHandle));
+
+        var existing = await db.DiscordLinkRejections.AsNoTracking()
+            .Where(r => r.DiscordUserId == link.Value && keys.Contains(r.CitizenKey))
+            .Select(r => r.CitizenKey)
+            .ToListAsync(ct);
+        var now = DateTime.UtcNow;
+        foreach (var key in keys.Except(existing, StringComparer.Ordinal))
+        {
+            db.DiscordLinkRejections.Add(new DiscordLinkRejection
+            {
+                DiscordUserId = link.Value,
+                CitizenKey = key,
+                ByApiUserId = currentUser.UserId ?? 0,
+                ByUsername = currentUser.Username ?? "unknown",
+                CreatedAt = now,
+            });
+        }
+        db.EntityLinks.Remove(link);
+        await db.SaveChangesAsync(ct);
+    }
+
     /// <summary>Undoes a rejection: only its author or an admin may (403 otherwise).</summary>
     public async Task DeleteRejectionAsync(long id, CancellationToken ct)
     {

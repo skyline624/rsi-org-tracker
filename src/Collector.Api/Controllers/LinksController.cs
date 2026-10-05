@@ -24,6 +24,7 @@ public class LinksController : ControllerBase
     private readonly CurrentUserAccessor _currentUser;
     private readonly DiscordWriteGate _discordGate;
     private readonly IDiscordRosterRepository _discordRosters;
+    private readonly DiscordSuggestionService _discordSuggestions;
 
     public LinksController(
         IEntityLinkRepository links,
@@ -32,7 +33,8 @@ public class LinksController : ControllerBase
         IEntityResolver resolver,
         CurrentUserAccessor currentUser,
         DiscordWriteGate discordGate,
-        IDiscordRosterRepository discordRosters)
+        IDiscordRosterRepository discordRosters,
+        DiscordSuggestionService discordSuggestions)
     {
         _links = links;
         _entities = entities;
@@ -41,6 +43,7 @@ public class LinksController : ControllerBase
         _currentUser = currentUser;
         _discordGate = discordGate;
         _discordRosters = discordRosters;
+        _discordSuggestions = discordSuggestions;
     }
 
     [HttpGet("users/{handle}/links")]
@@ -102,6 +105,13 @@ public class LinksController : ControllerBase
         var link = await _links.GetByIdAsync(id, ct);
         if (link is null) return NotFound();
         if (!_currentUser.IsAdmin && link.AuthorApiUserId != (_currentUser.UserId ?? -1)) return Forbid();
+
+        if (link.Provider == LinkProviders.Discord)
+        {
+            // Removing a Discord link also refuses that pair, or the automatic linker brings it back.
+            await _discordSuggestions.UnlinkAsync(id, ct);
+            return NoContent();
+        }
 
         _links.Remove(link);
         await _links.SaveChangesAsync(ct);

@@ -25,7 +25,7 @@ l'envoie au tracker. Le tracker en tire :
 |---|---|
 | Serveur ↔ corpo | Un serveur Discord est relié à une seule corpo (un SID RSI). Une corpo peut avoir plusieurs serveurs (principal, recrutement…). Les rôles Discord servent de rangs. |
 | Usages | Suivre les mouvements, recouper avec RSI, profils croisés, multi-appartenance. |
-| Liaison Discord ↔ RSI | Suggestions automatiques, puis validation manuelle. Seuls les liens validés comptent. |
+| Liaison Discord ↔ RSI | Suggestions automatiques. Les correspondances fortes sont liées automatiquement, les moyennes validées à la main. Supprimer un lien refuse la paire. |
 | Visibilité | Utilisateurs connectés du site (déjà le cas pour tout le site). |
 | Droits sur les serveurs | Mixtes : le plugin choisit la méthode serveur par serveur. |
 | Déclenchement | Envoi ponctuel sur clic pour tout serveur ; lots et minuteur facultatif pour les serveurs cochés « suivi ». |
@@ -780,6 +780,20 @@ n'est lié à personne.
 
 **Ignorer** : `POST api/discord/link-rejections`. Un rejet est supprimable par son auteur ou par
 un admin.
+
+**Liaison automatique** : un service d'arrière-plan valide seul les suggestions de confiance
+**forte**. Ces liens ont pour auteur `discord-auto-link`.
+- Il tourne au démarrage, après chaque envoi, au rattachement d'un serveur à une corpo, et lors
+  d'un passage complet chaque minute.
+- Il se désactive avec `Discord:AutoLink:Enabled=false`.
+- Les correspondances moyennes restent à valider à la main.
+
+**Supprimer un lien Discord** (`DELETE api/links/{id}`, depuis la fiche du citoyen) : la paire est
+refusée en même temps que le lien est supprimé, sous le verrou d'écriture. Sans ce refus, la
+liaison automatique recréerait le lien à son passage suivant.
+- Le refus est enregistré sous le CitizenId et sous le handle de la personne, car la
+  correspondance forte peut venir d'une ligne de roster sans CitizenId.
+- Un nouveau lien manuel reste possible depuis la fiche.
 
 ### 10.2 Statuts de recoupement
 

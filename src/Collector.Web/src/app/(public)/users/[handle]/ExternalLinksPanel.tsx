@@ -73,7 +73,10 @@ export function ExternalLinksPanel({ handle, initialLinks, currentUsername, isAd
       const res = await deleteLinkAction(l.id);
       if (res.ok) {
         setLinks((prev) => prev.filter((x) => x.id !== l.id));
-        toast.success("Lien supprimé.");
+        // The API refuses the pair too, so the automatic linker never brings it back.
+        toast.success(l.provider === "discord"
+          ? "Lien supprimé. Ce compte Discord ne sera plus proposé ni relié automatiquement à ce citoyen."
+          : "Lien supprimé.");
       } else {
         toast.error(res.error ?? "Échec.");
       }
