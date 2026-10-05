@@ -62,7 +62,7 @@ export default async function DiscordPage() {
                         {formatNumber(g.activeMembers)} actifs
                       </span>
                     </a>
-                    <GuildOrgForm guildId={g.guildId} guildName={g.name} currentSid={null} canEdit />
+                    <GuildOrgForm guildId={g.guildId} guildName={g.name} currentSid={null} canEdit detectedOrg={g.detectedOrg} />
                   </li>
                 ))}
               </ul>

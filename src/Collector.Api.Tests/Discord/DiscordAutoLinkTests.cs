@@ -174,6 +174,97 @@ public sealed class DiscordAutoLinkTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task AMembersOwnTag_MakesAStrongLink_OnAnUnmappedServer()
+    {
+        var n = Next();
+        var sid = $"AT{n}";
+        await _seed.SeedOrgAsync(sid, $"Tagged corpo {n}");
+        await _seed.SeedRosterAsync(sid, $"Tagged{n}", Cid(n), null);
+        var guild = await _seed.SeedGuildAsync(null);
+        var account = await _seed.SeedMemberAsync(guild, $"account{n}", nick: $"[{sid.ToLowerInvariant()}] Tagged{n}");
+
+        using var client = await factory.SignedInClientAsync($"auto-link-tag-{n}");
+        var suggestion = (await client.GetFromJsonAsync<JsonElement>($"/api/discord/guilds/{guild}/suggestions"))
+            .EnumerateArray().Should().ContainSingle().Subject;
+        suggestion.GetProperty("confidence").GetString().Should().Be("strong");
+        suggestion.GetProperty("strongVia").GetString().Should().Be("tag");
+        suggestion.GetProperty("strongOrgSid").GetString().Should().Be(sid);
+
+        (await AutoLinkAsync(guild)).Should().Be(1);
+        (await HasLinkAsync(account)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task OnlyTheMembersOwnTag_AndOnlyThatCorposRoster_MakeAMatchStrong()
+    {
+        var n = Next();
+        var abc = $"AT{n}";
+        var xyz = $"AX{n}";
+        await _seed.SeedOrgAsync(abc, abc);
+        await _seed.SeedOrgAsync(xyz, xyz);
+        await _seed.SeedRosterAsync(abc, $"Inabc{n}", Cid(n), null);
+        await _seed.SeedRosterAsync(abc, $"Other{n}", Cid(n, 1), null);
+        await SeedUserAsync(Cid(n), $"Inabc{n}");
+        await SeedUserAsync(Cid(n, 1), $"Other{n}");
+        var guild = await _seed.SeedGuildAsync(null);
+        // Tagged with another corpo, on whose roster the handle is not.
+        var wrongTag = await _seed.SeedMemberAsync(guild, $"wrong{n}", nick: $"[{xyz}] Inabc{n}");
+        // Untagged, while another member carries the tag of the corpo they belong to.
+        var untagged = await _seed.SeedMemberAsync(guild, $"untagged{n}", nick: $"Other{n}");
+        await _seed.SeedMemberAsync(guild, $"carrier{n}", nick: $"[{abc}] Nobody{n}");
+
+        using var client = await factory.SignedInClientAsync($"auto-link-own-tag-{n}");
+        var suggestions = (await client.GetFromJsonAsync<JsonElement>($"/api/discord/guilds/{guild}/suggestions"))
+            .EnumerateArray().ToList();
+        suggestions.Select(s => (s.GetProperty("discordUserId").GetString(), s.GetProperty("confidence").GetString()))
+            .Should().BeEquivalentTo(new[] { (wrongTag, "medium"), (untagged, "medium") });
+        suggestions.Should().OnlyContain(s => s.GetProperty("strongVia").ValueKind == JsonValueKind.Null);
+        (await AutoLinkAsync(guild)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AStrongSuggestion_SaysWhetherTheServerOrTheTagMadeItStrong()
+    {
+        var n = Next();
+        var sid = $"AL{n}";
+        var ally = $"AX{n}";
+        await _seed.SeedOrgAsync(ally, ally);
+        await _seed.SeedRosterAsync(sid, $"Home{n}", Cid(n), null);
+        await _seed.SeedRosterAsync(ally, $"Ally{n}", Cid(n, 1), null);
+        var guild = await _seed.SeedGuildAsync(sid);
+        var home = await _seed.SeedMemberAsync(guild, $"home{n}", nick: $"Home{n}");
+        var allied = await _seed.SeedMemberAsync(guild, $"allied{n}", nick: $"Ally{n} | {ally}");
+
+        using var client = await factory.SignedInClientAsync($"auto-link-via-{n}");
+        var bySource = (await client.GetFromJsonAsync<JsonElement>($"/api/discord/guilds/{guild}/suggestions"))
+            .EnumerateArray().ToDictionary(
+                s => s.GetProperty("discordUserId").GetString()!,
+                s => (s.GetProperty("strongVia").GetString(), s.GetProperty("strongOrgSid").GetString()));
+
+        bySource[home].Should().Be(("server", sid));
+        bySource[allied].Should().Be(("tag", ally));
+    }
+
+    [Fact]
+    public async Task ThePeriodicSweepAlsoCoversUnmappedServers()
+    {
+        var n = Next();
+        var sid = $"AT{n}";
+        await _seed.SeedOrgAsync(sid, sid);
+        await _seed.SeedRosterAsync(sid, $"Swept{n}", Cid(n), null);
+        var guild = await _seed.SeedGuildAsync(null);
+        var account = await _seed.SeedMemberAsync(guild, $"account{n}", nick: $"[{sid}] Swept{n}");
+
+        using var worker = NewWorker(new DiscordAutoLinkQueue(), TimeProvider.System, TimeSpan.FromDays(1));
+        await worker.StartAsync(CancellationToken.None);
+        try
+        {
+            await EventuallyAsync(() => HasLinkAsync(account));
+        }
+        finally { await worker.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
     public async Task TheWorkerLinksExistingMembersOnStartup_AndDrainsSeveralBatches()
     {
         var n = Next();

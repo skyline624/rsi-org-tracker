@@ -126,6 +126,46 @@ public sealed class DiscordRosterQueryTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task AnUnmappedGuild_ProposesTheCorpoMostOfItsTaggedMembersCarry()
+    {
+        var n = Next();
+        var abc = $"QDA{n}";
+        var xyz = $"QDX{n}";
+        await _seed.SeedOrgAsync(abc, "Corpo ABC");
+        await _seed.SeedOrgAsync(xyz, "Corpo XYZ");
+        var detected = await _seed.SeedGuildAsync(null, name: $"detect {n}");
+        await _seed.SeedMemberAsync(detected, $"d1-{n}", nick: $"[{abc}] Pilot1");
+        await _seed.SeedMemberAsync(detected, $"d2-{n}", nick: $"{abc.ToLowerInvariant()} | Pilot2");
+        await _seed.SeedMemberAsync(detected, $"d3-{n}", globalName: $"Pilot3 [{abc}]");
+        await _seed.SeedMemberAsync(detected, $"d4-{n}", nick: $"[{xyz}] Pilot4");
+        await _seed.SeedMemberAsync(detected, $"d5-{n}", nick: $"[QDN{n}] Pilot5"); // no such corpo
+        await _seed.SeedMemberAsync(detected, $"d6-{n}");
+        await _seed.SeedMemberAsync(detected, $"d7-{n}", nick: $"[{xyz}] Bot", bot: true);
+        await _seed.SeedMemberAsync(detected, $"d8-{n}", nick: $"[{xyz}] Gone", left: true);
+        // Two active members carry the tag: the bot and the departed member do not count.
+        var tooFew = await _seed.SeedGuildAsync(null, name: $"too few {n}");
+        await _seed.SeedMemberAsync(tooFew, $"f1-{n}", nick: $"[{abc}] One");
+        await _seed.SeedMemberAsync(tooFew, $"f2-{n}", nick: $"[{abc}] Two");
+        await _seed.SeedMemberAsync(tooFew, $"f3-{n}", nick: $"[{abc}] Bot", bot: true);
+        await _seed.SeedMemberAsync(tooFew, $"f4-{n}", nick: $"[{abc}] Gone", left: true);
+        var mapped = await _seed.SeedGuildAsync(xyz, name: $"mapped {n}");
+        for (var k = 0; k < 3; k++) await _seed.SeedMemberAsync(mapped, $"m{k}-{n}", nick: $"[{abc}] M{k}");
+        var client = await factory.SignedInClientAsync($"c3-detect-{n}");
+
+        var guilds = (await GetOkAsync(client, "/api/discord/guilds")).EnumerateArray()
+            .ToDictionary(g => g.GetProperty("guildId").GetString()!);
+
+        var proposal = guilds[detected].GetProperty("detectedOrg");
+        (proposal.GetProperty("sid").GetString(), proposal.GetProperty("name").GetString(),
+                proposal.GetProperty("members").GetInt32(), proposal.GetProperty("taggedMembers").GetInt32())
+            .Should().Be((abc, "Corpo ABC", 3, 4));
+        guilds[tooFew].GetProperty("detectedOrg").ValueKind.Should().Be(JsonValueKind.Null);
+        guilds[mapped].GetProperty("detectedOrg").ValueKind.Should().Be(JsonValueKind.Null, "a mapped guild is not proposed a corpo");
+        (await GetOkAsync(client, $"/api/discord/guilds/{detected}"))
+            .GetProperty("detectedOrg").GetProperty("sid").GetString().Should().Be(abc);
+    }
+
+    [Fact]
     public async Task AGuildsDetail_ListsEveryRoleWithItsMembers_TheOrgsRsiRanks_AndWhoMayEditIt()
     {
         var n = Next();

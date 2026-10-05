@@ -16,6 +16,7 @@ public class HandleTokenizerTests
     [InlineData("(CORP) Pilote42")]
     [InlineData("{CORP} Pilote42")]
     [InlineData("«CORP» Pilote42")]
+    [InlineData("【CORP】 Pilote42")]
     [InlineData("Pilote42 [Officier]")]
     public void BracketedSegments_AreDropped(string value)
         => HandleTokenizer.Tokens(value).Should().Equal("Pilote42");

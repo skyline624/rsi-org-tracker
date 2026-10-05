@@ -180,6 +180,7 @@ public sealed class DiscordRosterQueryCostTests : IAsyncLifetime
         _db,
         new DiscordReconciliationService(_db),
         new OrganizationRepository(_db),
+        new DiscordHandleLookup(_db),
         new CurrentUserAccessor(new HttpContextAccessor()));
 
     private static DiscordRole Role(string roleId, string name, int position, bool isRank) => new()

@@ -7,7 +7,7 @@ import { HudBadge } from "@/components/hud/HudBadge";
 import { HudButton } from "@/components/hud/HudButton";
 import type { DiscordSuggestionDto } from "@/lib/api/types";
 import { reportDiscordActionError } from "@/lib/discord/action-error";
-import { cleanDiscordText, confidenceBadge } from "@/lib/discord/format";
+import { cleanDiscordText, confidenceBadge, strongSource } from "@/lib/discord/format";
 import { acceptSuggestionAction, rejectSuggestionAction, undoRejectionAction } from "../actions";
 
 const keyOf = (s: DiscordSuggestionDto) => `${s.discordUserId}:${s.citizenId ?? `h:${s.handle.toLowerCase()}`}`;
@@ -96,6 +96,7 @@ export function SuggestionsList({ suggestions }: { suggestions: DiscordSuggestio
       {suggestions.map((s) => {
         const key = keyOf(s);
         const badge = confidenceBadge(s.confidence);
+        const source = strongSource(s);
         return (
           <li key={key} className="flex flex-wrap items-center gap-3 py-2">
             <span className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -111,6 +112,7 @@ export function SuggestionsList({ suggestions }: { suggestions: DiscordSuggestio
               {s.displayName && <span className="max-w-[12rem] truncate text-hud-text-dim">{s.displayName}</span>}
               {s.citizenId !== null && <HudBadge tone="dim">#{s.citizenId}</HudBadge>}
               <HudBadge tone={badge.tone}>{badge.label}</HudBadge>
+              {source && <span className="text-[10px] text-hud-green">{source}</span>}
               <span className="inline-flex min-w-0 max-w-[14rem] items-center gap-1 text-[10px] text-hud-text-dim">
                 jeton <DiscordText value={s.matchedToken} />
               </span>

@@ -178,6 +178,27 @@ public class DiscordGuildSummaryDto
 
     public DiscordLastSyncDto? LastSync { get; set; }
     public DateTime? LastCompleteSyncAt { get; set; }
+
+    /// <summary>
+    /// The corpo proposed from the members' tags (spec § 10.1); null when the guild is mapped
+    /// or when no known tag dominates.
+    /// </summary>
+    public DiscordDetectedOrgDto? DetectedOrg { get; set; }
+}
+
+/// <summary>A corpo proposed for an unmapped guild, from the tags its active members carry.</summary>
+public sealed class DiscordDetectedOrgDto
+{
+    public string Sid { get; set; } = null!;
+
+    /// <summary>Latest name of the org.</summary>
+    public string Name { get; set; } = null!;
+
+    /// <summary>Active, non-bot members carrying the tag.</summary>
+    public int Members { get; set; }
+
+    /// <summary>Active, non-bot members carrying at least one known corpo tag.</summary>
+    public int TaggedMembers { get; set; }
 }
 
 /// <summary>A role of a guild with its rank configuration.</summary>
@@ -377,11 +398,24 @@ public sealed class DiscordOrgGuildDto
 /// <summary>How sure a link suggestion is (spec § 10.1).</summary>
 public static class DiscordSuggestionConfidence
 {
-    /// <summary>The token equals the handle of an active member of the org the guild is mapped to.</summary>
+    /// <summary>
+    /// The token equals the handle of an active member of the org the guild is mapped to, or
+    /// of the org the member's own corpo tag names (<see cref="DiscordStrongVia"/>).
+    /// </summary>
     public const string Strong = "strong";
 
     /// <summary>The token equals a current or former RSI handle.</summary>
     public const string Medium = "medium";
+}
+
+/// <summary>What made a suggestion strong (spec § 10.1).</summary>
+public static class DiscordStrongVia
+{
+    /// <summary>The handle is an active member of the org the guild is mapped to.</summary>
+    public const string Server = "server";
+
+    /// <summary>The handle is an active member of the org the member's own corpo tag names.</summary>
+    public const string Tag = "tag";
 }
 
 /// <summary>A proposed link between an active Discord member and an RSI person, validated or ignored by hand.</summary>
@@ -403,6 +437,12 @@ public sealed class DiscordSuggestionDto
 
     /// <summary><see cref="DiscordSuggestionConfidence"/> value.</summary>
     public string Confidence { get; set; } = null!;
+
+    /// <summary><see cref="DiscordStrongVia"/> value for a strong suggestion; null for a medium one.</summary>
+    public string? StrongVia { get; set; }
+
+    /// <summary>The corpo whose active roster holds the handle; null for a medium suggestion.</summary>
+    public string? StrongOrgSid { get; set; }
 }
 
 /// <summary>Body of POST api/discord/links: validate a suggestion.</summary>

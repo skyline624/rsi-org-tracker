@@ -223,6 +223,18 @@ export interface DiscordGuildSummaryDto {
   rankDistribution: DiscordRankCountDto[];
   lastSync: DiscordLastSyncDto | null;
   lastCompleteSyncAt: string | null;
+  /** Corpo proposed from the members' tags; null when the server is mapped or no known tag dominates. */
+  detectedOrg: DiscordDetectedOrgDto | null;
+}
+
+/** A corpo proposed for an unmapped server, from the tags its active members carry. */
+export interface DiscordDetectedOrgDto {
+  sid: string;
+  name: string;
+  /** Active, non-bot members carrying the tag. */
+  members: number;
+  /** Active, non-bot members carrying at least one known corpo tag. */
+  taggedMembers: number;
 }
 
 export interface DiscordRoleDto {
@@ -349,6 +361,9 @@ export interface DiscordDiscrepanciesDto {
 
 export type DiscordSuggestionConfidence = "strong" | "medium";
 
+/** What made a suggestion strong: the server's corpo, or the member's own corpo tag. */
+export type DiscordStrongVia = "server" | "tag";
+
 export interface DiscordSuggestionDto {
   discordUserId: string;
   discordName: string;
@@ -358,6 +373,10 @@ export interface DiscordSuggestionDto {
   citizenId: number | null;
   displayName: string | null;
   confidence: DiscordSuggestionConfidence;
+  /** Null for a medium suggestion. */
+  strongVia: DiscordStrongVia | null;
+  /** The corpo whose active roster holds the handle; null for a medium suggestion. */
+  strongOrgSid: string | null;
 }
 
 export interface DiscordMultiGuildDto {

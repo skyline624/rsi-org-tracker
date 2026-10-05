@@ -46,8 +46,10 @@ public sealed class DiscordSuggestionService(
     public static string HandleKey(string handle) => "h:" + handle.Trim().ToLowerInvariant();
 
     /// <summary>
-    /// Suggestions for the guild, strong first. Strong only exists for a guild mapped to an
-    /// org; rejected pairs are left out, whichever key the rejection was saved under.
+    /// Suggestions for the guild, strong first. A match is strong when the handle is an active
+    /// member of the org the guild is mapped to, or of the org the member's own corpo tag
+    /// names: another member's tag never counts. Rejected pairs are left out, whichever key the
+    /// rejection was saved under.
     /// </summary>
     public async Task<IReadOnlyList<DiscordSuggestionDto>> GetSuggestionsAsync(string guildId, CancellationToken ct)
     {
@@ -71,7 +73,11 @@ public sealed class DiscordSuggestionService(
             m => m.DiscordUserId,
             m => HandleTokenizer.Candidates(m.Nick, m.GlobalName, m.Username),
             StringComparer.Ordinal);
-        var matches = await lookup.FindAsync(tokens.Values.SelectMany(t => t), guild.OrgSid, ct);
+        var memberTags = await lookup.MemberTagsAsync(
+            members.Select(m => (m.DiscordUserId, (string?)m.Nick, (string?)m.GlobalName)), ct);
+        var rosterSids = memberTags.Values.SelectMany(t => t).ToHashSet(StringComparer.Ordinal);
+        if (guild.OrgSid is not null) rosterSids.Add(guild.OrgSid);
+        var matches = await lookup.FindAsync(tokens.Values.SelectMany(t => t), rosterSids, ct);
         if (matches.Count == 0) return [];
         var matchesByValue = matches.ToLookup(m => m.MatchedValue, StringComparer.OrdinalIgnoreCase);
 
@@ -87,12 +93,22 @@ public sealed class DiscordSuggestionService(
         foreach (var member in members)
         {
             // One suggestion per (member, person); the first token that matched is kept,
-            // unless a later one makes it strong.
+            // unless a later one makes it stronger (the server's corpo over a tag's).
             var byPerson = new Dictionary<string, DiscordSuggestionDto>(StringComparer.Ordinal);
             foreach (var token in tokens[member.DiscordUserId])
             {
                 foreach (var match in matchesByValue[token])
                 {
+                    string? via = null;
+                    if (match.RosterOrgSid is { } org)
+                    {
+                        via = org == guild.OrgSid ? DiscordStrongVia.Server
+                            : memberTags[member.DiscordUserId].Contains(org) ? DiscordStrongVia.Tag
+                            : null;
+                        // Another corpo's roster, read for another member's tag: not about this member.
+                        if (via is null) continue;
+                    }
+
                     var key = CitizenKey(match.CitizenId, match.Handle);
                     if (rejected.Contains((member.DiscordUserId, key))
                         || rejected.Contains((member.DiscordUserId, HandleKey(match.Handle))))
@@ -100,9 +116,11 @@ public sealed class DiscordSuggestionService(
 
                     if (byPerson.TryGetValue(key, out var seen))
                     {
-                        if (match.Strong && seen.Confidence != DiscordSuggestionConfidence.Strong)
+                        if (StrengthOf(via) < StrengthOf(seen.StrongVia))
                         {
                             seen.Confidence = DiscordSuggestionConfidence.Strong;
+                            seen.StrongVia = via;
+                            seen.StrongOrgSid = match.RosterOrgSid;
                             seen.MatchedToken = token;
                             seen.Handle = match.Handle;
                         }
@@ -117,7 +135,9 @@ public sealed class DiscordSuggestionService(
                         Handle = match.Handle,
                         CitizenId = match.CitizenId,
                         DisplayName = match.DisplayName,
-                        Confidence = match.Strong ? DiscordSuggestionConfidence.Strong : DiscordSuggestionConfidence.Medium,
+                        Confidence = via is null ? DiscordSuggestionConfidence.Medium : DiscordSuggestionConfidence.Strong,
+                        StrongVia = via,
+                        StrongOrgSid = via is null ? null : match.RosterOrgSid,
                     };
                 }
             }
@@ -154,13 +174,16 @@ public sealed class DiscordSuggestionService(
 
     /// <summary>
     /// Applies the same suggestions as the site under the write gate. Only active members of
-    /// the mapped RSI org qualify; existing links, ignored pairs, bots and opt-outs are left out
-    /// by GetSuggestionsAsync. Read routes stay read-only and medium matches need validation.
+    /// the mapped RSI org, or of the org a member's own corpo tag names, qualify, so an
+    /// unmapped guild can have strong links too; existing links, ignored pairs, bots and
+    /// opt-outs are left out by GetSuggestionsAsync. Read routes stay read-only and medium
+    /// matches need validation.
     /// </summary>
     public async Task<int> AutoLinkStrongAsync(string guildId, CancellationToken ct)
     {
         using var lease = await gate.EnterAsync(ct);
-        if (!await db.DiscordGuilds.AsNoTracking().AnyAsync(g => g.GuildId == guildId && g.OrgSid != null, ct))
+        // The guild may have been erased since it was scheduled.
+        if (!await db.DiscordGuilds.AsNoTracking().AnyAsync(g => g.GuildId == guildId, ct))
             return 0;
 
         var strong = (await GetSuggestionsAsync(guildId, ct))
@@ -285,6 +308,14 @@ public sealed class DiscordSuggestionService(
         db.DiscordLinkRejections.Remove(row);
         await db.SaveChangesAsync(ct);
     }
+
+    /// <summary>Lower is stronger: the server's corpo, then a member's tag, then a medium match.</summary>
+    private static int StrengthOf(string? via) => via switch
+    {
+        DiscordStrongVia.Server => 0,
+        DiscordStrongVia.Tag => 1,
+        _ => 2,
+    };
 
     private async Task RefuseOptedOutAsync(string discordUserId, CancellationToken ct)
     {

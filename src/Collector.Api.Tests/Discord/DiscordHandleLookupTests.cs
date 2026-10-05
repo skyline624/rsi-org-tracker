@@ -52,12 +52,12 @@ public sealed class DiscordHandleLookupTests : IAsyncLifetime
         var tokens = Enumerable.Range(0, 1200).Select(i => $"batch{i:D4}").ToList();
         _sql.Commands.Clear();
 
-        var matches = await new DiscordHandleLookup(_db).FindAsync(tokens, orgSid: null, default);
+        var matches = await new DiscordHandleLookup(_db).FindAsync(tokens, rosterOrgSids: [], default);
 
         matches.Should().BeEquivalentTo(new[]
         {
-            new HandleMatch("Batch0003", "Batch0003", 1, null, Strong: false),
-            new HandleMatch("Batch1199", "Renamed1199", 2, null, Strong: false),
+            new HandleMatch("Batch0003", "Batch0003", 1, null, RosterOrgSid: null),
+            new HandleMatch("Batch1199", "Renamed1199", 2, null, RosterOrgSid: null),
         });
         var lookups = _sql.Commands.Where(c => c.Sql.Contains("COLLATE NOCASE IN (")).ToList();
         lookups.Where(c => c.Sql.Contains("FROM users")).Should().HaveCount(3);
@@ -71,7 +71,7 @@ public sealed class DiscordHandleLookupTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Matches_CarryTheCanonicalCurrentHandle_AndTheMappedRosterMakesThemStrong()
+    public async Task Matches_CarryTheCanonicalCurrentHandle_AndRosterMatchesNameTheirCorpo()
     {
         var now = DateTime.UtcNow;
         _db.Users.AddRange(
@@ -93,19 +93,19 @@ public sealed class DiscordHandleLookupTests : IAsyncLifetime
         _db.ChangeTracker.Clear();
 
         var matches = await new DiscordHandleLookup(_db)
-            .FindAsync(["former10", "onlyold20", "ROSTERED30", "current10"], "ORG", default);
+            .FindAsync(["former10", "onlyold20", "ROSTERED30", "current10"], ["ORG"], default);
 
         matches.Should().BeEquivalentTo(new[]
         {
             // A former handle: the citizen's current handle, from users.
-            new HandleMatch("Former10", "Current10", 10, "Ten", Strong: false),
+            new HandleMatch("Former10", "Current10", 10, "Ten", RosterOrgSid: null),
             // A former handle of a citizen without a users row: their latest handle.
-            new HandleMatch("OnlyOld20", "OnlyNew20", 20, null, Strong: false),
-            // The mapped org's active roster is strong; the citizen id comes from users.
-            new HandleMatch("Rostered30", "Rostered30", 30, "Thirty", Strong: true),
-            new HandleMatch("Rostered30", "Rostered30", 30, "Thirty", Strong: false),
-            // An inactive roster row is not strong.
-            new HandleMatch("Current10", "Current10", 10, "Ten", Strong: false),
+            new HandleMatch("OnlyOld20", "OnlyNew20", 20, null, RosterOrgSid: null),
+            // An active roster row names its corpo; the citizen id comes from users.
+            new HandleMatch("Rostered30", "Rostered30", 30, "Thirty", RosterOrgSid: "ORG"),
+            new HandleMatch("Rostered30", "Rostered30", 30, "Thirty", RosterOrgSid: null),
+            // An inactive roster row is not a roster match.
+            new HandleMatch("Current10", "Current10", 10, "Ten", RosterOrgSid: null),
         });
     }
 
@@ -123,10 +123,44 @@ public sealed class DiscordHandleLookupTests : IAsyncLifetime
         });
         await _db.SaveChangesAsync();
 
-        var matches = await new DiscordHandleLookup(_db).FindAsync(["former90"], "ORG", default);
+        var matches = await new DiscordHandleLookup(_db).FindAsync(["former90"], ["ORG"], default);
 
         matches.Should().ContainSingle().Which.Should()
-            .Be(new HandleMatch("Former90", "Current90", 90, "Ninety", Strong: true));
+            .Be(new HandleMatch("Former90", "Current90", 90, "Ninety", RosterOrgSid: "ORG"));
+    }
+
+    [Fact]
+    public async Task SeveralRosters_AreReadTogether_AndEachMatchNamesItsOwnCorpo()
+    {
+        var now = DateTime.UtcNow;
+        _db.OrganizationMembers.AddRange(
+            new OrganizationMember { OrgSid = "HOME", UserHandle = "Homer", CitizenId = 41, Timestamp = now, IsActive = true },
+            new OrganizationMember { OrgSid = "ALLY", UserHandle = "Allied", CitizenId = 42, Timestamp = now, IsActive = true },
+            new OrganizationMember { OrgSid = "ELSE", UserHandle = "Elsewhere", CitizenId = 43, Timestamp = now, IsActive = true });
+        await _db.SaveChangesAsync();
+
+        var matches = await new DiscordHandleLookup(_db).FindAsync(["homer", "allied", "elsewhere"], ["HOME", "ALLY"], default);
+
+        matches.Should().BeEquivalentTo(new[]
+        {
+            new HandleMatch("Homer", "Homer", 41, null, RosterOrgSid: "HOME"),
+            new HandleMatch("Allied", "Allied", 42, null, RosterOrgSid: "ALLY"),
+        });
+    }
+
+    [Fact]
+    public async Task KnownOrgs_KeepsTheSidsAnOrganizationHas_WithItsLatestName()
+    {
+        var now = DateTime.UtcNow;
+        _db.Organizations.AddRange(
+            new Organization { Sid = "ABC", Name = "Old name", Timestamp = now.AddDays(-2) },
+            new Organization { Sid = "ABC", Name = "New name", Timestamp = now },
+            new Organization { Sid = "DEF", Name = "Other", Timestamp = now });
+        await _db.SaveChangesAsync();
+
+        var known = await new DiscordHandleLookup(_db).KnownOrgsAsync(["ABC", "XYZ"], default);
+
+        known.Should().BeEquivalentTo(new Dictionary<string, string> { ["ABC"] = "New name" });
     }
 
     [Fact]

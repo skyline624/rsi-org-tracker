@@ -3,6 +3,7 @@ import type { DiscordReconciliation } from "@/lib/api/types";
 import {
   cleanDiscordText,
   confidenceBadge,
+  detectedOrgLabel,
   discordDisplayName,
   discrepancyKindBadge,
   eventTone,
@@ -16,6 +17,7 @@ import {
   reconciliationBadge,
   rolesDiff,
   safeRoleColor,
+  strongSource,
   syncBadges,
   timelineSourceBadge,
   timelineTypeLabel,
@@ -290,6 +292,28 @@ describe("confidenceBadge", () => {
     ["medium", "confiance moyenne", "orange"],
   ] as const)("labels %s in French", (confidence, label, tone) => {
     expect(confidenceBadge(confidence)).toEqual({ label, tone });
+  });
+});
+
+describe("strongSource", () => {
+  it.each([
+    ["strong", "tag", "ABC", "via le tag [ABC]"],
+    ["strong", "server", "XYZ", "via la corpo du serveur"],
+    ["medium", null, null, null],
+  ] as const)("says what made a %s suggestion strong (%s)", (confidence, strongVia, strongOrgSid, expected) => {
+    expect(strongSource({ confidence, strongVia, strongOrgSid })).toBe(expected);
+  });
+});
+
+describe("detectedOrgLabel", () => {
+  it("names the corpo with its SID and how many tagged members carry it", () => {
+    expect(detectedOrgLabel({ sid: "ABC", name: "Corpo ABC", members: 42, taggedMembers: 67 }))
+      .toBe("Corpo détectée : Corpo ABC [ABC] — 42 membres sur 67 tagués");
+  });
+
+  it("falls back to the SID when the name is blank", () => {
+    expect(detectedOrgLabel({ sid: "ABC", name: "  ", members: 3, taggedMembers: 3 }))
+      .toBe("Corpo détectée : ABC [ABC] — 3 membres sur 3 tagués");
   });
 });
 

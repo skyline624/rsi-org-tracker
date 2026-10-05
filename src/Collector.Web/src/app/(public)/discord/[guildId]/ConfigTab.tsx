@@ -17,7 +17,14 @@ export function ConfigTab({ guild }: { guild: DiscordGuildDetailDto }) {
             ? `Relié à ${guild.orgSid}${guild.orgMappedBy ? ` par ${guild.orgMappedBy}` : ""}.`
             : "Ce serveur n'est relié à aucune corpo : tout utilisateur connecté peut le relier."}
         </p>
-        <GuildOrgForm guildId={guild.guildId} guildName={guild.name} currentSid={guild.orgSid} currentOrgName={guild.orgName} canEdit={guild.canEdit} />
+        <GuildOrgForm
+          guildId={guild.guildId}
+          guildName={guild.name}
+          currentSid={guild.orgSid}
+          currentOrgName={guild.orgName}
+          canEdit={guild.canEdit}
+          detectedOrg={guild.detectedOrg}
+        />
         {!guild.canEdit && <p className="mt-3 font-mono text-xs text-hud-orange">{lockedMessage}</p>}
       </HudPanel>
 

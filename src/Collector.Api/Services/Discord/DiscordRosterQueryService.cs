@@ -18,7 +18,8 @@ public sealed record DiscordMemberQuery(
 /// <summary>
 /// Reads of the DISCORD tab (spec § 11): guild summaries and detail, members, events and the
 /// sync log. Guild summaries aggregate role combinations in SQL and never look a handle up:
-/// suggestions are computed only by their own route.
+/// suggestions are computed only by their own route. An unmapped guild's summary reads its
+/// active members' names once more, to propose a corpo from their tags (spec § 10.1).
 ///
 /// Members are paged by the database whenever the page can be cut there: status, search and
 /// order are SQL, and the rank, links and status of the page's rows only are computed after,
@@ -35,6 +36,7 @@ public sealed class DiscordRosterQueryService(
     TrackerDbContext db,
     DiscordReconciliationService reconciliation,
     IOrganizationRepository organizations,
+    DiscordHandleLookup lookup,
     CurrentUserAccessor currentUser)
 {
     /// <summary>Default number of events and syncs returned.</summary>
@@ -55,6 +57,7 @@ public sealed class DiscordRosterQueryService(
         var lastSyncs = await LastSyncsAsync(null, ct);
         var orgNames = await organizations.GetLatestNamesBySidsAsync(
             guilds.Where(g => g.OrgSid is not null).Select(g => g.OrgSid!).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), ct);
+        var detected = await DetectOrgsAsync(guilds.Where(g => g.OrgSid is null).Select(g => g.GuildId).ToList(), ct);
 
         return guilds
             .Select(g =>
@@ -67,6 +70,7 @@ public sealed class DiscordRosterQueryService(
                     combos[g.GuildId],
                     lastSyncs.GetValueOrDefault(g.GuildId),
                     g.OrgSid is null ? null : orgNames.GetValueOrDefault(g.OrgSid));
+                summary.DetectedOrg = detected.GetValueOrDefault(g.GuildId);
                 return summary;
             })
             .OrderBy(s => s.OrgSid is null ? 0 : 1)
@@ -94,6 +98,8 @@ public sealed class DiscordRosterQueryService(
 
         var detail = new DiscordGuildDetailDto();
         FillSummary(detail, guild, roles, combos, lastSync, orgName);
+        if (guild.OrgSid is null)
+            detail.DetectedOrg = (await DetectOrgsAsync([guild.GuildId], ct)).GetValueOrDefault(guild.GuildId);
         var holders = RoleMemberCounts(combos);
         detail.Roles = roles.Values
             .OrderBy(r => r.DeletedAt is null ? 0 : 1)
@@ -373,6 +379,46 @@ public sealed class DiscordRosterQueryService(
     }
 
     /// <summary>Active, non-bot members grouped by (guild, role list): a few rows per guild, however many members.</summary>
+    /// <summary>
+    /// The corpo each of <paramref name="unmappedGuildIds"/> proposes (<see cref="DiscordOrgDetection"/>):
+    /// one read of their active, non-bot members' nicks and global names, keyed by guild and
+    /// user since a nick belongs to one guild, then the known SIDs among the tags and the
+    /// proposed corpos' names.
+    /// </summary>
+    private async Task<Dictionary<string, DiscordDetectedOrgDto>> DetectOrgsAsync(
+        IReadOnlyList<string> unmappedGuildIds, CancellationToken ct)
+    {
+        if (unmappedGuildIds.Count == 0) return [];
+        var members = await (
+                from m in db.DiscordMembers.AsNoTracking()
+                join a in db.DiscordAccounts.AsNoTracking() on m.DiscordUserId equals a.DiscordUserId
+                where unmappedGuildIds.Contains(m.GuildId) && m.LeftAt == null && !a.IsBot
+                select new { m.GuildId, m.DiscordUserId, m.Nick, a.GlobalName })
+            .ToListAsync(ct);
+        var tags = await lookup.MemberTagsAsync(
+            members.Select(m => ($"{m.GuildId}:{m.DiscordUserId}", (string?)m.Nick, (string?)m.GlobalName)), ct);
+
+        var picked = members
+            .GroupBy(m => m.GuildId, StringComparer.Ordinal)
+            .Select(g => (GuildId: g.Key, Org: DiscordOrgDetection.Pick(
+                g.Select(m => (IReadOnlyCollection<string>)tags[$"{m.GuildId}:{m.DiscordUserId}"]))))
+            .Where(p => p.Org is not null)
+            .ToList();
+        if (picked.Count == 0) return [];
+
+        var names = await lookup.KnownOrgsAsync(picked.Select(p => p.Org!.Sid), ct);
+        return picked.ToDictionary(
+            p => p.GuildId,
+            p => new DiscordDetectedOrgDto
+            {
+                Sid = p.Org!.Sid,
+                Name = names.GetValueOrDefault(p.Org.Sid) ?? p.Org.Sid,
+                Members = p.Org.Members,
+                TaggedMembers = p.Org.TaggedMembers,
+            },
+            StringComparer.Ordinal);
+    }
+
     private async Task<List<RoleCombo>> RoleCombosAsync(string? guildId, CancellationToken ct)
     {
         var humans = from m in db.DiscordMembers.AsNoTracking()

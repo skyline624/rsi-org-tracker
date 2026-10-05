@@ -76,8 +76,9 @@ public sealed class DiscordAutoLinkService(
         {
             await using var scope = scopes.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<TrackerDbContext>();
+            // Every guild: a member's own corpo tag makes strong links on unmapped guilds too.
             var guildIds = await db.DiscordGuilds.AsNoTracking()
-                .Where(g => g.OrgSid != null).OrderBy(g => g.GuildId).Select(g => g.GuildId).ToListAsync(ct);
+                .OrderBy(g => g.GuildId).Select(g => g.GuildId).ToListAsync(ct);
             foreach (var guildId in guildIds) await LinkGuildAsync(guildId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

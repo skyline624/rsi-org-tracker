@@ -6,9 +6,11 @@
  */
 
 import type {
+  DiscordDetectedOrgDto,
   DiscordDiscrepancyKind,
   DiscordReconciliation,
   DiscordSuggestionConfidence,
+  DiscordSuggestionDto,
 } from "@/lib/api/types";
 import { snowflakeSchema } from "@/lib/validation";
 
@@ -206,6 +208,22 @@ export function confidenceBadge(confidence: DiscordSuggestionConfidence): BadgeS
   return confidence === "strong"
     ? { label: "confiance forte", tone: "green" }
     : { label: "confiance moyenne", tone: "orange" };
+}
+
+/** What made a strong suggestion strong, in French; null for a medium one (spec § 10.1). */
+export function strongSource(
+  suggestion: Pick<DiscordSuggestionDto, "confidence" | "strongVia" | "strongOrgSid">,
+): string | null {
+  if (suggestion.confidence !== "strong") return null;
+  return suggestion.strongVia === "tag" && suggestion.strongOrgSid
+    ? `via le tag [${suggestion.strongOrgSid}]`
+    : "via la corpo du serveur";
+}
+
+/** "Corpo détectée : Name [SID] — 42 membres sur 67 tagués" for an unmapped server (spec § 10.1). */
+export function detectedOrgLabel(detected: DiscordDetectedOrgDto): string {
+  const name = detected.name.trim() || detected.sid;
+  return `Corpo détectée : ${name} [${detected.sid}] — ${detected.members} membres sur ${detected.taggedMembers} tagués`;
 }
 
 /** "75 %": a part of a whole, rounded; a dash when the whole is zero. */

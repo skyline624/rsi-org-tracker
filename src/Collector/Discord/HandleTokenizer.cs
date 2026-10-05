@@ -17,9 +17,9 @@ public static class HandleTokenizer
     public const int MinLength = 3;
     public const int MaxLength = 60;
 
-    // Non-nested segments between [], (), {} and «»: corpo tags, "(afk)"…
+    // Non-nested segments between [], (), {}, «» and 【】: corpo tags, "(afk)"…
     private static readonly Regex BracketedSegments = new(
-        @"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}|«[^»]*»",
+        @"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}|«[^»]*»|【[^】]*】",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     // Anything outside the RSI handle alphabet separates two tokens.

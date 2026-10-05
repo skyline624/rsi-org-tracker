@@ -749,23 +749,44 @@ n'est lié à personne.
 
 - **Chaînes candidates** : `nick`, `globalName`, `username`.
 - **Normalisation** :
-  1. retirer les segments entre `[]`, `()`, `{}` et `«»` ;
+  1. retirer les segments entre `[]`, `()`, `{}`, `«»` et `【】` ;
   2. découper en jetons sur tout caractère hors `[A-Za-z0-9_-]` ;
   3. garder les jetons de 3 à 60 caractères ;
   4. ajouter la chaîne entière sans espaces ni émojis.
 - **Recherche** : par lots de 500, avec `UserHandle COLLATE NOCASE IN (…)`, ce qui utilise les
   index NOCASE (§ 8). Les handles RSI sont en ASCII, donc NOCASE y est exact.
+- **Tags de corpo** du membre, lus dans son `nick` et son `globalName` :
+  - le contenu d'un segment entre `[]`, `()`, `{}`, `«»` ou `【】`, et les premier et dernier
+    segments d'un nom coupé par `|` (`ABC | Pilote`, `Pilote | ABC`) ;
+  - un candidat a la forme d'un SID (2 à 10 caractères parmi `[A-Za-z0-9_-]`, mis en
+    majuscules) ;
+  - il n'est retenu que si une organisation connue du tracker (`organizations`) a ce SID.
+    `(afk)` ou `| FR` ne comptent donc que si une corpo AFK ou FR existe.
 - **Confiance** :
-  - **forte** : le jeton égale le handle d'un membre actif (`organization_members.IsActive`) de
-    l'org reliée au serveur ;
-  - **moyenne** : le jeton égale un `users.UserHandle` ou un handle de `user_handle_history`.
+  - **forte** : le jeton égale le handle d'un membre actif (`organization_members.IsActive`) :
+    - de l'org reliée au serveur (`strongVia: "server"`) ;
+    - ou de l'org que désigne **le propre tag du membre** (`strongVia: "tag"`). Le tag d'un
+      autre membre ne compte jamais ;
+    - `strongOrgSid` nomme cette org. Si les deux s'appliquent, c'est le serveur qui l'emporte ;
+  - **moyenne** : le jeton égale un `users.UserHandle` ou un handle de `user_handle_history`. Un
+    roster lu pour le tag d'un autre membre ne donne rien.
 - Une suggestion porte le **CitizenId** quand il est connu, et le **handle courant canonique**, lu
   en base sur la ligne qui a correspondu :
   - `organization_members` ;
   - `users` ;
   - ou `user_handle_history`, puis `users` par CitizenId.
 - **Exclusions** : couples présents dans `discord_link_rejections`, et IDs déjà liés.
-- Pour un serveur **non relié**, seule la confiance moyenne existe.
+- Pour un serveur **non relié**, seule une correspondance via le tag du membre peut être forte.
+
+**Corpo détectée** : pour un serveur non relié, le résumé du serveur (`GET api/discord/guilds` et
+`…/guilds/{guildId}`) porte `detectedOrg { sid, name, members, taggedMembers }`.
+- On compte les membres actifs non bots par tag connu.
+- Une corpo est proposée si son tag est porté par **au moins 3 membres** et par **au moins la
+  moitié des membres portant un tag connu**. Une égalité en tête ne propose rien.
+- Le site affiche la proposition sur `/discord` et dans l'onglet config, avec un bouton « Relier à
+  SID » qui passe par le rattachement normal : celui qui clique devient le responsable du
+  serveur. Rien n'est relié sans humain.
+- Le calcul se fait à la lecture, pour les serveurs non reliés seulement.
 
 **Valider** : `POST api/discord/links { discordUserId, citizenId?, handle }`.
 
@@ -785,6 +806,8 @@ un admin.
 **forte**. Ces liens ont pour auteur `discord-auto-link`.
 - Il tourne au démarrage, après chaque envoi, au rattachement d'un serveur à une corpo, et lors
   d'un passage complet chaque minute.
+- Il couvre **tous** les serveurs, reliés ou non, puisqu'un tag de membre rend une correspondance
+  forte même sans rattachement.
 - Il se désactive avec `Discord:AutoLink:Enabled=false`.
 - Les correspondances moyennes restent à valider à la main.
 

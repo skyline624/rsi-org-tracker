@@ -1,4 +1,5 @@
 using Collector.Data;
+using Collector.Discord;
 using Microsoft.EntityFrameworkCore;
 
 namespace Collector.Api.Services.Discord;
@@ -9,8 +10,11 @@ namespace Collector.Api.Services.Discord;
 /// former handle, the citizen's current one.
 /// </summary>
 /// <param name="MatchedValue">The handle stored on the row that matched (the token's letters, in the row's case).</param>
-/// <param name="Strong">True when the row is an active member of the org the guild is mapped to.</param>
-public sealed record HandleMatch(string MatchedValue, string Handle, int? CitizenId, string? DisplayName, bool Strong);
+/// <param name="RosterOrgSid">
+/// The corpo whose active roster holds the handle, for a roster match; null for a match on
+/// users or on handle history. The caller decides whether that corpo concerns the member.
+/// </param>
+public sealed record HandleMatch(string MatchedValue, string Handle, int? CitizenId, string? DisplayName, string? RosterOrgSid);
 
 /// <summary>An RSI person as the database knows them now: citizen id when known, and current handle.</summary>
 public sealed record RsiPerson(int? CitizenId, string Handle, string? DisplayName);
@@ -28,46 +32,48 @@ public sealed class DiscordHandleLookup(TrackerDbContext db)
     public const int BatchSize = 500;
 
     private const string TokenList = "@tokens";
+    private const string SidList = "@sids";
 
-    // The mapped org's active roster. SQLite picks either the (OrgSid, IsActive) index or
-    // IX_organization_members_UserHandle_NoCase (migration IndexCleanup); one org's active rows
-    // are a few thousand at most either way.
+    // The active rosters of the requested corpos (the mapped org, the members' tags). SQLite
+    // picks either the (OrgSid, IsActive) index or IX_organization_members_UserHandle_NoCase
+    // (migration IndexCleanup); a few corpos' active rows are a few thousand either way.
     private const string OrgMembersSql = """
-        SELECT UserHandle AS Handle, CitizenId, DisplayName, Timestamp AS SeenAt
+        SELECT UserHandle AS Handle, CitizenId, DisplayName, Timestamp AS SeenAt, OrgSid
         FROM organization_members
-        WHERE OrgSid = {0} AND IsActive = 1 AND UserHandle COLLATE NOCASE IN (@tokens)
+        WHERE OrgSid IN (@sids) AND IsActive = 1 AND UserHandle COLLATE NOCASE IN (@tokens)
         """;
 
     private const string UsersSql = """
-        SELECT UserHandle AS Handle, CitizenId, DisplayName, UpdatedAt AS SeenAt
+        SELECT UserHandle AS Handle, CitizenId, DisplayName, UpdatedAt AS SeenAt, NULL AS OrgSid
         FROM users
         WHERE UserHandle COLLATE NOCASE IN (@tokens)
         """;
 
     private const string HistorySql = """
-        SELECT UserHandle AS Handle, CitizenId, NULL AS DisplayName, LastSeen AS SeenAt
+        SELECT UserHandle AS Handle, CitizenId, NULL AS DisplayName, LastSeen AS SeenAt, NULL AS OrgSid
         FROM user_handle_history
         WHERE UserHandle COLLATE NOCASE IN (@tokens)
         """;
 
     /// <summary>
-    /// Every RSI person one of <paramref name="tokens"/> names: active members of
-    /// <paramref name="orgSid"/> (strong, only when the guild is mapped), current handles in
-    /// users and former handles in user_handle_history (medium). A token may yield several
-    /// matches; the caller merges them per person.
+    /// Every RSI person one of <paramref name="tokens"/> names: active members of the
+    /// <paramref name="rosterOrgSids"/> corpos (each match names its corpo), current handles in
+    /// users and former handles in user_handle_history. A token may yield several matches;
+    /// the caller merges them per person.
     /// </summary>
     public async Task<IReadOnlyList<HandleMatch>> FindAsync(
-        IEnumerable<string> tokens, string? orgSid, CancellationToken ct)
+        IEnumerable<string> tokens, IReadOnlyCollection<string> rosterOrgSids, CancellationToken ct)
     {
         var distinct = tokens.Where(t => t.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var sids = rosterOrgSids.Distinct(StringComparer.Ordinal).ToList();
         var roster = new List<HandleRow>();
         var users = new List<HandleRow>();
         var former = new List<HandleRow>();
         foreach (var batch in distinct.Chunk(BatchSize))
         {
-            if (orgSid is not null) roster.AddRange(await QueryAsync(OrgMembersSql, batch, orgSid, ct));
-            users.AddRange(await QueryAsync(UsersSql, batch, null, ct));
-            former.AddRange(await QueryAsync(HistorySql, batch, null, ct));
+            if (sids.Count > 0) roster.AddRange(await QueryAsync(OrgMembersSql, batch, sids, ct));
+            users.AddRange(await QueryAsync(UsersSql, batch, [], ct));
+            former.AddRange(await QueryAsync(HistorySql, batch, [], ct));
         }
 
         // A handle given up and taken again is held by two users rows until the former owner
@@ -88,10 +94,10 @@ public sealed class DiscordHandleLookup(TrackerDbContext db)
             var citizenId = row.CitizenId ?? profile?.CitizenId;
             var person = citizenId is int cid ? currentPeople.GetValueOrDefault(cid) : null;
             matches.Add(new HandleMatch(row.Handle, person?.Handle ?? row.Handle, citizenId,
-                person?.DisplayName ?? row.DisplayName ?? profile?.DisplayName, Strong: true));
+                person?.DisplayName ?? row.DisplayName ?? profile?.DisplayName, row.OrgSid));
         }
         foreach (var row in userByHandle.Values)
-            matches.Add(new HandleMatch(row.Handle, row.Handle, row.CitizenId, row.DisplayName, Strong: false));
+            matches.Add(new HandleMatch(row.Handle, row.Handle, row.CitizenId, row.DisplayName, RosterOrgSid: null));
 
         if (former.Count > 0)
         {
@@ -100,7 +106,7 @@ public sealed class DiscordHandleLookup(TrackerDbContext db)
                          .DistinctBy(f => (f.CitizenId, f.Handle.ToLowerInvariant())))
             {
                 if (currentPeople.TryGetValue(row.CitizenId!.Value, out var person))
-                    matches.Add(new HandleMatch(row.Handle, person.Handle, person.CitizenId, person.DisplayName, Strong: false));
+                    matches.Add(new HandleMatch(row.Handle, person.Handle, person.CitizenId, person.DisplayName, RosterOrgSid: null));
             }
         }
         return matches;
@@ -185,15 +191,56 @@ public sealed class DiscordHandleLookup(TrackerDbContext db)
         return result;
     }
 
-    private async Task<List<HandleRow>> QueryAsync(string sql, string[] batch, string? orgSid, CancellationToken ct)
+    /// <summary>
+    /// Each member's corpo tags (<see cref="CorpTagExtractor"/>, from the nick and the global
+    /// name) that an organization known to the tracker really has, under the caller's key (a
+    /// nick belongs to one guild, so a caller reading several guilds keys by guild and user).
+    /// Untagged members map to an empty set.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, IReadOnlySet<string>>> MemberTagsAsync(
+        IEnumerable<(string Key, string? Nick, string? GlobalName)> members, CancellationToken ct)
     {
-        var args = new List<object>(batch.Length + 1);
-        if (orgSid is not null) args.Add(orgSid);
-        var first = args.Count;
+        var candidates = members.ToDictionary(
+            m => m.Key, m => CorpTagExtractor.Candidates(m.Nick, m.GlobalName), StringComparer.Ordinal);
+        var known = await KnownOrgsAsync(candidates.Values.SelectMany(t => t), ct);
+        return candidates.ToDictionary(
+            c => c.Key,
+            c => (IReadOnlySet<string>)c.Value.Where(known.ContainsKey).ToHashSet(StringComparer.Ordinal),
+            StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// The latest name of each organization the tracker knows among <paramref name="sids"/>
+    /// (upper-cased like stored SIDs); a SID no organization has is left out. Serves the
+    /// (Sid, Timestamp) index.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, string>> KnownOrgsAsync(IEnumerable<string> sids, CancellationToken ct)
+    {
+        var wanted = sids.Select(s => s.Trim().ToUpperInvariant()).Where(s => s.Length > 0)
+            .Distinct(StringComparer.Ordinal).ToList();
+        var rows = new List<(string Sid, string Name, DateTime Timestamp)>();
+        foreach (var batch in wanted.Chunk(BatchSize))
+        {
+            rows.AddRange((await db.Organizations.AsNoTracking()
+                    .Where(o => batch.Contains(o.Sid))
+                    .Select(o => new { o.Sid, o.Name, o.Timestamp })
+                    .ToListAsync(ct))
+                .Select(o => (o.Sid, o.Name, o.Timestamp)));
+        }
+        return rows.GroupBy(r => r.Sid, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.MaxBy(r => r.Timestamp).Name, StringComparer.Ordinal);
+    }
+
+    private async Task<List<HandleRow>> QueryAsync(
+        string sql, string[] batch, IReadOnlyList<string> sids, CancellationToken ct)
+    {
+        var args = new List<object>(sids.Count + batch.Length);
+        args.AddRange(sids);
+        var sidPlaceholders = string.Join(", ", Enumerable.Range(0, sids.Count).Select(i => $"{{{i}}}"));
         args.AddRange(batch);
-        var placeholders = string.Join(", ", Enumerable.Range(first, batch.Length).Select(i => $"{{{i}}}"));
+        var tokenPlaceholders = string.Join(", ", Enumerable.Range(sids.Count, batch.Length).Select(i => $"{{{i}}}"));
         return await db.Database
-            .SqlQueryRaw<HandleRow>(sql.Replace(TokenList, placeholders), args.ToArray())
+            .SqlQueryRaw<HandleRow>(sql.Replace(SidList, sidPlaceholders).Replace(TokenList, tokenPlaceholders), args.ToArray())
             .ToListAsync(ct);
     }
 
@@ -204,5 +251,8 @@ public sealed class DiscordHandleLookup(TrackerDbContext db)
         public int? CitizenId { get; set; }
         public string? DisplayName { get; set; }
         public DateTime SeenAt { get; set; }
+
+        /// <summary>The roster's corpo for a roster row; null for users and handle history.</summary>
+        public string? OrgSid { get; set; }
     }
 }

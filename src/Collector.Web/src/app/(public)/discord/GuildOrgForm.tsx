@@ -5,8 +5,9 @@ import { toast } from "sonner";
 import { DiscordText } from "@/components/discord/DiscordText";
 import { HudButton } from "@/components/hud/HudButton";
 import { HudInput } from "@/components/hud/HudInput";
+import type { DiscordDetectedOrgDto } from "@/lib/api/types";
 import { reportDiscordActionError } from "@/lib/discord/action-error";
-import { cleanDiscordText } from "@/lib/discord/format";
+import { cleanDiscordText, detectedOrgLabel } from "@/lib/discord/format";
 import { sidSchema } from "@/lib/validation";
 import { mapGuildOrgAction, searchGuildOrgsAction, type GuildOrgOption } from "./actions";
 
@@ -16,6 +17,8 @@ interface GuildOrgFormProps {
   currentSid: string | null;
   currentOrgName?: string | null;
   canEdit: boolean;
+  /** Corpo proposed from the members' tags, offered as a one-click mapping while unmapped. */
+  detectedOrg?: DiscordDetectedOrgDto | null;
 }
 
 const MIN_SEARCH_LENGTH = 1;
@@ -35,7 +38,7 @@ export function GuildOrgForm(props: GuildOrgFormProps) {
   return <GuildOrgFields key={props.currentSid ?? "unmapped"} {...props} />;
 }
 
-function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdit }: GuildOrgFormProps) {
+function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdit, detectedOrg }: GuildOrgFormProps) {
   const router = useRouter();
   const listId = useId();
   const hintId = useId();
@@ -140,6 +143,14 @@ function GuildOrgFields({ guildId, guildName, currentSid, currentOrgName, canEdi
 
   return (
     <form onSubmit={submit} className="flex w-full min-w-0 flex-col gap-3 sm:max-w-xl">
+      {!currentSid && detectedOrg && sidSchema.safeParse(detectedOrg.sid).success && (
+        <div className="flex flex-wrap items-center gap-2 border border-hud-green/40 bg-hud-green/5 px-3 py-2 font-mono text-xs">
+          <span className="min-w-0 flex-1 text-hud-text [overflow-wrap:anywhere]">{detectedOrgLabel(detectedOrg)}.</span>
+          <HudButton type="button" disabled={disabled} onClick={() => void save(detectedOrg.sid)}>
+            {busy ? "…" : `RELIER À ${detectedOrg.sid}`}
+          </HudButton>
+        </div>
+      )}
       <div onBlur={e => {
         if (!e.currentTarget.contains(e.relatedTarget)) { setOpen(false); setActive(-1); }
       }}>

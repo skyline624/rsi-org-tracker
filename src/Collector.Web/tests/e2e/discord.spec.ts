@@ -71,6 +71,16 @@ test("a SID can be typed on the overview and the saved association survives a re
   await expect(page.getByRole("link", { name: "NEW", exact: true })).toBeVisible();
 });
 
+test("a corpo detected from the members' tags is offered and mapped in one click", async ({ page, request }) => {
+  await request.post(`${fixture}/__fixture/reset`, {
+    data: { orgSid: null, detectedOrg: { sid: "AURELIS", name: "Aurelis Ops", members: 42, taggedMembers: 67 } },
+  });
+  await signIn(page, "admin", "/discord");
+  await expect(page.getByText("Corpo détectée : Aurelis Ops [AURELIS] — 42 membres sur 67 tagués.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "RELIER À AURELIS", exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`${fixture}/__fixture/state`)).json()).orgSid).toBe("AURELIS");
+});
+
 test("a one-character SID can be selected and saved", async ({ page, request }) => {
   await request.post(`${fixture}/__fixture/reset`, { data: { orgSid: null, guildName: "" } });
   await signIn(page, "admin", `/discord/${GUILD}`);
@@ -91,6 +101,7 @@ test("strong suggestions refresh after automatic linking without a manual action
   await signIn(page, "admin", `/discord/${GUILD}`);
   await page.getByRole("navigation", { name: "Onglets du serveur" }).getByRole("link", { name: "SUGGESTIONS", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Rattachement automatique en cours…" })).toBeVisible();
+  await expect(page.getByText("via le tag [AURELIS]", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Valider", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Ignorer", exact: true })).toHaveCount(0);
   // The API worker persists the link independently of this page.
